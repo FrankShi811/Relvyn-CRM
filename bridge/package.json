@@ -23,8 +23,11 @@
     "smoke:offline-catchup": "node scripts/offline-catchup-smoke.mjs",
     "smoke:history-recovery": "node scripts/history-recovery-smoke.mjs",
     "smoke:connection-lifecycle": "node scripts/connection-lifecycle-smoke.mjs",
+    "smoke:outbound-governor": "node scripts/outbound-governor-smoke.mjs",
+    "smoke:outbound-idempotency": "node scripts/outbound-idempotency-smoke.mjs",
     "build:exe": "node scripts/build-sea.mjs",
-    "smoke:exe": "node scripts/smoke.mjs dist/WAFlow.WhatsApp.Bridge.exe"
+    "smoke:exe": "node scripts/smoke.mjs dist/WAFlow.WhatsApp.Bridge.exe",
+    "smoke:units": "node scripts/outbound-governor-smoke.mjs && node scripts/outbound-idempotency-smoke.mjs && node scripts/offline-catchup-smoke.mjs && node scripts/history-recovery-smoke.mjs && node scripts/conversation-routing-smoke.mjs && node scripts/connection-bootstrap-smoke.mjs"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc13",

@@ -26,6 +26,8 @@ import { resolveBaileysVersion } from './connection-bootstrap.mjs'
 import { createProxyAgent, normalizeProxyUrl, safeProxyLabel } from './network-routing.mjs'
 import { ChatLabelAssociationRouter } from './label-routing.mjs'
 import { OfflineCatchupCoordinator } from './offline-catchup.mjs'
+import { OutboundGovernor, OutboundBlockedError, suspensionForStatusCode } from './outbound-governor.mjs'
+import { IdempotencyStore, planOutboundSend, commitOutboundSend } from './outbound-idempotency.mjs'
 import {
   anchorTimestamp,
   embeddedChatMessages,
@@ -41,6 +43,7 @@ const QR_GENERATION_WATCHDOG_MS = 35000
 const DESKTOP_UPGRADE_MAX_FAILURES = 1
 const VERSION_LOOKUP_TIMEOUT_MS = 3000
 const DESKTOP_HISTORY_PROFILE_FILE = 'desktop-history-profile.json'
+const OUTBOUND_GOVERNOR_FILE = 'outbound-governor.json'
 const PROTOCOL_VERSION_CACHE_FILE = 'whatsapp-protocol-version.json'
 const state = {
   accountId: 'default',
@@ -79,7 +82,13 @@ const state = {
     requested: new Set(),
     source: 'startup'
   },
-  syncQueue: Promise.resolve()
+  syncQueue: Promise.resolve(),
+  // Account-level send budget. Created on `initialize` so it can restore
+  // persisted counters; until then every send is refused (fail closed).
+  governor: null,
+  // Replay protection for sends whose RPC timed out on the C# side.
+  idempotency: new IdempotencyStore(),
+  consecutiveRateLimits: 0
 }
 
 const authFileLocks = new Map()
@@ -297,6 +306,54 @@ function resolveDataRoot() {
   const localAppData = process.env.LOCALAPPDATA
   if (!localAppData) throw new Error('LOCALAPPDATA_not_available')
   return path.join(localAppData, 'WAFlow')
+}
+
+function governorStatePath() {
+  return path.join(state.sessionDir, OUTBOUND_GOVERNOR_FILE)
+}
+
+async function readGovernorState() {
+  try {
+    return JSON.parse(await fs.readFile(governorStatePath(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+// Counters are persisted so restarting the app cannot reset the daily cap.
+// Writes are best effort and must never block or fail a send decision.
+function persistGovernorState(snapshot) {
+  const target = governorStatePath()
+  return fs.writeFile(target, JSON.stringify(snapshot), 'utf8').catch(() => {})
+}
+
+async function createGovernor(config) {
+  const restored = await readGovernorState()
+  return new OutboundGovernor({
+    config: config ?? {},
+    restored,
+    persist: snapshot => persistGovernorState(snapshot)
+  })
+}
+
+async function reserveOutboundSlot(command) {
+  if (!state.socket) throw new Error('whatsapp_not_connected')
+  return planOutboundSend({
+    connection: state.connection,
+    catchUpActive: Boolean(state.historyRecovery?.active),
+    idempotency: state.idempotency,
+    governor: state.governor,
+    command
+  })
+}
+
+function commitOutboundSlot(slot, result) {
+  return commitOutboundSend({
+    slot,
+    result,
+    idempotency: state.idempotency,
+    governor: state.governor
+  })
 }
 
 async function readCachedProtocolVersion() {
@@ -1621,6 +1678,12 @@ async function connect(catchupSource = 'startup') {
         state.desktopUpgradeFailures = 0
       }
       state.connection = 'connected'
+      // A clean connection means the account is usable again; clear a temporary
+      // rate-limit suspension but leave an indefinite (403) one for a human.
+      state.consecutiveRateLimits = 0
+      if (state.governor && !state.governor.suspendIndefinite) state.governor.resume()
+      // Warm-up caps key off the first successful pairing of this account.
+      state.governor?.markPaired(Date.now())
       if (state.desktopUpgradeRequested && !state.desktopHistoryProfile) {
         await writeDesktopHistoryProfile()
         state.desktopUpgradeRequested = false
@@ -1656,6 +1719,38 @@ async function connect(catchupSource = 'startup') {
       ?? update.lastDisconnect?.error?.statusCode
       ?? null
     const loggedOut = statusCode === DisconnectReason.loggedOut
+    // A rate limit or an account restriction must stop *sending*, not just
+    // reconnecting. Previously any non-401 code fell through to a flat 1s/5s
+    // reconnect with no send-side reaction and no user-visible warning.
+    let suspension = null
+    if (!loggedOut) {
+      if (statusCode === 429) state.consecutiveRateLimits += 1
+      suspension = suspensionForStatusCode(statusCode, {
+        now: Date.now(),
+        consecutive: state.consecutiveRateLimits
+      })
+      if (suspension) {
+        state.governor?.suspend(suspension.reason, {
+          untilMs: suspension.untilMs,
+          indefinite: suspension.indefinite
+        })
+        emit({
+          type: 'event', event: 'outbound_suspended', accountId: state.accountId,
+          data: {
+            statusCode,
+            reason: suspension.reason,
+            severity: suspension.severity,
+            indefinite: suspension.indefinite,
+            retryDelayMs: suspension.retryDelayMs,
+            message: suspension.indefinite
+              ? '账号可能已被 WhatsApp 限制，已停止全部自动发送，请勿继续重试并检查账号状态'
+              : `WhatsApp 触发限流，已暂停发送 ${Math.round(suspension.retryDelayMs / 1000)} 秒`
+          }
+        })
+      } else if (statusCode !== 429) {
+        state.consecutiveRateLimits = 0
+      }
+    }
     if (state.pairingTimer) clearTimeout(state.pairingTimer)
     state.pairingTimer = null
     state.socket = null
@@ -1735,15 +1830,19 @@ async function connect(catchupSource = 'startup') {
       }
       const reconnectImmediately = state.immediateReconnect
       state.immediateReconnect = false
-      const retryDelay = reconnectImmediately ? 1000 : 5000
+      // Never reconnect faster than the suspension window: hammering a server
+      // that just rate-limited us is what turns a 429 into a ban.
+      const baseDelay = reconnectImmediately ? 1000 : 5000
+      const retryDelay = Math.max(baseDelay, suspension?.retryDelayMs ?? 0)
       emit({
         type: 'event', event: 'connection_stage', accountId: state.accountId,
         data: {
           state: 'retrying',
           attempt,
+          retryDelayMs: retryDelay,
           message: reconnectImmediately
             ? '正在切换网络路线并重新连接'
-            : '连接暂时中断，5 秒后自动重试'
+            : `连接暂时中断，${Math.round(retryDelay / 1000)} 秒后自动重试`
         }
       })
       state.reconnectTimer = setTimeout(() => {
@@ -1770,8 +1869,27 @@ async function handle(command) {
         state.authKey = parseEncryptionKey(command.encryptionKey)
         state.sessionDir = resolveSessionDir(state.accountId)
         state.outboundTargets.clear()
+        state.idempotency.clear()
+        state.consecutiveRateLimits = 0
         await fs.mkdir(state.sessionDir, { recursive: true })
-        reply(requestId, true, { accountId: state.accountId, sessionDir: state.sessionDir })
+        state.governor = await createGovernor(command.outbound)
+        reply(requestId, true, {
+          accountId: state.accountId,
+          sessionDir: state.sessionDir,
+          outbound: state.governor.snapshot()
+        })
+        return
+      }
+      case 'configure_outbound': {
+        if (!state.governor) throw new Error('bridge_not_initialized')
+        const applied = state.governor.configure(command.outbound ?? {})
+        reply(requestId, true, { config: applied, status: state.governor.snapshot() })
+        return
+      }
+      case 'outbound_status': {
+        if (!state.governor) throw new Error('bridge_not_initialized')
+        if (command.resume === true) state.governor.resume()
+        reply(requestId, true, state.governor.snapshot())
         return
       }
       case 'connect':
@@ -1834,9 +1952,10 @@ async function handle(command) {
         reply(requestId, true, { state: 'logged_out', remoteLogoutCompleted })
         return
       case 'send_text': {
-        if (!state.socket || state.connection !== 'connected') throw new Error('whatsapp_not_connected')
         const text = String(command.text ?? '').trim()
         if (!text || text.length > 4096) throw new Error('invalid_message_text')
+        const slot = await reserveOutboundSlot(command)
+        if (slot.replayed) { reply(requestId, true, slot.replayed); return }
         const requestedJid = await resolveOutboundJid(command.phone, command.jid)
         if (!shouldForward(requestedJid)) throw new Error('only_individual_contacts_supported')
         const fanout = await prepareOutboundDeviceFanout(requestedJid)
@@ -1845,7 +1964,7 @@ async function handle(command) {
         rememberMessage(result)
         // sendMessage may return before WhatsApp has acknowledged the message.
         // Missing status means pending, never a confirmed send.
-        reply(requestId, true, {
+        reply(requestId, true, commitOutboundSlot(slot, {
           id: target.providerMessageId,
           jid: target.requestedJid,
           timestamp: new Date().toISOString(),
@@ -1854,12 +1973,14 @@ async function handle(command) {
           senderDeviceSyncPrepared: fanout.senderDeviceSyncPrepared,
           senderDeviceCount: fanout.senderDeviceCount,
           recipientDeviceCount: fanout.recipientDeviceCount,
+          outboundWaitedMs: slot.waitedMs,
           ...target
-        })
+        }))
         return
       }
       case 'send_media': {
-        if (!state.socket || state.connection !== 'connected') throw new Error('whatsapp_not_connected')
+        const slot = await reserveOutboundSlot(command)
+        if (slot.replayed) { reply(requestId, true, slot.replayed); return }
         const requestedJid = await resolveOutboundJid(command.phone, command.jid)
         if (!shouldForward(requestedJid)) throw new Error('only_individual_contacts_supported')
         const fanout = await prepareOutboundDeviceFanout(requestedJid)
@@ -1867,7 +1988,7 @@ async function handle(command) {
         const result = await state.socket.sendMessage(fanout.jid, media.payload, quotedSendOptions(command, fanout.jid))
         const target = await requireVerifiedOutboundResult(result, command.phone, fanout.jid)
         rememberMessage(result)
-        reply(requestId, true, {
+        reply(requestId, true, commitOutboundSlot(slot, {
           id: target.providerMessageId,
           jid: target.requestedJid,
           timestamp: new Date().toISOString(),
@@ -1879,8 +2000,9 @@ async function handle(command) {
           senderDeviceSyncPrepared: fanout.senderDeviceSyncPrepared,
           senderDeviceCount: fanout.senderDeviceCount,
           recipientDeviceCount: fanout.recipientDeviceCount,
+          outboundWaitedMs: slot.waitedMs,
           ...target
-        })
+        }))
         return
       }
       case 'validate_number': {
@@ -1987,6 +2109,12 @@ async function handle(command) {
         throw new Error('unknown_command')
     }
   } catch (error) {
+    // Send-budget refusals carry structured detail (retryAfterMs, caps) so the
+    // desktop app can schedule a retry instead of guessing.
+    if (error instanceof OutboundBlockedError) {
+      reply(requestId, false, null, { code: error.code, message: error.code, detail: error.detail })
+      return
+    }
     reply(requestId, false, null, { code: safeError(error).split(':')[0], message: safeError(error) })
   }
 }
