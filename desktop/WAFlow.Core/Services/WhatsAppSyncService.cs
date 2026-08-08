@@ -18,20 +18,66 @@ public sealed record WhatsAppSyncProgress(
     int RecoveredMessages = 0,
     int RequestedChats = 0);
 
+/// <summary>
+/// A message that reached local storage, together with how it got here.
+///
+/// The arrival channel is the difference between "a customer just wrote to you"
+/// and "WhatsApp flushed three days of queued messages because you opened the
+/// laptop", and only the first of those may drive an automatic reply.
+/// </summary>
+public sealed record WhatsAppMessageSyncedEvent(WhatsAppMessage Message, MessageArrival Arrival)
+{
+    public bool IsOfflineBacklog => Arrival == MessageArrival.OfflineBacklog;
+}
+
+/// <summary>Raised when a reconnect finished flushing the offline queue.</summary>
+public sealed record WhatsAppOfflineCatchupEvent(string AccountId, bool Started);
+
 public sealed class WhatsAppSyncService
 {
+    /// <summary>Automation settings are re-read at most this often, not per message.</summary>
+    private static readonly TimeSpan AutomationSettingsTtl = TimeSpan.FromSeconds(30);
+
     private readonly LocalRepository _repository;
     private readonly Channel<WhatsAppBridgeEvent> _events = Channel.CreateUnbounded<WhatsAppBridgeEvent>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private AgentAutomationSettings _automation = new();
+    private DateTimeOffset _automationLoadedAt = DateTimeOffset.MinValue;
 
-    public event EventHandler<WhatsAppMessage>? MessageSynchronized;
+    public event EventHandler<WhatsAppMessageSyncedEvent>? MessageSynchronized;
     public event EventHandler<WhatsAppSyncProgress>? SynchronizationChanged;
+    public event EventHandler<WhatsAppOfflineCatchupEvent>? OfflineCatchupChanged;
     public event EventHandler<string>? SyncError;
+
+    /// <summary>Overridable clock so the age threshold can be tested deterministically.</summary>
+    public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
 
     public WhatsAppSyncService(LocalRepository repository, WhatsAppConnectionManager bridge)
     {
         _repository = repository;
         bridge.EventReceived += (_, e) => _events.Writer.TryWrite(e);
         _ = Task.Run(ProcessEventsAsync);
+    }
+
+    private async Task<AgentAutomationSettings> GetAutomationSettingsAsync()
+    {
+        var now = Clock();
+        if (now - _automationLoadedAt < AutomationSettingsTtl) return _automation;
+        try
+        {
+            _automation = (await _repository.GetAppSettingsAsync()).AgentAutomation ?? new AgentAutomationSettings();
+        }
+        catch
+        {
+            // Fail closed in both directions: keep the gate on, and use the
+            // narrowest grace window rather than the default, so an unreadable
+            // settings row can only classify *more* traffic as backlog, never less.
+            _automation = new AgentAutomationSettings
+            {
+                OfflineGraceMinutes = WhatsAppMessageArrivalClassifier.MinimumOfflineGraceMinutes
+            };
+        }
+        _automationLoadedAt = now;
+        return _automation;
     }
 
     private async Task ProcessEventsAsync()
@@ -82,7 +128,9 @@ public sealed class WhatsAppSyncService
                 RaiseDataChanged(accountId, "messages");
                 return;
             case "sync_status":
-                SynchronizationChanged?.Invoke(this, ParseProgress(accountId, e.Data));
+                var progress = ParseProgress(accountId, e.Data);
+                RaiseOfflineCatchupChange(progress);
+                SynchronizationChanged?.Invoke(this, progress);
                 return;
         }
     }
@@ -268,7 +316,13 @@ public sealed class WhatsAppSyncService
         var deliveredAt = ParseTimestamp(data, "deliveredAt");
         var readAt = ParseTimestamp(data, "readAt");
         var source = Text(data, "source");
-        var historical = source.StartsWith("history:", StringComparison.OrdinalIgnoreCase);
+        var automation = await GetAutomationSettingsAsync();
+        var arrival = WhatsAppMessageArrivalClassifier.Classify(
+            source, timestamp, Clock(), automation.NormalizedGraceMinutes());
+        // `historical` still means "bulk history sync" only. Offline backlog is a
+        // real, unread message that belongs in the conversation and in the unread
+        // count; what it must not do is trigger an automatic reply.
+        var historical = arrival == MessageArrival.HistorySync;
         var ownedPeer = isGroup ? null : await _repository.GetOwnedWhatsAppPeerAccountAsync(accountId, phone);
         var conversationId = isGroup ? $"{accountId}:{jid}" : $"{accountId}:{phone}";
         var conversation = isGroup
@@ -397,7 +451,8 @@ public sealed class WhatsAppSyncService
                           $"message_id={providerId}; account={accountId}")
                       ?? message;
         }
-        if (newlyAvailable && !historical) MessageSynchronized?.Invoke(this, message);
+        if (newlyAvailable && !historical)
+            MessageSynchronized?.Invoke(this, new WhatsAppMessageSyncedEvent(message, arrival));
     }
 
     private static bool HasUsableContent(WhatsAppMessage message) =>
@@ -459,7 +514,9 @@ public sealed class WhatsAppSyncService
             message.Id,
             "whatsapp_message_revoked",
             $"message_id={providerId}; account={accountId}") ?? message;
-        MessageSynchronized?.Invoke(this, message);
+        // A revocation is always a live event, whatever the age of the message
+        // being revoked.
+        MessageSynchronized?.Invoke(this, new WhatsAppMessageSyncedEvent(message, MessageArrival.Live));
     }
 
     private async Task IngestStatusAsync(WhatsAppBridgeEvent e)
@@ -489,7 +546,9 @@ public sealed class WhatsAppSyncService
         if (message is null) return;
         if (message.Direction == WhatsAppMessageDirection.Outgoing)
             message = await _repository.ApplySynchronizedWhatsAppMessageOutcomeAsync(message.Id, "", "") ?? message;
-        MessageSynchronized?.Invoke(this, message);
+        // A delivery receipt is live news about an existing message; it never
+        // re-opens automation for the message body itself.
+        MessageSynchronized?.Invoke(this, new WhatsAppMessageSyncedEvent(message, MessageArrival.Live));
     }
 
     private static WhatsAppMessageStatus ParseOutgoingStatus(JsonElement data, DateTimeOffset? deliveredAt, DateTimeOffset? readAt)
@@ -534,6 +593,22 @@ public sealed class WhatsAppSyncService
     {
         foreach (var name in names) if (Text(data, name) is { Length: > 0 } value) return value;
         return "";
+    }
+
+    /// <summary>
+    /// Turns the bridge's offline-catch-up phases into a start/finish signal.
+    /// The coordinator uses it to scope its per-catch-up draft budget: coming
+    /// back from three days offline must cost at most one bounded batch of LLM
+    /// calls, not one per waiting conversation.
+    /// </summary>
+    private void RaiseOfflineCatchupChange(WhatsAppSyncProgress progress)
+    {
+        if (!progress.Phase.StartsWith("offline_messages", StringComparison.OrdinalIgnoreCase)) return;
+        if (progress.State.Equals("syncing", StringComparison.OrdinalIgnoreCase))
+            OfflineCatchupChanged?.Invoke(this, new WhatsAppOfflineCatchupEvent(progress.AccountId, true));
+        else if (progress.State.Equals("complete", StringComparison.OrdinalIgnoreCase)
+                 || progress.State.Equals("failed", StringComparison.OrdinalIgnoreCase))
+            OfflineCatchupChanged?.Invoke(this, new WhatsAppOfflineCatchupEvent(progress.AccountId, false));
     }
 
     private void RaiseDataChanged(string accountId, string phase) =>

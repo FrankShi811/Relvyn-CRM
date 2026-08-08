@@ -1,3 +1,4 @@
+using WAFlow.Core.Domain;
 using WAFlow.Core.Imports;
 using WAFlow.Core.Infrastructure;
 using WAFlow.Core.Services;
@@ -104,6 +105,11 @@ public sealed class AppServices
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await Repository.InitializeAsync(cancellationToken);
+        // Load before any bridge starts: the governor is constructed during the
+        // bridge's initialize command, so settings that arrive later would leave
+        // the first sends of the session running on bridge defaults.
+        WhatsApp.OutboundSettings = (await Repository.GetAppSettingsAsync(cancellationToken)).Outbound
+                                    ?? new OutboundGovernorSettings();
         await CustomerIdentity.RepairOwnedAccountBindingsAsync(cancellationToken);
     }
 }

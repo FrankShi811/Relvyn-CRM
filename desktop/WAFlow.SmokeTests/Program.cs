@@ -1143,9 +1143,9 @@ await using (var recoveryBridge = new WhatsAppConnectionManager())
 {
     var recoverySync = new WhatsAppSyncService(repository, recoveryBridge);
     var synchronizedContentCount = 0;
-    recoverySync.MessageSynchronized += (_, message) =>
+    recoverySync.MessageSynchronized += (_, synced) =>
     {
-        if (message.ProviderMessageId == "wamid-live-recovery") synchronizedContentCount++;
+        if (synced.Message.ProviderMessageId == "wamid-live-recovery") synchronizedContentCount++;
     };
     var ingestRecovery = typeof(WhatsAppSyncService).GetMethod("IngestMessageAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
     using var placeholderDocument = JsonDocument.Parse(JsonSerializer.Serialize(new
@@ -1179,8 +1179,8 @@ await using (var groupBridge = new WhatsAppConnectionManager())
 {
     var groupSync = new WhatsAppSyncService(repository, groupBridge);
     var groupSynchronized = false;
-    groupSync.MessageSynchronized += (_, message) =>
-        groupSynchronized |= message.ProviderMessageId == "wamid-group-live" && message.IsGroup;
+    groupSync.MessageSynchronized += (_, synced) =>
+        groupSynchronized |= synced.Message.ProviderMessageId == "wamid-group-live" && synced.Message.IsGroup;
     var ingestGroupChat = typeof(WhatsAppSyncService).GetMethod("IngestChatAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
     using var groupChatDocument = JsonDocument.Parse(JsonSerializer.Serialize(new
     {
@@ -1303,9 +1303,9 @@ await using (var liveUnreadBridge = new WhatsAppConnectionManager())
 {
     var liveUnreadSync = new WhatsAppSyncService(repository, liveUnreadBridge);
     var liveUnreadEventObserved = false;
-    liveUnreadSync.MessageSynchronized += (_, message) =>
+    liveUnreadSync.MessageSynchronized += (_, synced) =>
     {
-        if (message.ProviderMessageId == "wamid-live-after-read-cursor")
+        if (synced.Message.ProviderMessageId == "wamid-live-after-read-cursor")
             liveUnreadEventObserved = true;
     };
     var liveReplyAt = (readConversation.LastReadAt ?? DateTimeOffset.Now).AddSeconds(1);
@@ -4726,7 +4726,7 @@ var coordinatorHandleMethod = typeof(CustomerSuccessAgentCoordinator).GetMethod(
     ?? throw new InvalidOperationException("Customer Success coordinator handle method missing.");
 var preSendRaceTask = (Task)(coordinatorHandleMethod.Invoke(
     preSendRaceCoordinator,
-    [raceMessage, CancellationToken.None])
+    [raceMessage, MessageArrival.Live, CancellationToken.None])
     ?? throw new InvalidOperationException("Customer Success coordinator did not return a task."));
 await blockingCustomerSuccessProvider.GenerationStarted.WaitAsync(TimeSpan.FromSeconds(10));
 await customerSuccessRaceIdentity.ConfirmBindingAsync(
@@ -4809,7 +4809,7 @@ using var postSendRaceCoordinator = new CustomerSuccessAgentCoordinator(
     postSendAgent);
 var postSendRaceTask = (Task)(coordinatorHandleMethod.Invoke(
     postSendRaceCoordinator,
-    [postSendMessage, CancellationToken.None])
+    [postSendMessage, MessageArrival.Live, CancellationToken.None])
     ?? throw new InvalidOperationException("Customer Success coordinator did not return a task."));
 await postSendRaceSender.SendStarted.WaitAsync(TimeSpan.FromSeconds(10));
 await customerSuccessRaceIdentity.ConfirmBindingAsync(
@@ -7292,6 +7292,158 @@ Check(staleIdentityOnlyReport.Status == CustomerReportStatus.Stale
     && await File.ReadAllTextAsync(staleExportPath) == preexistingExportContent,
     "identity changes during export stale the report, preserve the prior target and never let an old report save overwrite Stale");
 
+
+// ---------------------------------------------------------------------------
+// PRD v0.4 §5 offline catch-up gate and §6 outbound governor wiring.
+//
+// The WPF app cannot be built in the authoring environment, so these cover the
+// decision rules rather than the UI: arrival classification, the age fallback,
+// the send-options contract with the bridge, and the refusal codes.
+// ---------------------------------------------------------------------------
+var arrivalNow = DateTimeOffset.Parse("2026-08-07T12:00:00+08:00");
+Check(WhatsAppMessageArrivalClassifier.Classify("append", arrivalNow.AddMinutes(-1), arrivalNow) == MessageArrival.OfflineBacklog,
+    "Baileys append stanzas are offline backlog even when the timestamp is fresh");
+Check(WhatsAppMessageArrivalClassifier.Classify("notify", arrivalNow.AddSeconds(-30), arrivalNow) == MessageArrival.Live,
+    "a fresh notify stanza is live traffic");
+Check(WhatsAppMessageArrivalClassifier.Classify("notify", arrivalNow.AddHours(-2), arrivalNow) == MessageArrival.OfflineBacklog,
+    "a two hour old notify stanza is caught by the age threshold, not trusted as live");
+Check(WhatsAppMessageArrivalClassifier.Classify("history:chat_anchor", arrivalNow, arrivalNow) == MessageArrival.HistorySync,
+    "history sources stay history sync");
+Check(WhatsAppMessageArrivalClassifier.Classify("notify", arrivalNow.AddMinutes(5), arrivalNow) == MessageArrival.Live,
+    "a phone clock running ahead never reads as an old message");
+Check(WhatsAppMessageArrivalClassifier.Classify("", arrivalNow.AddMinutes(-9), arrivalNow) == MessageArrival.Live
+    && WhatsAppMessageArrivalClassifier.Classify("", arrivalNow.AddMinutes(-11), arrivalNow) == MessageArrival.OfflineBacklog,
+    "the default grace window is ten minutes and applies to unlabelled sources");
+Check(WhatsAppMessageArrivalClassifier.Classify("notify", arrivalNow.AddMinutes(-90), arrivalNow, 120) == MessageArrival.Live
+    && WhatsAppMessageArrivalClassifier.NormalizeGraceMinutes(0) == 10
+    && WhatsAppMessageArrivalClassifier.NormalizeGraceMinutes(9999) == 120,
+    "the grace window is configurable and clamped to 1..120 minutes");
+
+await using (var arrivalBridge = new WhatsAppConnectionManager())
+{
+    var arrivalSync = new WhatsAppSyncService(repository, arrivalBridge) { Clock = () => arrivalNow };
+    var observedArrivals = new List<(string Id, MessageArrival Arrival)>();
+    arrivalSync.MessageSynchronized += (_, synced) => observedArrivals.Add((synced.Message.ProviderMessageId, synced.Arrival));
+    var ingestArrival = typeof(WhatsAppSyncService).GetMethod("IngestMessageAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+    async Task IngestArrivalAsync(string providerId, string source, DateTimeOffset timestamp)
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            phone = "8613900001111",
+            id = providerId,
+            fromMe = false,
+            timestamp = timestamp.ToString("O"),
+            source,
+            kind = "text",
+            text = $"backlog probe {providerId}"
+        }));
+        await (Task)ingestArrival.Invoke(arrivalSync, ["primary", document.RootElement.Clone()])!;
+    }
+    await IngestArrivalAsync("wamid-arrival-append", "append", arrivalNow.AddMinutes(-1));
+    await IngestArrivalAsync("wamid-arrival-live", "notify", arrivalNow.AddSeconds(-5));
+    await IngestArrivalAsync("wamid-arrival-stale", "notify", arrivalNow.AddHours(-3));
+    await IngestArrivalAsync("wamid-arrival-history", "history:initial", arrivalNow.AddSeconds(-5));
+
+    Check(observedArrivals.Any(item => item.Id == "wamid-arrival-append" && item.Arrival == MessageArrival.OfflineBacklog),
+        "an append message reaches the agent tagged as offline backlog rather than live");
+    Check(observedArrivals.Any(item => item.Id == "wamid-arrival-live" && item.Arrival == MessageArrival.Live),
+        "a live message is still delivered as live after the classifier change");
+    Check(observedArrivals.Any(item => item.Id == "wamid-arrival-stale" && item.Arrival == MessageArrival.OfflineBacklog),
+        "a stale notify message reaches the agent as offline backlog");
+    Check(observedArrivals.All(item => item.Id != "wamid-arrival-history"),
+        "history sync still never reaches the agent at all");
+    var backlogStored = await repository.GetWhatsAppMessageByProviderIdAsync("primary", "wamid-arrival-append");
+    var backlogConversation = await repository.GetWhatsAppConversationAsync("primary", "8613900001111");
+    Check(backlogStored is not null && backlogConversation is { UnreadCount: > 0 },
+        "offline backlog is still stored and still counts as unread; only automation is withheld");
+}
+
+Check(OutboundOrigin.Normalize("ai_auto") == OutboundOrigin.AiAuto
+    && OutboundOrigin.Normalize("nonsense") == OutboundOrigin.Human
+    && OutboundOrigin.Normalize(null) == OutboundOrigin.Human,
+    "unknown outbound origins fall back to the human quota, never to the AI sub-quota");
+var agentSendOptions = OutboundSendOptions.ForAgent("primary:8613900001111", "run-token-1");
+Check(agentSendOptions.Origin == OutboundOrigin.AiAuto
+    && agentSendOptions.IdempotencyKey == OutboundSendOptions.ForAgent("primary:8613900001111", "run-token-1").IdempotencyKey
+    && agentSendOptions.IdempotencyKey != OutboundSendOptions.ForAgent("primary:8613900001111", "run-token-2").IdempotencyKey,
+    "an agent reply replays under the same run token and never under a regenerated one");
+Check(OutboundSendOptions.ForCampaign("c1", "r1").IdempotencyKey == OutboundSendOptions.ForCampaign("c1", "r1").IdempotencyKey
+    && OutboundSendOptions.ForCampaign("c1", "r1").IdempotencyKey != OutboundSendOptions.ForCampaign("c1", "r2").IdempotencyKey
+    && OutboundSendOptions.ForCampaign("c1", "r1").Origin == OutboundOrigin.Campaign,
+    "a campaign recipient keeps one key across attempts, so a retry after an RPC timeout replays instead of touching the customer twice");
+var longScopeKey = OutboundSendOptions.BuildKey("agent", new string('a', 300), "run-token-1");
+Check(longScopeKey.Length <= 200
+    && longScopeKey.EndsWith("run-token-1", StringComparison.Ordinal)
+    && longScopeKey != OutboundSendOptions.BuildKey("agent", new string('a', 300), "run-token-2"),
+    "an over-long key hashes its prefix and keeps the discriminating suffix, so two different replies never collide");
+
+Check(OutboundBlockCodes.IsBlocked(OutboundBlockCodes.CatchUpInProgress)
+    && OutboundBlockCodes.IsBlocked(OutboundBlockCodes.AiDailyCap)
+    && !OutboundBlockCodes.IsBlocked("whatsapp_not_connected"),
+    "governor refusal codes are recognised and unrelated bridge errors are not");
+Check(OutboundBlockCodes.IsHardStop(OutboundBlockCodes.DailyCap)
+    && OutboundBlockCodes.IsHardStop(OutboundBlockCodes.SuspendedAccountRisk)
+    && !OutboundBlockCodes.IsHardStop(OutboundBlockCodes.MinGap)
+    && !OutboundBlockCodes.IsHardStop(OutboundBlockCodes.SuspendedRateLimited),
+    "only refusals that will not clear on their own count as a hard stop");
+Check(OutboundBlockCodes.Describe(OutboundBlockCodes.AiDailyCap).Contains("人工发送不受影响"),
+    "the AI sub-quota message tells the user manual sending still works");
+
+var suspensionDeadlineJson = "{\"reason\":\"rate_limited\",\"until\":"
+    + DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeMilliseconds() + "}";
+using (var softRefusal = JsonDocument.Parse("""{"retryAfterMs":8000,"waitedMs":100}"""))
+using (var suspension = JsonDocument.Parse(suspensionDeadlineJson))
+using (var expiredSuspension = JsonDocument.Parse("""{"reason":"rate_limited","until":1}"""))
+{
+    var softRetry = new WhatsAppBridgeException(OutboundBlockCodes.HourlyCap, "x") { Detail = softRefusal.RootElement.Clone() }.RetryAfter;
+    var suspendedRetry = new WhatsAppBridgeException(OutboundBlockCodes.SuspendedRateLimited, "x") { Detail = suspension.RootElement.Clone() }.RetryAfter;
+    var expiredRetry = new WhatsAppBridgeException(OutboundBlockCodes.SuspendedRateLimited, "x") { Detail = expiredSuspension.RootElement.Clone() }.RetryAfter;
+    Check(softRetry == TimeSpan.FromSeconds(8),
+        "a soft refusal's relative retryAfterMs is read back verbatim");
+    Check(suspendedRetry is not null && suspendedRetry.Value > TimeSpan.FromMinutes(25) && suspendedRetry.Value <= TimeSpan.FromMinutes(30),
+        "a suspension's absolute deadline becomes a wait, so a rate limited account is not polled every two minutes");
+    Check(expiredRetry is null && new WhatsAppBridgeException("bridge_error", "x").RetryAfter is null,
+        "an elapsed deadline and a detail-less error both report no wait rather than a negative one");
+}
+
+var normalizedOutbound = new OutboundGovernorSettings { MaxQueueWaitMs = 999999, MinGapMs = 1, DailyCap = 0, AiDailyCapRatio = 5 }.Normalized();
+Check(normalizedOutbound.MaxQueueWaitMs <= 25000,
+    "queue wait leaves at least twenty seconds of the 45 second RPC budget for the send itself, so a queued send can never outlive the caller");
+Check(normalizedOutbound.MinGapMs == 1000 && normalizedOutbound.DailyCap == 1 && Math.Abs(normalizedOutbound.AiDailyCapRatio - 1d) < 0.0001,
+    "outbound settings are clamped to the same ranges the bridge enforces");
+
+using (var governorSnapshot = JsonDocument.Parse("""
+{
+  "enabled": true,
+  "dailyTotal": 12,
+  "dailyCap": 400,
+  "aiDailyCap": 200,
+  "dailyCounts": { "human": 7, "ai_auto": 5 },
+  "hourlyCount": 3,
+  "hourlyCap": 120,
+  "queueDepth": 1,
+  "suspended": true,
+  "suspendReason": "rate_limited",
+  "suspendIndefinite": false,
+  "warmupActive": true
+}
+"""))
+{
+    var parsedStatus = OutboundGovernorStatus.FromJson(governorSnapshot.RootElement);
+    Check(parsedStatus is { DailyTotal: 12, AiDailyCount: 5, Suspended: true, WarmupActive: true }
+        && parsedStatus.RemainingToday == 388
+        && parsedStatus.RemainingAiToday == 195,
+        "the account health panel reads today's send budget out of the bridge snapshot");
+}
+Check(OutboundGovernorStatus.FromJson(default) == OutboundGovernorStatus.Unknown,
+    "a missing governor snapshot reads as unknown rather than as unlimited budget");
+
+var automationDefaults = new AgentAutomationSettings();
+Check(automationDefaults.OfflineBacklogGateEnabled
+    && automationDefaults.NormalizedGraceMinutes() == 10
+    && automationDefaults.NormalizedDraftLimit() == 50,
+    "offline backlog is gated by default, with a ten minute grace and a fifty conversation draft budget");
+
 try { File.Delete(database); Directory.Delete(root, true); } catch { }
 Console.WriteLine(failures.Count == 0 ? "\nAI Sales OS native core smoke tests passed." : $"\n{failures.Count} smoke test(s) failed.");
 return failures.Count == 0 ? 0 : 1;
@@ -8262,6 +8414,7 @@ sealed class BlockingCustomerSuccessMessageSender(bool block) : ICustomerSuccess
         string accountId,
         string phone,
         string text,
+        OutboundSendOptions options,
         CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _sendCount);

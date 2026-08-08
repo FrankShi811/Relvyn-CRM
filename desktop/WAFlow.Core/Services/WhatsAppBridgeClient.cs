@@ -19,6 +19,45 @@ public sealed record WhatsAppHistoryCursor(
 public sealed class WhatsAppBridgeException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;
+
+    /// <summary>
+    /// Structured context the bridge attaches to send-budget refusals
+    /// (<c>retryAfterMs</c>, the cap that was hit, the origin that hit it).
+    /// Absent for every other error.
+    /// </summary>
+    public JsonElement Detail { get; init; }
+
+    /// <summary>
+    /// How long the bridge says to wait before retrying.
+    ///
+    /// Soft refusals carry a relative <c>retryAfterMs</c>; suspensions carry an
+    /// absolute <c>until</c> epoch instead. Reading only the first would make a
+    /// suspended account look retryable immediately, and the caller would hammer
+    /// a service that is already rate limiting it.
+    /// </summary>
+    public TimeSpan? RetryAfter
+    {
+        get
+        {
+            if (Detail.ValueKind != JsonValueKind.Object) return null;
+            var cap = TimeSpan.FromHours(24);
+            if (Detail.TryGetProperty("retryAfterMs", out var relative)
+                && relative.TryGetInt64(out var milliseconds)
+                && milliseconds > 0)
+                return TimeSpan.FromMilliseconds(Math.Min(milliseconds, (long)cap.TotalMilliseconds));
+            if (Detail.TryGetProperty("until", out var until)
+                && until.ValueKind == JsonValueKind.Number
+                && until.TryGetInt64(out var deadline))
+            {
+                var remaining = deadline - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (remaining > 0) return TimeSpan.FromMilliseconds(Math.Min(remaining, (long)cap.TotalMilliseconds));
+            }
+            return null;
+        }
+    }
+
+    /// <summary>True when the send was refused by the account-level outbound governor.</summary>
+    public bool IsOutboundBlocked => OutboundBlockCodes.IsBlocked(Code);
 }
 
 public sealed class WhatsAppBridgeClient : IAsyncDisposable
@@ -94,7 +133,13 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
             _ = ObserveExitAsync(_process, _lifetime.Token);
 
             await _ready.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
-            await SendCommandAsync("initialize", new { accountId = CurrentAccountId, encryptionKey }, cancellationToken);
+            // The governor is created during initialize, so its configuration has
+            // to travel with that command; a later configure_outbound would leave
+            // a window where the first sends run on bridge defaults.
+            await SendCommandAsync(
+                "initialize",
+                new { accountId = CurrentAccountId, encryptionKey, outbound = OutboundSettings.Normalized().ToBridgePayload() },
+                cancellationToken);
             if (requiresLocalAuthorization)
             {
                 EventReceived?.Invoke(this, new WhatsAppBridgeEvent(
@@ -279,16 +324,41 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
         _ready = NewSignal();
         FailPending(new WhatsAppBridgeException("bridge_restarted", "WhatsApp 桥接已重置，可重新连接。"));
     }
+    /// <summary>
+    /// Configuration handed to the bridge governor on initialize. Assigned before
+    /// <see cref="StartAsync"/> by <c>WhatsAppConnectionManager</c>; a fresh
+    /// instance means "bridge defaults".
+    /// </summary>
+    public OutboundGovernorSettings OutboundSettings { get; set; } = new();
+
     public Task<JsonElement> SendTextAsync(string phone, string text, CancellationToken cancellationToken = default) =>
-        SendCommandAsync("send_text", new { phone, text }, cancellationToken);
+        SendTextAsync(phone, text, OutboundSendOptions.Human, cancellationToken);
+    public Task<JsonElement> SendTextAsync(string phone, string text, OutboundSendOptions options, CancellationToken cancellationToken = default) =>
+        SendCommandAsync("send_text", new { phone, text, origin = OutboundOrigin.Normalize(options.Origin), idempotencyKey = options.IdempotencyKey }, cancellationToken);
     public Task<JsonElement> ValidateNumberAsync(string phone, CancellationToken cancellationToken = default) =>
         SendCommandAsync("validate_number", new { phone }, cancellationToken);
     public Task<JsonElement> SendReplyTextAsync(string phone, string text, string quotedMessageId, string quotedText, bool quotedFromMe, CancellationToken cancellationToken = default) =>
-        SendCommandAsync("send_text", new { phone, text, quotedMessageId, quotedText, quotedFromMe }, cancellationToken);
+        SendReplyTextAsync(phone, text, quotedMessageId, quotedText, quotedFromMe, OutboundSendOptions.Human, cancellationToken);
+    public Task<JsonElement> SendReplyTextAsync(string phone, string text, string quotedMessageId, string quotedText, bool quotedFromMe, OutboundSendOptions options, CancellationToken cancellationToken = default) =>
+        SendCommandAsync("send_text", new { phone, text, quotedMessageId, quotedText, quotedFromMe, origin = OutboundOrigin.Normalize(options.Origin), idempotencyKey = options.IdempotencyKey }, cancellationToken);
     public Task<JsonElement> SendMediaAsync(string phone, string path, string caption, CancellationToken cancellationToken = default) =>
-        SendCommandAsync("send_media", new { phone, path, caption }, cancellationToken);
+        SendMediaAsync(phone, path, caption, OutboundSendOptions.Human, cancellationToken);
+    public Task<JsonElement> SendMediaAsync(string phone, string path, string caption, OutboundSendOptions options, CancellationToken cancellationToken = default) =>
+        SendCommandAsync("send_media", new { phone, path, caption, origin = OutboundOrigin.Normalize(options.Origin), idempotencyKey = options.IdempotencyKey }, cancellationToken);
     public Task<JsonElement> SendReplyMediaAsync(string phone, string path, string caption, string quotedMessageId, string quotedText, bool quotedFromMe, CancellationToken cancellationToken = default) =>
-        SendCommandAsync("send_media", new { phone, path, caption, quotedMessageId, quotedText, quotedFromMe }, cancellationToken);
+        SendReplyMediaAsync(phone, path, caption, quotedMessageId, quotedText, quotedFromMe, OutboundSendOptions.Human, cancellationToken);
+    public Task<JsonElement> SendReplyMediaAsync(string phone, string path, string caption, string quotedMessageId, string quotedText, bool quotedFromMe, OutboundSendOptions options, CancellationToken cancellationToken = default) =>
+        SendCommandAsync("send_media", new { phone, path, caption, quotedMessageId, quotedText, quotedFromMe, origin = OutboundOrigin.Normalize(options.Origin), idempotencyKey = options.IdempotencyKey }, cancellationToken);
+    public async Task<OutboundGovernorStatus> ConfigureOutboundAsync(OutboundGovernorSettings settings, CancellationToken cancellationToken = default)
+    {
+        OutboundSettings = settings;
+        var result = await SendCommandAsync("configure_outbound", new { outbound = settings.Normalized().ToBridgePayload() }, cancellationToken);
+        return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("status", out var status)
+            ? OutboundGovernorStatus.FromJson(status)
+            : OutboundGovernorStatus.Unknown;
+    }
+    public async Task<OutboundGovernorStatus> OutboundStatusAsync(bool resume = false, CancellationToken cancellationToken = default) =>
+        OutboundGovernorStatus.FromJson(await SendCommandAsync("outbound_status", new { resume }, cancellationToken));
     public Task<JsonElement> RevokeMessageAsync(string phone, string messageId, CancellationToken cancellationToken = default) =>
         SendCommandAsync("revoke_message", new { phone, messageId }, cancellationToken);
     public Task<JsonElement> SetChatPinnedAsync(string phone, bool pinned, CancellationToken cancellationToken = default) =>
@@ -368,9 +438,19 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
                     else
                     {
                         var error = root.TryGetProperty("error", out var errorElement) ? errorElement : default;
-                        completion.TrySetException(new WhatsAppBridgeException(
-                            error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var code) ? code.GetString() ?? "bridge_error" : "bridge_error",
-                            error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var message) ? message.GetString() ?? "WhatsApp 桥接调用失败。" : "WhatsApp 桥接调用失败。"));
+                        var errorCode = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var code) ? code.GetString() ?? "bridge_error" : "bridge_error";
+                        // Governor refusals carry a machine-readable code but a
+                        // useless message (the code again); translate those so the
+                        // inbox shows a sentence rather than an identifier.
+                        var errorMessage = OutboundBlockCodes.IsBlocked(errorCode)
+                            ? OutboundBlockCodes.Describe(errorCode)
+                            : error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var message) ? message.GetString() ?? "WhatsApp 桥接调用失败。" : "WhatsApp 桥接调用失败。";
+                        completion.TrySetException(new WhatsAppBridgeException(errorCode, errorMessage)
+                        {
+                            Detail = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("detail", out var detail)
+                                ? detail.Clone()
+                                : default
+                        });
                     }
                     continue;
                 }

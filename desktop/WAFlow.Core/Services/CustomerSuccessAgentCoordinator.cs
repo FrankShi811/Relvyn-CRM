@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using WAFlow.Core.Domain;
 using WAFlow.Core.Infrastructure;
@@ -9,12 +10,36 @@ public sealed record CustomerSuccessAgentRunCompletedEvent(
     string ConversationId,
     CustomerSuccessRunStatus Status);
 
+/// <summary>
+/// A conversation whose offline-backlog message was withheld from automatic
+/// sending. <paramref name="DraftGenerated"/> is false when the per-catch-up
+/// draft budget was already spent (PRD v0.4 F5.5).
+/// </summary>
+public sealed record CustomerSuccessOfflineBacklogEvent(
+    string AccountId,
+    string ConversationId,
+    bool DraftGenerated);
+
+/// <summary>What an offline-backlog message is permitted to do.</summary>
+public enum OfflineBacklogDisposition
+{
+    /// <summary>Generate a draft for confirmation, never send.</summary>
+    DraftOnly,
+
+    /// <summary>Budget spent: record the conversation, do not call the model.</summary>
+    SummaryOnly,
+
+    /// <summary>The gate is switched off; treat the message as live.</summary>
+    GateDisabled
+}
+
 public interface ICustomerSuccessMessageSender
 {
     Task<JsonElement> SendTextAsync(
         string accountId,
         string phone,
         string text,
+        OutboundSendOptions options,
         CancellationToken cancellationToken = default);
 }
 
@@ -28,7 +53,19 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
     private readonly CustomerSuccessAgentService _agent;
     private readonly CancellationTokenSource _shutdown = new();
 
+    /// <summary>
+    /// Conversations already drafted in the current offline catch-up window, per
+    /// account. A set rather than a counter because the budget in PRD F5.5 is
+    /// fifty *conversations*: one customer who sent forty messages during the
+    /// outage must not starve thirty-nine others.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _backlogDraftedConversations =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public event EventHandler<CustomerSuccessAgentRunCompletedEvent>? RunCompleted;
+
+    /// <summary>Raised when backlog messages were withheld from automatic sending.</summary>
+    public event EventHandler<CustomerSuccessOfflineBacklogEvent>? OfflineBacklogDeferred;
 
     public CustomerSuccessAgentCoordinator(
         LocalRepository repository,
@@ -41,10 +78,23 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         _connections = connections;
         _agent = agent;
         _sync.MessageSynchronized += OnMessageSynchronized;
+        _sync.OfflineCatchupChanged += OnOfflineCatchupChanged;
     }
 
-    private void OnMessageSynchronized(object? sender, WhatsAppMessage message)
+    /// <summary>
+    /// Resets on both edges of the catch-up window, not just the opening one.
+    /// The age threshold can classify a straggler as backlog long after any
+    /// catch-up — clock skew, a delayed stanza — and without a closing reset
+    /// those would slowly consume the budget of a long-lived session until
+    /// drafting stopped altogether, silently and indefinitely. Overshooting the
+    /// budget by a few drafts is the recoverable direction.
+    /// </summary>
+    private void OnOfflineCatchupChanged(object? sender, WhatsAppOfflineCatchupEvent e) =>
+        _backlogDraftedConversations[e.AccountId] = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
+    private void OnMessageSynchronized(object? sender, WhatsAppMessageSyncedEvent e)
     {
+        var message = e.Message;
         if (message.IsGroup) return;
         if (message.Direction == WhatsAppMessageDirection.Outgoing && !message.IsRevoked)
         {
@@ -53,7 +103,68 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         }
         if (message.Direction != WhatsAppMessageDirection.Incoming || message.IsStatusUpdate ||
             message.IsRevoked || string.IsNullOrWhiteSpace(message.Body)) return;
-        _ = HandleAsync(message, _shutdown.Token);
+        _ = HandleAsync(message, e.Arrival, _shutdown.Token);
+    }
+
+    /// <summary>
+    /// Decides what a backlog message is allowed to do this catch-up window.
+    ///
+    /// Three outcomes, in order of preference: generate a draft the user
+    /// confirms; record a summary without spending an LLM call once the budget
+    /// is gone; or — when the gate is switched off — behave exactly as before.
+    /// </summary>
+    private async Task<OfflineBacklogDisposition> ResolveBacklogDispositionAsync(
+        WhatsAppMessage message,
+        CancellationToken cancellationToken)
+    {
+        AgentAutomationSettings automation;
+        try
+        {
+            automation = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation
+                         ?? new AgentAutomationSettings();
+        }
+        catch
+        {
+            // Fail closed: if the gate's own configuration cannot be read, hold
+            // the message back rather than send on an unverified assumption.
+            automation = new AgentAutomationSettings();
+        }
+        if (!automation.OfflineBacklogGateEnabled) return OfflineBacklogDisposition.GateDisabled;
+
+        var drafted = _backlogDraftedConversations.GetOrAdd(
+            message.AccountId, _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+        // A conversation already inside the budget keeps drafting for every
+        // further message it receives; only a *new* conversation spends a slot.
+        if (drafted.ContainsKey(message.ConversationId)) return OfflineBacklogDisposition.DraftOnly;
+        if (drafted.Count >= automation.NormalizedDraftLimit()) return OfflineBacklogDisposition.SummaryOnly;
+        drafted.TryAdd(message.ConversationId, 0);
+        return OfflineBacklogDisposition.DraftOnly;
+    }
+
+    private async Task RecordBacklogSummaryAsync(WhatsAppMessage message, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _repository.LogEventAsync(
+                "customer_success_offline_backlog_deferred",
+                null,
+                null,
+                Json.Serialize(new
+                {
+                    message.AccountId,
+                    message.ConversationId,
+                    sourceMessageId = message.Id,
+                    message.Timestamp,
+                    notSentReason = "offline_backlog_draft_limit"
+                }),
+                cancellationToken);
+        }
+        catch
+        {
+            // Diagnostics must never take down the sync loop.
+        }
+        OfflineBacklogDeferred?.Invoke(this, new CustomerSuccessOfflineBacklogEvent(
+            message.AccountId, message.ConversationId, false));
     }
 
     private async Task ReconcileOutgoingStatusAsync(WhatsAppMessage message, CancellationToken cancellationToken)
@@ -108,7 +219,10 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         }
     }
 
-    private async Task HandleAsync(WhatsAppMessage message, CancellationToken cancellationToken)
+    // Single overload on purpose: a convenience wrapper defaulting to
+    // MessageArrival.Live would be the fail-open direction, and the smoke tests
+    // reach this by name through reflection.
+    private async Task HandleAsync(WhatsAppMessage message, MessageArrival arrival, CancellationToken cancellationToken)
     {
         CustomerSuccessAgentRunResult? result = null;
         var expectedCustomerId = "";
@@ -125,6 +239,34 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 return;
             expectedCustomerId = state.CustomerId;
             var requestedMode = state.Mode;
+            var backlogGated = false;
+            if (arrival == MessageArrival.OfflineBacklog)
+            {
+                var disposition = await ResolveBacklogDispositionAsync(message, cancellationToken);
+                if (disposition == OfflineBacklogDisposition.SummaryOnly)
+                {
+                    await RecordBacklogSummaryAsync(message, cancellationToken);
+                    await TryUpdateRunOutcomeAsync(
+                        null,
+                        expectedCustomerId,
+                        message,
+                        CustomerSuccessRunStatus.Blocked,
+                        "离线期间堆积的消息数量超过本次补齐的草稿上限，未生成草稿，也未发送。",
+                        cancellationToken: cancellationToken);
+                    RaiseRunCompleted(message, CustomerSuccessRunStatus.Blocked);
+                    return;
+                }
+                if (disposition == OfflineBacklogDisposition.DraftOnly)
+                {
+                    // Downgrading the mode — rather than adding a parallel
+                    // "draft only" path — reuses the copilot flow that is already
+                    // proven not to send, so there is no second place where a
+                    // send could slip through.
+                    backlogGated = true;
+                    if (requestedMode == ConversationAgentMode.AutoActive)
+                        requestedMode = ConversationAgentMode.CopilotActive;
+                }
+            }
             result = await _agent.AnalyzeAsync(
                 message.AccountId, message.ConversationId, conversation.Phone, conversation.DisplayName,
                 sourceMessageId: message.Id,
@@ -161,6 +303,20 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
 
             if (requestedMode == ConversationAgentMode.CopilotActive)
             {
+                if (backlogGated)
+                {
+                    await TryUpdateRunOutcomeAsync(
+                        result,
+                        expectedCustomerId,
+                        message,
+                        CustomerSuccessRunStatus.CopilotDraftReady,
+                        "这条消息是电脑离线期间堆积的，已生成待确认草稿，未自动发送。",
+                        cancellationToken: cancellationToken);
+                    // Raised only now: before AnalyzeAsync there is nothing for the
+                    // user to confirm, and the run can still end without a draft.
+                    OfflineBacklogDeferred?.Invoke(this, new CustomerSuccessOfflineBacklogEvent(
+                        message.AccountId, message.ConversationId, true));
+                }
                 RaiseRunCompleted(message, CustomerSuccessRunStatus.CopilotDraftReady);
                 return;
             }
@@ -199,10 +355,18 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 requireAutoLock: !shouldSendHolding,
                 requireProcessedState: true,
                 cancellationToken);
+            // Last line of defence for the offline gate. The mode downgrade above
+            // is what normally stops a backlog reply, but that decision lives in a
+            // local read taken before the analysis; this one is local to the send
+            // itself, so no future branch can reach WhatsApp behind the gate's back.
+            if (backlogGated) throw new InvalidOperationException(ContextChangedMessage);
+            // The run token makes the key stable across an RPC timeout retry for
+            // the same generated reply, and different for a regenerated one.
             var response = await _connections.SendTextAsync(
                 message.AccountId,
                 verifiedConversation.Phone,
                 result.Decision.ReplyText,
+                OutboundSendOptions.ForAgent(message.ConversationId, result.ContextToken.RunToken),
                 cancellationToken);
             var providerMessageId = ReadProviderId(response);
             var targetVerified = ReadBool(response, "targetVerified");
@@ -408,6 +572,40 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                     "客户上下文已变化，本轮已关闭发送且未覆盖当前客户状态。",
                     cancellationToken: CancellationToken.None);
                 RaiseRunCompleted(message, CustomerSuccessRunStatus.Failed);
+                return;
+            }
+            // A governor refusal is not a failure of this run: nothing was sent,
+            // the reply is intact, and the only question is when to try again.
+            // Recording it as Failed would bury the reason in an error string and
+            // make the throttle look like a bug.
+            if (ex is WhatsAppBridgeException { IsOutboundBlocked: true } blocked)
+            {
+                var retryAfter = blocked.RetryAfter;
+                var detail = retryAfter is null || OutboundBlockCodes.IsHardStop(blocked.Code)
+                    ? blocked.Message
+                    : $"{blocked.Message}约 {Math.Max(1, (int)Math.Ceiling(retryAfter.Value.TotalSeconds))} 秒后可重试。";
+                await TryUpdateRunOutcomeAsync(
+                    result,
+                    expectedCustomerId,
+                    message,
+                    CustomerSuccessRunStatus.Blocked,
+                    detail,
+                    error: blocked.Code,
+                    cancellationToken: CancellationToken.None);
+                await _repository.LogEventAsync(
+                    "customer_success_outbound_blocked",
+                    result?.ContextToken?.CustomerId ?? expectedCustomerId,
+                    null,
+                    Json.Serialize(new
+                    {
+                        message.AccountId,
+                        message.ConversationId,
+                        sourceMessageId = message.Id,
+                        code = blocked.Code,
+                        retryAfterMs = (int?)retryAfter?.TotalMilliseconds
+                    }),
+                    CancellationToken.None);
+                RaiseRunCompleted(message, CustomerSuccessRunStatus.Blocked);
                 return;
             }
             var outcomeUpdated = await TryUpdateRunOutcomeAsync(
@@ -636,6 +834,7 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
     public void Dispose()
     {
         _sync.MessageSynchronized -= OnMessageSynchronized;
+        _sync.OfflineCatchupChanged -= OnOfflineCatchupChanged;
         _shutdown.Cancel();
         _shutdown.Dispose();
     }
