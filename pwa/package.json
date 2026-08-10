@@ -1,7 +1,7 @@
 {
-  "name": "ai-sales-os-pwa",
+  "name": "relvyn-crm-pwa",
   "private": true,
-  "version": "5.5.4",
+  "version": "5.5.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,5 +23,8 @@
     "typescript": "^5.7.2",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }

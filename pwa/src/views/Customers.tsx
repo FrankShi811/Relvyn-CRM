@@ -89,12 +89,12 @@ export function Customers() {
   return <>
     <PageHeader title="客户列表" subtitle="Buyer ID 优先识别同一客户；资料只保存在当前浏览器。"
       actions={<><Button variant="secondary" onClick={exportData}><Download size={16}/>导出</Button><Button variant="secondary" disabled={reading} onClick={() => fileRef.current?.click()}><FileUp size={16}/>{reading ? "正在读取…" : "导入 Excel / CSV"}</Button><Button onClick={() => setEditing(emptyLead())}><Plus size={16}/>新建客户</Button></>}/>
-    <input ref={fileRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={event => {
+    <input ref={fileRef} hidden type="file" aria-label="导入客户文件" accept=".xlsx,.xls,.csv" onChange={event => {
       void prepareImport(event.target.files?.[0]);
       event.currentTarget.value = "";
     }}/>
-    {notice && <div className="notice">{notice}<button onClick={() => setNotice("")}>×</button></div>}
-    <div className="toolbar"><div className="search"><Search/><input value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} placeholder="搜索姓名、Buyer ID、电话、邮箱或自定义字段"/></div><span>{filtered.length} 位客户</span></div>
+    {notice && <div className="notice" role="status">{notice}<button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
+    <div className="toolbar"><div className="search"><Search/><input aria-label="搜索客户" name="customer-search" autoComplete="off" value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} placeholder="搜索姓名、Buyer ID、电话、邮箱或自定义字段…"/></div><span>{filtered.length} 位客户</span></div>
     <section className="table-shell">
       {!leads.length ? <EmptyState title="建立统一客户档案" body="支持 Excel / CSV 动态字段导入；也可以先加载示例数据体验。" action={<Button variant="secondary" onClick={loadDemo}>加载示例数据</Button>}/> :
       <div className="data-table">
@@ -119,7 +119,7 @@ export function Customers() {
     {leads.length > 0 && <nav className="pagination" aria-label="客户列表分页">
       <label className="page-size-control">
         <span>每页显示</span>
-        <select aria-label="每页客户数" value={pageSize} onChange={event => { setPageSize(Number(event.target.value) as PageSize); setPage(1); }}>
+        <select aria-label="每页客户数" name="customer-page-size" value={pageSize} onChange={event => { setPageSize(Number(event.target.value) as PageSize); setPage(1); }}>
           {pageSizes.map(size => <option key={size} value={size}>{size} 位</option>)}
         </select>
       </label>
@@ -160,7 +160,7 @@ function ImportPreview({ parsed, sheetName, onSheetChange, onClose, onConfirm }:
     </div>
     <div className="form-grid import-controls">
       <Field label="导入工作表">
-        <select value={sheet.name} onChange={event => onSheetChange(event.target.value)}>
+        <select name="import-sheet" value={sheet.name} onChange={event => onSheetChange(event.target.value)}>
           {parsed.sheets.map(item => <option key={item.name} value={item.name}>{item.name}（{item.rows.length} 行）</option>)}
         </select>
       </Field>
@@ -189,17 +189,17 @@ function LeadEditor({ lead, onClose, onSave }: { lead: Lead; onClose: () => void
   const set = (key: keyof Lead, next: string) => setValue(current => ({ ...current, [key]: next }));
   return <Modal title={lead.name ? "编辑客户" : "新建客户"} onClose={onClose} wide>
     <div className="form-grid">
-      <Field label="Buyer ID" hint="存在时作为跨板块统一身份"><input value={value.buyerId} onChange={e => set("buyerId", e.target.value)}/></Field>
-      <Field label="客户名称"><input value={value.name} onChange={e => set("name", e.target.value)}/></Field>
-      <Field label="Nickname"><input value={value.nickname} onChange={e => set("nickname", e.target.value)}/></Field>
-      <Field label="WhatsApp / 电话"><input value={value.phone} onChange={e => set("phone", e.target.value)}/></Field>
-      <Field label="邮箱"><input type="email" value={value.email} onChange={e => set("email", e.target.value)}/></Field>
-      <Field label="公司"><input value={value.company} onChange={e => set("company", e.target.value)}/></Field>
-      <Field label="国家 / 地区"><input value={value.country} onChange={e => set("country", e.target.value)}/></Field>
-      <Field label="关注产品"><input value={value.productInterest} onChange={e => set("productInterest", e.target.value)}/></Field>
-      <Field label="销售阶段"><select value={value.stage} onChange={e => set("stage", e.target.value)}>{["新客户","初步沟通","需求确认","报价中","谈判中","成交","复购","暂停"].map(x => <option key={x}>{x}</option>)}</select></Field>
-      <Field label="负责人"><input value={value.owner} onChange={e => set("owner", e.target.value)}/></Field>
-      <Field label="备注"><textarea value={value.notes} onChange={e => set("notes", e.target.value)} rows={4}/></Field>
+      <Field label="Buyer ID" hint="存在时作为跨板块统一身份"><input name="buyer-id" autoComplete="off" spellCheck={false} value={value.buyerId} onChange={e => set("buyerId", e.target.value)}/></Field>
+      <Field label="客户名称"><input name="customer-name" autoComplete="name" value={value.name} onChange={e => set("name", e.target.value)}/></Field>
+      <Field label="Nickname"><input name="customer-nickname" autoComplete="off" value={value.nickname} onChange={e => set("nickname", e.target.value)}/></Field>
+      <Field label="WhatsApp / 电话"><input type="tel" name="customer-phone" autoComplete="tel" value={value.phone} onChange={e => set("phone", e.target.value)}/></Field>
+      <Field label="邮箱"><input type="email" name="customer-email" autoComplete="email" spellCheck={false} value={value.email} onChange={e => set("email", e.target.value)}/></Field>
+      <Field label="公司"><input name="customer-company" autoComplete="organization" value={value.company} onChange={e => set("company", e.target.value)}/></Field>
+      <Field label="国家 / 地区"><input name="customer-country" autoComplete="country-name" value={value.country} onChange={e => set("country", e.target.value)}/></Field>
+      <Field label="关注产品"><input name="product-interest" autoComplete="off" value={value.productInterest} onChange={e => set("productInterest", e.target.value)}/></Field>
+      <Field label="销售阶段"><select name="sales-stage" value={value.stage} onChange={e => set("stage", e.target.value)}>{["新客户","初步沟通","需求确认","报价中","谈判中","成交","复购","暂停"].map(x => <option key={x}>{x}</option>)}</select></Field>
+      <Field label="负责人"><input name="lead-owner" autoComplete="off" value={value.owner} onChange={e => set("owner", e.target.value)}/></Field>
+      <Field label="备注"><textarea name="lead-notes" autoComplete="off" value={value.notes} onChange={e => set("notes", e.target.value)} rows={4}/></Field>
     </div>
     <div className="modal-actions"><Button variant="secondary" onClick={onClose}>取消</Button><Button disabled={!value.name.trim()} onClick={() => void onSave(value)}>保存客户</Button></div>
   </Modal>;

@@ -40,17 +40,17 @@ export function Settings() {
   return <>
     <PageHeader title="API 与数据设置" subtitle="配置浏览器可调用的 AI 服务，并管理当前设备上的本地数据。"
       actions={<Button onClick={() => void save()}>保存并应用</Button>}/>
-    {notice && <div className="notice">{notice}<button onClick={() => setNotice("")}>×</button></div>}
+    {notice && <div className="notice" role="status">{notice}<button aria-label="关闭提示" onClick={() => setNotice("")}>×</button></div>}
     <section className="settings-grid">
       <Card className="settings-card">
         <div className="settings-heading"><span className="settings-icon ai"><Bot/></span><div><h2>AI 服务</h2><p>支持 OpenAI 兼容接口；实际可用性取决于 Provider 是否允许浏览器跨域访问。</p></div></div>
         <div className="form-grid">
-          <Field label="API Base URL"><input value={settings.baseUrl} onChange={e => setSettings({ ...settings, baseUrl: e.target.value })} placeholder="https://api.example.com/v1"/></Field>
-          <Field label="模型"><input value={settings.model} onChange={e => setSettings({ ...settings, model: e.target.value })} placeholder="model-name"/></Field>
-          <Field label="推理 / 思考深度"><select value={settings.reasoning} onChange={e => setSettings({ ...settings, reasoning: e.target.value })}>
+          <Field label="API Base URL"><input type="url" name="ai-base-url" autoComplete="off" spellCheck={false} value={settings.baseUrl} onChange={e => setSettings({ ...settings, baseUrl: e.target.value })} placeholder="例如：https://api.example.com/v1"/></Field>
+          <Field label="模型"><input name="ai-model" autoComplete="off" spellCheck={false} value={settings.model} onChange={e => setSettings({ ...settings, model: e.target.value })} placeholder="例如：model-name"/></Field>
+          <Field label="推理 / 思考深度"><select name="ai-reasoning" value={settings.reasoning} onChange={e => setSettings({ ...settings, reasoning: e.target.value })}>
             {["auto","none","low","medium","high","xhigh","ultra"].map(value => <option key={value} value={value}>{value === "auto" ? "按模型默认" : value}</option>)}
           </select></Field>
-          <Field label="API Key（仅当前标签页）" hint="关闭本标签页后自动清除；不会写入 IndexedDB 或备份文件。"><input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="••••••••••••"/></Field>
+          <Field label="API Key（仅当前标签页）" hint="关闭本标签页后自动清除；不会写入 IndexedDB 或备份文件。"><input type="password" name="ai-api-key" autoComplete="off" spellCheck={false} value={key} onChange={e => setKey(e.target.value)} placeholder="输入 API Key…"/></Field>
         </div>
         <div className="warning-panel"><ShieldAlert/><div><strong>浏览器安全边界</strong><p>GitHub Pages 无后端代理，API Key 会从你的浏览器直接发送给所选 Provider。若接口不开放 CORS，请改用支持浏览器调用的 Provider，或继续使用 Windows 正式版。</p></div></div>
       </Card>
@@ -60,7 +60,7 @@ export function Settings() {
           <Button variant="secondary" onClick={() => void exportAll()}><Download size={16}/>导出完整备份</Button>
           <Button variant="secondary" onClick={() => restoreRef.current?.click()}><Upload size={16}/>恢复备份</Button>
           <Button variant="secondary" onClick={() => void loadDemo()}><RotateCcw size={16}/>加载示例数据</Button>
-          <input hidden ref={restoreRef} type="file" accept=".json" onChange={e => void restore(e.target.files?.[0])}/>
+          <input hidden ref={restoreRef} type="file" aria-label="恢复 PWA 备份" accept=".json" onChange={e => void restore(e.target.files?.[0])}/>
         </div>
         <div className="danger-zone"><div><strong>清空当前浏览器数据</strong><p>此操作无法从云端找回，请先导出完整备份。</p></div><Button variant="danger" onClick={() => { if (confirm("确定清空本浏览器中的全部 AI Sales OS PWA 数据？")) void clearAll(); }}>清空数据</Button></div>
       </Card>

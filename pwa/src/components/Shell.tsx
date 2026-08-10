@@ -18,8 +18,8 @@ const nav: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "settings", label: "API 与数据设置", icon: Settings }
 ];
 
-export function Shell({ page, setPage, children, onInstall, canInstall }: {
-  page: PageKey; setPage: (page: PageKey) => void; children: ReactNode; onInstall: () => void; canInstall: boolean;
+export function Shell({ page, setPage, children, onInstall, canInstall, demoMode }: {
+  page: PageKey; setPage: (page: PageKey) => void; children: ReactNode; onInstall: () => void; canInstall: boolean; demoMode: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dark, setDark] = useState(() => localStorage.getItem("ai-sales-os-theme") === "dark");
@@ -29,8 +29,9 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
   }, [dark]);
   const choose = (key: PageKey) => { setPage(key); setMobileOpen(false); };
   return <div className="app-shell">
+    <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); requestAnimationFrame(() => document.getElementById("main-content")?.focus()); }}>跳到主要内容</a>
     <aside id="primary-navigation" className={`sidebar ${mobileOpen ? "open" : ""}`}>
-      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} alt="" width={52} height={52}/><div><strong>AI Sales OS</strong><span>PWA v5.5.4 · LOCAL FIRST</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X/></button></div>
+      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} width={52} height={52} fetchPriority="high" alt=""/><div><strong translate="no">Relvyn</strong><span>AI SALES OS · PWA v5.5.5</span></div><button className="mobile-close" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X/></button></div>
       <nav>
         <span className="nav-group">COMMAND CENTER</span>
         {nav.slice(0, 3).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
@@ -42,12 +43,12 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
       <div className="sidebar-note"><WifiOff size={17}/><div><strong>纯 PWA 模式</strong><span>不伪装后台常驻连接</span></div></div>
     </aside>
     {mobileOpen && <button className="nav-scrim" onClick={() => setMobileOpen(false)} aria-label="关闭导航"/>}
-    <main className="main">
+    <main id="main-content" tabIndex={-1} className="main">
       <header className="topbar">
         <button className="menu-button" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-controls="primary-navigation" aria-expanded={mobileOpen}><Menu/></button>
         <div className="top-title"><strong>{nav.find(x => x.key === page)?.label}</strong><span>客户资料保存在当前浏览器</span></div>
         <div className="top-actions">
-          <span className="local-status"><span/>本机数据</span>
+          <span className="local-status"><span/>{demoMode ? "示例数据" : "本机数据"}</span>
           {canInstall && <button className="button secondary install-button" onClick={onInstall}><Download size={16}/>安装 PWA</button>}
           <button className="icon-button theme-button" onClick={() => setDark(!dark)} aria-label="切换主题">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>
         </div>

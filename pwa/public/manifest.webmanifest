@@ -1,7 +1,7 @@
 {
-  "name": "AI Sales OS PWA",
-  "short_name": "AI Sales OS",
-  "description": "本地优先的 AI 客户管理、商机判断与人工触达工作台",
+  "name": "Relvyn AI Sales OS PWA",
+  "short_name": "Relvyn",
+  "description": "Relvyn 本地优先的 AI 客户管理、商机判断与人工触达工作台",
   "theme_color": "#081b15",
   "background_color": "#eff4f2",
   "display": "standalone",

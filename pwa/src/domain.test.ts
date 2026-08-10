@@ -20,7 +20,7 @@ const lead = (overrides: Partial<Lead> = {}): Lead => ({
   notes: "Needs specs",
   source: "test",
   updatedAt: "2026-07-28T00:00:00.000Z",
-  customFields: {},
+  customFields: { 采购数量: "120 units", 目标价格: "USD 168", 目的地: "Los Angeles", 物流偏好: "DDP sea freight" },
   ...overrides
 });
 

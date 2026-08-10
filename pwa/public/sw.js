@@ -1,5 +1,5 @@
-const CACHE = "ai-sales-os-pwa-v5.5.4-1";
-const APP_ROOT = "/Relvyn-CRM/";
+const CACHE = "ai-sales-os-pwa-v5.5.5-1";
+const APP_ROOT = new URL("./", self.registration.scope).pathname;
 const CORE = [
   APP_ROOT,
   `${APP_ROOT}manifest.webmanifest`,

@@ -4,6 +4,14 @@
 
 **Relvyn｜本地 AI 客户经营工作台**
 
+## Live Demo
+
+Try the [Relvyn CRM PWA Demo](https://frankshi811.github.io/Relvyn-CRM/).
+
+This browser demo showcases the Relvyn AI Sales OS interface with fictional,
+local-only sample data. The desktop version provides full local automation
+capabilities.
+
 This repository is the **legacy public source and update-compatibility
 repository** for Relvyn. Active source development, build scripts, and internal
 documentation have moved to a private repository. Future approved installers,

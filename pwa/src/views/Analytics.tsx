@@ -40,7 +40,7 @@ export function Analytics() {
       </Card>
       <div className="analysis-report">
         <section className="report-cover">
-          <div><span className="eyebrow">AI SALES BRIEF</span><h1>{lead.nickname || lead.name}</h1><p>{lead.company || "公司待补充"} · {lead.stage} · {lead.country || "地区待补充"}</p></div>
+          <div><span className="eyebrow">AI SALES BRIEF</span><h2>{lead.nickname || lead.name}</h2><p>{lead.company || "公司待补充"} · {lead.stage} · {lead.country || "地区待补充"}</p></div>
           <div className="report-score"><strong>{brain.coverage}</strong><span>% 资料覆盖</span></div>
         </section>
         <section className="report-cards">
