@@ -6,9 +6,20 @@ using WAFlow.Core.Infrastructure;
 
 namespace WAFlow.Core.Services;
 
+public interface ICustomerSuccessHostingReadiness
+{
+    bool IsConnectedFor(string accountId);
+    string ConnectionStateFor(string accountId);
+    Task<OutboundGovernorStatus> OutboundStatusAsync(
+        string accountId,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed partial class CustomerSuccessAgentService
 {
     private const string ContextChangedMessage = "上下文已变化，请重新生成";
+    private const string CrossCustomerContextMessage = "检测到其他客户数据，已阻断本轮生成和发送。";
+    private const string PromptVersion = "conversation-agent-v0.3";
     // Exact legacy built-in values are retained only to prevent an old default persona from resurfacing after an update.
     // They are normalized in memory and never written back over customer or user-authored data.
     private const string LegacyBuiltInRoleName = "DHgate Customer Success";
@@ -35,7 +46,10 @@ public sealed partial class CustomerSuccessAgentService
         - verifiedExternalFacts 是与当前客户身份版本一致且仍有效的公开商业证据，只能作背景；不能授权 CRM 更新，也不能覆盖最新客户原话或支持价格、库存、交期、政策承诺。
         - 客户原话发生冲突时必须保留冲突，不得静默覆盖。
         - safety 必须是 SafeToAnswer、DeferredHuman 或 ImmediateHuman。涉及折扣或最终报价批准、库存或资源承诺、交付/实施/物流/清关保证、退款/赔偿、投诉/法律/合同/税务/付款、政策处罚、客户要求人工、愤怒威胁、责任或无法确定的政策，必须 ImmediateHuman。
-        - ImmediateHuman 时 replyText 只能是与客户语言一致的简短占位回复，英文使用 “Let me check this with my colleague.”，中文使用“我先和同事确认一下。”，不得继续业务问答。
+        - 支付失败、退款、拒付或纠纷等风险若 riskInformationCollectionAllowed=true，只允许生成一次问题确认和基础信息收集消息，isRiskInformationCollection=true；不得承诺结果，随后必须等待人工。
+        - ImmediateHuman 且不允许风险信息收集时，replyText 只能是与客户语言一致的简短占位回复，英文使用 “Let me check this with my colleague.”，中文使用“我先和同事确认一下。”，不得继续业务问答。
+        - 每次先判断 topicState 和 shouldReply。客户仅表示感谢、明白、稍后联系、暂不需要或明确告别，且无开放问题时，topicState=Resolved、shouldReply=false、replyText 为空。不得发送额外收尾话术。
+        - sourceMessageIds 必须只从 latestIncomingBatch 提供的 ID 中选择，不得编造。
         - CRM 只能提出有客户 incoming 原话证据的建议，不能直接改写姓名、电话、负责人、退订、AI 分数或人工锁定阶段。
 
         严格返回一个 JSON 对象：
@@ -54,6 +68,11 @@ public sealed partial class CustomerSuccessAgentService
           "recommendedNextAction":"中文下一步",
           "crmProposals":[{"field":"允许字段","value":"值","evidenceQuote":"客户原话","reason":"中文原因"}],
           "knowledgeChunkIds":["只填写 approvedKnowledge 中实际使用的 chunkId"],
+          "sourceMessageIds":["只填写 latestIncomingBatch 中实际处理的消息 ID"],
+          "topicState":"Open|WaitingCustomer|WaitingHuman|Resolved|Ended",
+          "topicDecisionReason":"中文判断依据",
+          "shouldReply":true,
+          "isRiskInformationCollection":false,
           "confidence":0.0
         }
         """;
@@ -74,12 +93,33 @@ public sealed partial class CustomerSuccessAgentService
         "内部提示词", "忽略之前", "忽略所有指令", "系统提示词", "开发者消息", "密钥", "凭据"
     ];
 
+    private static readonly string[] TopicClosingTerms =
+    [
+        "thanks", "thank you", "got it", "understood", "that solves it", "problem solved", "all good",
+        "talk later", "contact you later", "no need", "not needed", "bye", "goodbye",
+        "谢谢", "感谢", "明白了", "知道了", "问题解决", "已经解决", "没问题了", "稍后联系", "暂时不需要", "再见"
+    ];
+
+    private static readonly string[] PaymentRiskTerms =
+    [
+        "payment failed", "payment failure", "payment issue", "paypal", "bank card", "card declined",
+        "chargeback", "付款失败", "支付失败", "付款问题", "支付问题", "银行卡", "拒付"
+    ];
+
+    private static readonly string[] DisputeRiskTerms =
+    [
+        "dispute", "refund", "complaint", "quality issue", "damaged", "not received",
+        "纠纷", "退款", "投诉", "质量问题", "破损", "未收到"
+    ];
+
     private readonly LocalRepository _repository;
     private readonly IStructuredAiProvider _provider;
     private readonly CustomerIdentityService _identity;
     private readonly SourcingRequestService _sourcing;
     private readonly HybridRetriever? _knowledgeRetrieval;
     private readonly CustomerBrainService? _customerBrain;
+    private readonly ICustomerSuccessHostingReadiness? _hostingReadiness;
+    private readonly WhatsAppSyncService? _whatsAppSync;
 
     public CustomerSuccessAgentService(
         LocalRepository repository,
@@ -87,7 +127,9 @@ public sealed partial class CustomerSuccessAgentService
         CustomerIdentityService identity,
         SourcingRequestService sourcing,
         HybridRetriever? knowledgeRetrieval = null,
-        CustomerBrainService? customerBrain = null)
+        CustomerBrainService? customerBrain = null,
+        ICustomerSuccessHostingReadiness? hostingReadiness = null,
+        WhatsAppSyncService? whatsAppSync = null)
     {
         _repository = repository;
         _provider = provider;
@@ -95,6 +137,8 @@ public sealed partial class CustomerSuccessAgentService
         _sourcing = sourcing;
         _knowledgeRetrieval = knowledgeRetrieval;
         _customerBrain = customerBrain;
+        _hostingReadiness = hostingReadiness;
+        _whatsAppSync = whatsAppSync;
     }
 
     public async Task<CustomerSuccessContext?> GetContextAsync(
@@ -103,12 +147,40 @@ public sealed partial class CustomerSuccessAgentService
         var link = await _repository.GetWhatsAppIdentityLinkAsync(accountId, conversationId, cancellationToken);
         if (link is null || !link.IsActive || string.IsNullOrWhiteSpace(link.CustomerId)) return null;
         var customerId = link.CustomerId;
+        var identityLinks = await _repository.GetWhatsAppIdentityLinksAsync(customerId, cancellationToken);
+        var allowedConversations = identityLinks
+            .Where(item => item.IsActive)
+            .Select(item => $"{item.AccountId}\n{item.ConversationId}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var messages = await _repository.GetWhatsAppMessagesForCustomerAsync(customerId, 500, cancellationToken);
+        if (messages.Any(message => !allowedConversations.Contains($"{message.AccountId}\n{message.ConversationId}")))
+            throw new InvalidOperationException(CrossCustomerContextMessage);
+        var emailMessages = await _repository.GetEmailMessagesForLeadAsync(customerId, 200, cancellationToken);
+        if (emailMessages.Any(message => !message.LeadId.Equals(customerId, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException(CrossCustomerContextMessage);
+        var opportunity = await _repository.GetOpportunitySnapshotAsync(customerId, cancellationToken);
+        if (opportunity is not null && !opportunity.LeadId.Equals(customerId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(CrossCustomerContextMessage);
+        var opportunityEvents = await _repository.GetOpportunityEventsAsync([customerId], cancellationToken);
+        if (opportunityEvents.Any(item => !item.LeadId.Equals(customerId, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException(CrossCustomerContextMessage);
         var brainCandidate = _customerBrain is null
             ? await _repository.GetCustomerIntelligenceProfileAsync(customerId, cancellationToken)
             : await _customerBrain.GetAsync(customerId, cancellationToken);
         var persona = await _repository.GetAccountPersonaAsync(accountId, cancellationToken) ??
                       new AccountPersona { AccountId = accountId };
         NormalizeLegacyBuiltInPersona(persona);
+        var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
+        if (state is not null)
+        {
+            state.OpportunityId = opportunity?.LeadId ?? "";
+            state.ContextNamespace = ConversationAgentStateMachine.BuildContextNamespace(
+                state.TenantId,
+                state.UserId,
+                customerId,
+                accountId,
+                conversationId);
+        }
         return new CustomerSuccessContext
         {
             CustomerId = customerId,
@@ -119,11 +191,14 @@ public sealed partial class CustomerSuccessAgentService
             GlobalRelationship = await _repository.GetRelationshipMemoryAsync(customerId, cancellationToken),
             Brain = brainCandidate?.HasCurrentDecision == true ? brainCandidate : null,
             SourcingRequest = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken),
-            AgentState = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken),
+            AgentState = state,
             AgentLock = await _repository.GetGlobalCustomerAgentLockAsync(customerId, cancellationToken),
             OpenHandoff = await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken),
-            IdentityLinks = await _repository.GetWhatsAppIdentityLinksAsync(customerId, cancellationToken),
-            Messages = await _repository.GetWhatsAppMessagesForCustomerAsync(customerId, 500, cancellationToken),
+            IdentityLinks = identityLinks,
+            Messages = messages,
+            EmailMessages = emailMessages,
+            Opportunity = opportunity,
+            OpportunityEvents = opportunityEvents,
             PendingQuestions = await _repository.GetPendingQuestionsAsync(customerId, cancellationToken)
         };
     }
@@ -147,6 +222,7 @@ public sealed partial class CustomerSuccessAgentService
         string jid = "",
         string lid = "",
         string? sourceMessageId = null,
+        IReadOnlyCollection<string>? sourceMessageIds = null,
         CustomerSuccessRunTrigger trigger = CustomerSuccessRunTrigger.Manual,
         CancellationToken cancellationToken = default)
     {
@@ -177,6 +253,13 @@ public sealed partial class CustomerSuccessAgentService
             ConversationId = conversationId,
             Mode = ConversationAgentMode.SuggestOnly
         };
+        state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        state.CustomerId = context.CustomerId;
+        state.AccountId = accountId;
+        state.ConversationId = conversationId;
+        state.OpportunityId = context.Opportunity?.LeadId ?? "";
+        state.ContextNamespace = ConversationAgentStateMachine.BuildContextNamespace(
+            state.TenantId, state.UserId, context.CustomerId, accountId, conversationId);
         var currentConversationMessages = await _repository.GetWhatsAppMessagesAsync(
             conversationId,
             5000,
@@ -192,6 +275,83 @@ public sealed partial class CustomerSuccessAgentService
         if (source is null)
             return new CustomerSuccessAgentRunResult { Identity = identity, Context = context, AgentState = state, BlockReason = "没有可分析的客户原话。" };
 
+        var requestedSourceIds = (sourceMessageIds ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Append(source.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var sourceBatch = incomingForConversation
+            .Where(message => requestedSourceIds.Contains(message.Id) ||
+                              requestedSourceIds.Contains(message.ProviderMessageId))
+            .OrderBy(message => message.Timestamp)
+            .ThenBy(message => message.Id, StringComparer.Ordinal)
+            .ToList();
+        if (sourceBatch.Count == 0) sourceBatch.Add(source);
+        var batchSourceIds = sourceBatch.Select(message => message.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (trigger == CustomerSuccessRunTrigger.IncomingAutomation)
+        {
+            var allowed = state.Mode switch
+            {
+                ConversationAgentMode.AutoActive => ConversationAgentStateMachine.AllowsAutoProcessing(state),
+                ConversationAgentMode.CopilotActive => ConversationAgentStateMachine.AllowsCollaboration(state),
+                _ => false
+            };
+            if (!allowed)
+            {
+                return new CustomerSuccessAgentRunResult
+                {
+                    Identity = identity,
+                    Context = context,
+                    AgentState = state,
+                    BlockReason = "当前模式已配置，但会话运行状态未启动；本轮保持静默。"
+                };
+            }
+            if (state.LastProcessedMessageId.Equals(source.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                await SaveAuditAsync(
+                    state,
+                    ConversationAgentAuditAction.DuplicateMessageIgnored,
+                    state.RunState,
+                    state.RunState,
+                    "duplicate_source_message",
+                    $"消息 {source.Id} 已处理，未重复生成或发送。",
+                    source.Id,
+                    cancellationToken: cancellationToken);
+                return new CustomerSuccessAgentRunResult
+                {
+                    Identity = identity,
+                    Context = context,
+                    AgentState = state,
+                    BlockReason = "同一来源消息已经处理。"
+                };
+            }
+            if (state.Mode == ConversationAgentMode.AutoActive &&
+                ConversationAgentStateMachine.HasReachedAutomaticTurnLimit(state))
+            {
+                var before = state.RunState;
+                ConversationAgentStateMachine.WaitForHuman(state, "已达到本轮自动托管回合上限，需要人工复核。");
+                await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+                await _repository.ReleaseGlobalCustomerAgentLockAsync(state.CustomerId, cancellationToken);
+                await SaveAuditAsync(
+                    state,
+                    ConversationAgentAuditAction.HostingPaused,
+                    before,
+                    state.RunState,
+                    "automatic_turn_limit",
+                    state.PauseReason,
+                    source.Id,
+                    cancellationToken: cancellationToken);
+                return new CustomerSuccessAgentRunResult
+                {
+                    Identity = identity,
+                    Context = context,
+                    AgentState = state,
+                    BlockReason = state.PauseReason
+                };
+            }
+        }
+
         var verifiedExternalFacts = await CustomerExternalFactPolicy.GetCurrentFactsAsync(
             _repository,
             context.CustomerId,
@@ -199,6 +359,41 @@ public sealed partial class CustomerSuccessAgentService
             cancellationToken);
         var requireAutoLock = trigger == CustomerSuccessRunTrigger.IncomingAutomation &&
                               state.Mode == ConversationAgentMode.AutoActive;
+        if (requireAutoLock)
+        {
+            var before = state.RunState;
+            ConversationAgentStateMachine.BeginProcessing(state, source.Id, state.ContextVersion + 1);
+            state.LastSourceMessageIds = batchSourceIds;
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                batchSourceIds.Count > 1
+                    ? ConversationAgentAuditAction.MessageCoalesced
+                    : ConversationAgentAuditAction.MessageQueued,
+                before,
+                state.RunState,
+                "incoming_batch_claimed",
+                $"已归并 {batchSourceIds.Count} 条客户消息并建立独立处理上下文。",
+                source.Id,
+                cancellationToken: cancellationToken);
+        }
+        else if (trigger == CustomerSuccessRunTrigger.IncomingAutomation && batchSourceIds.Count > 1)
+        {
+            // Collaboration uses the same conversation mailbox and must remain
+            // equally auditable even though it never enters the auto-send
+            // processing state or owns the customer send lock.
+            state.LastSourceMessageIds = batchSourceIds;
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.MessageCoalesced,
+                state.RunState,
+                state.RunState,
+                "incoming_batch_coalesced_collaboration",
+                $"已归并 {batchSourceIds.Count} 条客户消息；协作模式只生成一个待审核草稿。",
+                source.Id,
+                cancellationToken: cancellationToken);
+        }
         var contextToken = await CaptureRunContextTokenAsync(
             context,
             accountId,
@@ -209,7 +404,8 @@ public sealed partial class CustomerSuccessAgentService
             cancellationToken);
 
         if (context.OpenHandoff is not null ||
-            state.Mode is ConversationAgentMode.HumanRequired or ConversationAgentMode.HumanActive or ConversationAgentMode.ResumeReview)
+            state.RunState is ConversationAgentRunState.WaitingHuman or ConversationAgentRunState.HumanTakeover or
+                ConversationAgentRunState.PausedRisk)
         {
             await EnsureRunContextCurrentAsync(contextToken, false, false, cancellationToken);
             state.PausedMessageCount++;
@@ -229,10 +425,78 @@ public sealed partial class CustomerSuccessAgentService
             };
         }
 
-        var hardSafety = ClassifySafety(source.Body);
+        var topicEvaluation = EvaluateTopicBeforeGeneration(context, sourceBatch);
+        if (topicEvaluation.State is ConversationTopicState.Resolved or ConversationTopicState.Ended)
+        {
+            var resolvedDecision = CreateTopicResolvedDecision(source, batchSourceIds, topicEvaluation.Reason);
+            return await CompleteRunAsync(
+                identity, context, state, source, resolvedDecision, null, null, null,
+                contextToken, requireAutoLock, trigger, cancellationToken);
+        }
+
+        var combinedIncoming = string.Join('\n', sourceBatch.Select(item =>
+            string.IsNullOrWhiteSpace(item.Body) ? $"[{item.Kind}] {item.FileName}" : item.Body));
+        var riskCategory = ClassifyRiskCategory(combinedIncoming);
+        if (!string.IsNullOrWhiteSpace(riskCategory))
+        {
+            if (state.RiskState is ConversationRiskVerificationState.InformationCollectionSent or
+                ConversationRiskVerificationState.WaitingHuman or
+                ConversationRiskVerificationState.AlreadyDiscussed ||
+                WasRiskPreviouslyDiscussed(context.Messages, batchSourceIds, riskCategory) ||
+                RiskAlreadyRecordedInOpportunity(context.Opportunity, riskCategory))
+            {
+                var before = state.RunState;
+                state.RiskState = ConversationRiskVerificationState.AlreadyDiscussed;
+                state.LastRiskCategory = riskCategory;
+                ConversationAgentStateMachine.WaitForHuman(
+                    state,
+                    "该风险事项已经询问或讨论过；新资料已保存，AI 不会重复询问，等待人工处理。");
+                state.LastProcessedMessageId = source.Id;
+                state.LastSourceMessageIds = batchSourceIds;
+                await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+                await _repository.ReleaseGlobalCustomerAgentLockAsync(state.CustomerId, cancellationToken);
+                await SaveAuditAsync(
+                    state,
+                    ConversationAgentAuditAction.RiskDetected,
+                    before,
+                    state.RunState,
+                    "risk_already_discussed",
+                    state.PauseReason,
+                    source.Id,
+                    cancellationToken: cancellationToken);
+                return new CustomerSuccessAgentRunResult
+                {
+                    Identity = identity,
+                    Context = context,
+                    AgentState = state,
+                    ContextToken = contextToken,
+                    BlockReason = state.PauseReason
+                };
+            }
+
+            var riskDecision = CreateRiskInformationCollectionDecision(
+                source,
+                batchSourceIds,
+                riskCategory);
+            state.RiskState = ConversationRiskVerificationState.OpenUnverified;
+            state.LastRiskCategory = riskCategory;
+            await EnsureRunContextCurrentAsync(contextToken, requireAutoLock, false, cancellationToken);
+            var handoff = await CreateHandoffAsync(
+                context,
+                source,
+                riskDecision.SafetyReason,
+                riskDecision.ChineseSummary,
+                cancellationToken,
+                riskInformationCollection: true);
+            return await CompleteRunAsync(
+                identity, context, state, source, riskDecision, null, handoff, null,
+                contextToken, requireAutoLock, trigger, cancellationToken);
+        }
+
+        var hardSafety = ClassifySafety(combinedIncoming);
         if (hardSafety == AgentQuestionSafety.ImmediateHuman)
         {
-            var holdingDecision = CreateHoldingDecision(source);
+            var holdingDecision = CreateHoldingDecision(source, batchSourceIds);
             await EnsureRunContextCurrentAsync(contextToken, requireAutoLock, false, cancellationToken);
             var handoff = await CreateHandoffAsync(
                 context, source, holdingDecision.SafetyReason, holdingDecision.ChineseSummary, cancellationToken);
@@ -248,7 +512,9 @@ public sealed partial class CustomerSuccessAgentService
             .Select(item => item.Body).Where(item => !string.IsNullOrWhiteSpace(item)).ToList();
         var retrievalRequest = new KnowledgeRetrievalRequest
         {
-            Query = source.Body,
+            Query = combinedIncoming,
+            TenantId = state.TenantId,
+            UserId = state.UserId,
             CustomerId = context.CustomerId,
             AccountId = accountId,
             ConversationId = conversationId,
@@ -269,10 +535,49 @@ public sealed partial class CustomerSuccessAgentService
                 InsufficiencyReason = "知识检索服务未配置。"
             }
             : await _knowledgeRetrieval.RetrieveAsync(retrievalRequest, cancellationToken);
+        var invalidKnowledgeHits = knowledge.Hits
+            .Where(hit => !KnowledgeHitBelongsToContext(hit, retrievalRequest))
+            .ToList();
+        if (invalidKnowledgeHits.Count > 0)
+        {
+            knowledge.Hits = [];
+            knowledge.SufficientToAnswer = false;
+            knowledge.InsufficiencyReason = CrossCustomerContextMessage;
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.ContextSafetyBlocked,
+                state.RunState,
+                state.RunState,
+                "cross_customer_knowledge_blocked",
+                $"知识检索返回 {invalidKnowledgeHits.Count} 条越界结果，已丢弃全部结果并停止生成。",
+                source.Id,
+                retrievedCustomerIds: invalidKnowledgeHits.Select(item => item.Scope.CustomerId),
+                contextSafetyPassed: false,
+                cancellationToken: cancellationToken);
+            throw new InvalidOperationException(CrossCustomerContextMessage);
+        }
+        if (RequiresApprovedKnowledge(combinedIncoming) &&
+            (!knowledge.SufficientToAnswer || knowledge.ConflictWarnings.Count > 0 || knowledge.RiskWarnings.Count > 0))
+        {
+            var holdingDecision = CreateHoldingDecision(source, batchSourceIds);
+            holdingDecision.SafetyReason = knowledge.ConflictWarnings.Count > 0
+                ? "批准知识存在未解决冲突，无法安全回答该业务问题。"
+                : knowledge.RiskWarnings.Count > 0
+                    ? "批准知识已过期或存在风险，无法安全回答该业务问题。"
+                    : $"当前批准知识不足以安全回答该业务问题：{knowledge.InsufficiencyReason}";
+            holdingDecision.KnowledgeRetrievalId = knowledge.Id;
+            holdingDecision.KnowledgeSufficient = false;
+            await EnsureRunContextCurrentAsync(contextToken, requireAutoLock, false, cancellationToken);
+            var handoff = await CreateHandoffAsync(
+                context, source, holdingDecision.SafetyReason, holdingDecision.ChineseSummary, cancellationToken);
+            return await CompleteRunAsync(
+                identity, context, state, source, holdingDecision, null, handoff, knowledge,
+                contextToken, requireAutoLock, trigger, cancellationToken);
+        }
         if (hardSafety == AgentQuestionSafety.DeferredHuman &&
             (!knowledge.SufficientToAnswer || knowledge.ConflictWarnings.Count > 0))
         {
-            var holdingDecision = CreateHoldingDecision(source);
+            var holdingDecision = CreateHoldingDecision(source, batchSourceIds);
             holdingDecision.SafetyReason = knowledge.ConflictWarnings.Count > 0
                 ? "批准知识存在未解决冲突，无法安全回答政策问题。"
                 : $"当前批准知识不足以安全回答政策问题：{knowledge.InsufficiencyReason}";
@@ -313,6 +618,40 @@ public sealed partial class CustomerSuccessAgentService
                 context.Brain.Risks, context.Brain.NextBestAction, context.Brain.Confidence, context.Brain.PurchaseProbability,
                 evidence = context.Brain.Statements.Where(item => item.Nature == IntelligenceStatementNature.Fact).Take(20)
             },
+            emailHistory = context.EmailMessages.TakeLast(40).Select(item => new
+            {
+                item.Id,
+                item.AccountId,
+                item.ConversationId,
+                direction = item.Direction.ToString(),
+                item.Timestamp,
+                item.Subject,
+                text = LimitText(item.TextBody, 1200)
+            }),
+            opportunity = context.Opportunity is null ? null : new
+            {
+                context.Opportunity.LeadId,
+                context.Opportunity.AwaitingPaymentCount,
+                context.Opportunity.FailedPaymentCount,
+                context.Opportunity.LatestFailedPaymentAt,
+                context.Opportunity.LatestFailureReason,
+                context.Opportunity.LatestPaymentChannel,
+                context.Opportunity.DisputeCount,
+                context.Opportunity.LatestDisputeAt,
+                context.Opportunity.PrimaryDisputeReason,
+                context.Opportunity.HasChargeback,
+                note = "商机字段仅是待核实信号，不是已经发生或仍开放的确定事实。"
+            },
+            opportunityEvents = context.OpportunityEvents.TakeLast(30).Select(item => new
+            {
+                item.Id,
+                kind = item.Kind.ToString(),
+                item.OccurredAt,
+                item.OrderId,
+                item.PaymentChannel,
+                item.FailureReason,
+                item.DisputePrimaryReason
+            }),
             verifiedExternalFacts = verifiedExternalFacts.Select(fact => new
             {
                 fact.FieldType,
@@ -325,6 +664,7 @@ public sealed partial class CustomerSuccessAgentService
             unresolvedQuestions = context.PendingQuestions,
             allowedCrmFields = allowedFields,
             policyKnowledgeRequired = hardSafety == AgentQuestionSafety.DeferredHuman,
+            riskInformationCollectionAllowed = false,
             knowledgeSufficient = knowledge.SufficientToAnswer,
             knowledgeWarnings = knowledge.ConflictWarnings.Concat(knowledge.RiskWarnings),
             approvedKnowledge = knowledge.Hits.Select(hit => new
@@ -357,7 +697,16 @@ public sealed partial class CustomerSuccessAgentService
             {
                 source.Id, source.AccountId, source.ConversationId, source.Timestamp,
                 text = LimitText(source.Body, 4000)
-            }
+            },
+            latestIncomingBatch = sourceBatch.Select(item => new
+            {
+                item.Id,
+                item.ProviderMessageId,
+                item.Timestamp,
+                item.Kind,
+                item.FileName,
+                text = LimitText(item.Body, 4000)
+            })
         };
         CustomerSuccessAgentDecision decision;
         try
@@ -371,7 +720,8 @@ public sealed partial class CustomerSuccessAgentService
                     allowedFields,
                     evidence,
                     allowedKnowledgeChunkIds,
-                    hardSafety == AgentQuestionSafety.DeferredHuman),
+                    hardSafety == AgentQuestionSafety.DeferredHuman,
+                    batchSourceIds),
                 cancellationToken);
         }
         catch (DeepSeekException error) when (
@@ -379,6 +729,29 @@ public sealed partial class CustomerSuccessAgentService
             error.Code == "invalid_structured_output")
         {
             decision = CreateSafeManualFallbackDecision(source, error);
+        }
+        catch (DeepSeekException error) when (trigger == CustomerSuccessRunTrigger.IncomingAutomation)
+        {
+            var failedFrom = state.RunState;
+            ConversationAgentStateMachine.PauseError(
+                state,
+                $"模型处理失败，已停止当前托管且不会重放本轮消息：{error.Message}" );
+            state.LastRunStatus = CustomerSuccessRunStatus.Failed;
+            state.LastRunError = $"{error.Code}: {error.Message}";
+            state.LastRunDetail = "自动处理失败并安全暂停；需要人工复核后显式重新托管。";
+            await _repository.ReleaseGlobalCustomerAgentLockAsync(state.CustomerId, cancellationToken);
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.ErrorPaused,
+                failedFrom,
+                state.RunState,
+                "model_failed_pause",
+                state.LastRunDetail,
+                source.Id,
+                contextSafetyPassed: false,
+                cancellationToken: cancellationToken);
+            throw;
         }
         decision.Model = await _provider.GetSelectedModelAsync(AiModuleKeys.WhatsAppInbox, cancellationToken);
         decision.LatestIncomingMessageId = source.Id;
@@ -389,6 +762,16 @@ public sealed partial class CustomerSuccessAgentService
             .Where(allowedKnowledgeChunkIds.Contains)
             .Take(8)
             .ToList();
+        decision.SourceMessageIds = Clean(decision.SourceMessageIds)
+            .Where(id => batchSourceIds.Contains(id, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (decision.SourceMessageIds.Count == 0) decision.SourceMessageIds = batchSourceIds;
+        if (decision.TopicState == ConversationTopicState.Unknown)
+            decision.TopicState = decision.ShouldReply
+                ? ConversationTopicState.Open
+                : ConversationTopicState.Resolved;
+        if (!decision.ShouldReply || decision.TopicState is ConversationTopicState.Resolved or ConversationTopicState.Ended)
+            decision.ReplyText = "";
         decision.KnowledgeCitations = knowledge.Hits
             .Where(hit => decision.KnowledgeChunkIds.Contains(hit.ChunkId, StringComparer.OrdinalIgnoreCase))
             .ToList();
@@ -398,6 +781,13 @@ public sealed partial class CustomerSuccessAgentService
             .Select(group => group.First()).Take(5).ToList();
         if (hardSafety == AgentQuestionSafety.DeferredHuman && decision.Safety == AgentQuestionSafety.SafeToAnswer)
             decision.Safety = AgentQuestionSafety.DeferredHuman;
+
+        if (!decision.ShouldReply || decision.TopicState is ConversationTopicState.Resolved or ConversationTopicState.Ended)
+        {
+            return await CompleteRunAsync(
+                identity, context, state, source, decision, null, null, knowledge,
+                contextToken, requireAutoLock, trigger, cancellationToken);
+        }
 
         await EnsureRunContextCurrentAsync(contextToken, requireAutoLock, false, cancellationToken);
         SourcingRequest? sourcing = null;
@@ -443,32 +833,229 @@ public sealed partial class CustomerSuccessAgentService
     {
         var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken) ??
                     new ConversationAgentState { CustomerId = customerId, AccountId = accountId, ConversationId = conversationId };
-        if (mode == ConversationAgentMode.AutoActive)
-        {
-            if (!explicitUserAction) throw new InvalidOperationException("自动回复只能由用户明确开启。");
-            var acquired = await _repository.TryAcquireGlobalCustomerAgentLockAsync(new GlobalCustomerAgentLock
-            {
-                CustomerId = customerId,
-                ActiveAccountId = accountId,
-                ActiveConversationId = conversationId,
-                AcquiredBy = "user"
-            }, cancellationToken);
-            if (!acquired)
-            {
-                var existing = await _repository.GetGlobalCustomerAgentLockAsync(customerId, cancellationToken);
-                throw new InvalidOperationException($"该客户已由账号 {existing?.ActiveAccountId} 自动处理。请先显式切换主账号。");
-            }
-        }
-        else if (state.Mode == ConversationAgentMode.AutoActive)
+        state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        if (!state.CustomerId.Equals(customerId, StringComparison.OrdinalIgnoreCase) ||
+            !state.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) ||
+            !state.ConversationId.Equals(conversationId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(ContextChangedMessage);
+        if (mode == ConversationAgentMode.AutoActive && !explicitUserAction)
+            throw new InvalidOperationException("自动托管模式只能由用户明确配置。选择模式后仍需单独点击“开始托管”。");
+        var before = state.RunState;
+        if (ConversationAgentStateMachine.IsHosting(state) || state.Mode == ConversationAgentMode.AutoActive)
         {
             var agentLock = await _repository.GetGlobalCustomerAgentLockAsync(customerId, cancellationToken);
             if (agentLock?.ActiveAccountId == accountId && agentLock.ActiveConversationId == conversationId)
                 await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
         }
-        state.Mode = mode;
-        state.StateReason = explicitUserAction ? CustomerSuccessAgentLabels.ModeStateReason(mode) : state.StateReason;
-        state.ExplicitResumeRequired = mode is ConversationAgentMode.HumanRequired or ConversationAgentMode.ResumeReview;
+        var settings = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation ?? new AgentAutomationSettings();
+        state.MaxAutomaticTurns = settings.NormalizedMaxAutomaticTurns();
+        ConversationAgentStateMachine.ConfigureMode(
+            state,
+            mode,
+            explicitUserAction
+                ? CustomerSuccessAgentLabels.ModeStateReason(mode)
+                : "系统已保存处理策略；当前会话未启动运行。");
         await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.ModeConfigured,
+            before,
+            state.RunState,
+            "mode_configured",
+            $"模式已配置为 {CustomerSuccessAgentLabels.Mode(state.Mode)}；未启动后台运行，也未取得发送锁。",
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
+    public async Task<ConversationAgentState> StartCollaborationAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        string actor,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await RequireStateAsync(customerId, accountId, conversationId, cancellationToken);
+        if (await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken) is not null)
+            throw new InvalidOperationException("当前客户正在等待人工处理，完成交接后才能开始协作。");
+        var before = state.RunState;
+        ConversationAgentStateMachine.StartCollaboration(state, $"由 {actor} 开始协作；AI 只生成草稿，不自动发送。");
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.CollaborationStarted,
+            before,
+            state.RunState,
+            "collaboration_started",
+            state.StateReason,
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
+    public async Task<ConversationAgentState> StopCollaborationAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await RequireStateAsync(customerId, accountId, conversationId, cancellationToken);
+        var before = state.RunState;
+        ConversationAgentStateMachine.StopCollaboration(
+            state,
+            string.IsNullOrWhiteSpace(reason) ? $"由 {actor} 停止协作。" : reason.Trim());
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.CollaborationStopped,
+            before,
+            state.RunState,
+            "collaboration_stopped",
+            state.StateReason,
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
+    public async Task<ConversationAgentState> StartHostingAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        string actor,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await RequireStateAsync(customerId, accountId, conversationId, cancellationToken);
+        var before = state.RunState;
+        ConversationAgentStateMachine.BeginPreflight(state, $"由 {actor} 请求开始当前单个会话的自动托管。");
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.PreflightStarted,
+            before,
+            state.RunState,
+            "preflight_started",
+            "正在检查 WhatsApp、身份、会话、上下文、风险与人工接管状态。",
+            cancellationToken: cancellationToken);
+
+        ConversationAgentPreflightResult preflight;
+        try
+        {
+            preflight = await RunPreflightAsync(state, cancellationToken);
+        }
+        catch (Exception error)
+        {
+            preflight = new ConversationAgentPreflightResult
+            {
+                CustomerId = customerId,
+                AccountId = accountId,
+                ConversationId = conversationId,
+                OpportunityId = state.OpportunityId,
+                ContextNamespace = state.ContextNamespace,
+                Checks =
+                [
+                    new ConversationAgentPreflightCheck
+                    {
+                        Code = "preflight_exception",
+                        Label = "托管前置检查",
+                        Passed = false,
+                        Detail = error.Message
+                    }
+                ]
+            };
+        }
+
+        if (!preflight.Passed)
+        {
+            var preflightState = state.RunState;
+            ConversationAgentStateMachine.PauseError(
+                state,
+                string.IsNullOrWhiteSpace(preflight.FailureReason) ? "托管前置检查未通过。" : preflight.FailureReason);
+            await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.PreflightBlocked,
+                preflightState,
+                state.RunState,
+                "preflight_blocked",
+                Json.Serialize(preflight),
+                contextSafetyPassed: false,
+                cancellationToken: cancellationToken);
+            throw new InvalidOperationException(state.PauseReason);
+        }
+
+        var acquired = await _repository.TryAcquireGlobalCustomerAgentLockAsync(new GlobalCustomerAgentLock
+        {
+            CustomerId = customerId,
+            ActiveAccountId = accountId,
+            ActiveConversationId = conversationId,
+            AcquiredBy = actor
+        }, cancellationToken);
+        if (!acquired)
+        {
+            var existing = await _repository.GetGlobalCustomerAgentLockAsync(customerId, cancellationToken);
+            var lockReason = $"该客户已由账号 {existing?.ActiveAccountId} 的其他会话托管；请先显式停止或切换。";
+            var lockState = state.RunState;
+            ConversationAgentStateMachine.PauseError(state, lockReason);
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.PreflightBlocked,
+                lockState,
+                state.RunState,
+                "customer_lock_conflict",
+                lockReason,
+                contextSafetyPassed: false,
+                cancellationToken: cancellationToken);
+            throw new InvalidOperationException(lockReason);
+        }
+
+        try
+        {
+            var sessionToken = $"hosting-{Guid.NewGuid():N}";
+            var armedFrom = state.RunState;
+            ConversationAgentStateMachine.Arm(state, sessionToken, "托管检查通过；等待客户新消息，不会因启动本身发送消息。");
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.HostingStarted,
+                armedFrom,
+                state.RunState,
+                "hosting_armed",
+                Json.Serialize(preflight),
+                contextSafetyPassed: true,
+                cancellationToken: cancellationToken);
+            return state;
+        }
+        catch
+        {
+            await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, CancellationToken.None);
+            throw;
+        }
+    }
+
+    public async Task<ConversationAgentState> StopHostingAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await RequireStateAsync(customerId, accountId, conversationId, cancellationToken);
+        var before = state.RunState;
+        ConversationAgentStateMachine.Stop(
+            state,
+            string.IsNullOrWhiteSpace(reason) ? $"由 {actor} 停止本轮托管。" : reason.Trim());
+        await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.HostingStopped,
+            before,
+            state.RunState,
+            "hosting_stopped",
+            state.StateReason,
+            cancellationToken: cancellationToken);
         return state;
     }
 
@@ -492,6 +1079,51 @@ public sealed partial class CustomerSuccessAgentService
         return state;
     }
 
+    public async Task<ConversationAgentState?> HumanTakeoverAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        string actor,
+        string humanMessageId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
+        if (state is null || !state.CustomerId.Equals(customerId, StringComparison.OrdinalIgnoreCase)) return null;
+        var shouldTakeOver = ConversationAgentStateMachine.IsHosting(state) ||
+                             ConversationAgentStateMachine.AllowsCollaboration(state) ||
+                             state.RunState is ConversationAgentRunState.RiskInfoCollectionSent or
+                                 ConversationAgentRunState.WaitingHuman or
+                                 ConversationAgentRunState.PausedRisk or
+                                 ConversationAgentRunState.PausedError ||
+                             !string.IsNullOrWhiteSpace(state.PendingRunContextToken) ||
+                             !string.IsNullOrWhiteSpace(state.LastGeneratedReply);
+        if (!shouldTakeOver) return state;
+        var before = state.RunState;
+        ConversationAgentStateMachine.HumanTakeover(
+            state,
+            humanMessageId,
+            string.IsNullOrWhiteSpace(reason) ? $"检测到 {actor} 人工外发消息。" : reason.Trim());
+        await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        if (await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken) is { } handoff)
+        {
+            handoff.Status = HandoffStatus.TakenOver;
+            handoff.TakenOverBy = actor;
+            await _repository.UpsertHumanHandoffAsync(handoff, cancellationToken);
+        }
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.HumanTakeover,
+            before,
+            state.RunState,
+            "human_takeover",
+            state.PauseReason,
+            humanMessageId,
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
     public async Task<HumanHandoffEvent> TakeOverAsync(string customerId, string actor, CancellationToken cancellationToken = default)
     {
         var handoff = await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken)
@@ -501,10 +1133,14 @@ public sealed partial class CustomerSuccessAgentService
         await _repository.UpsertHumanHandoffAsync(handoff, cancellationToken);
         foreach (var state in await _repository.GetCustomerAgentStatesAsync(customerId, cancellationToken))
         {
-            state.Mode = ConversationAgentMode.HumanActive;
-            state.StateReason = $"由 {actor} 人工接管。";
-            state.ExplicitResumeRequired = true;
-            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await HumanTakeoverAsync(
+                customerId,
+                state.AccountId,
+                state.ConversationId,
+                actor,
+                "",
+                $"由 {actor} 人工接管。",
+                cancellationToken);
         }
         return handoff;
     }
@@ -519,10 +1155,17 @@ public sealed partial class CustomerSuccessAgentService
         await _repository.UpsertHumanHandoffAsync(handoff, cancellationToken);
         foreach (var state in await _repository.GetCustomerAgentStatesAsync(customerId, cancellationToken))
         {
-            state.Mode = ConversationAgentMode.ResumeReview;
-            state.StateReason = "人工处理完成，等待用户复核并选择恢复账号。";
-            state.ExplicitResumeRequired = true;
+            var before = state.RunState;
+            ConversationAgentStateMachine.WaitForHuman(state, "人工处理完成；重新托管前必须复核最近人工回复并再次执行前置检查。");
             await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.HostingPaused,
+                before,
+                state.RunState,
+                "handoff_resolved_resume_required",
+                state.PauseReason,
+                cancellationToken: cancellationToken);
         }
         return handoff;
     }
@@ -533,29 +1176,17 @@ public sealed partial class CustomerSuccessAgentService
     {
         if (resumedMode is ConversationAgentMode.HumanRequired or ConversationAgentMode.HumanActive or
             ConversationAgentMode.ResumeReview or ConversationAgentMode.IdentityResolutionRequired)
-            throw new InvalidOperationException("恢复目标必须是关闭、建议、协作或自动回复模式。");
-        if (resumedMode == ConversationAgentMode.AutoActive)
-        {
-            await _repository.SwitchGlobalCustomerAgentLockAsync(new GlobalCustomerAgentLock
-            {
-                CustomerId = customerId,
-                ActiveAccountId = accountId,
-                ActiveConversationId = conversationId,
-                AcquiredBy = "user_resume"
-            }, cancellationToken);
-        }
-        else
-        {
-            await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
-        }
+            throw new InvalidOperationException("恢复目标必须是关闭、建议、协作或自动托管模式。");
+        await _repository.ReleaseGlobalCustomerAgentLockAsync(customerId, cancellationToken);
         var states = await _repository.GetCustomerAgentStatesAsync(customerId, cancellationToken);
         ConversationAgentState? selected = null;
         foreach (var state in states)
         {
             var isSelected = state.AccountId == accountId && state.ConversationId == conversationId;
-            state.Mode = isSelected ? resumedMode : ConversationAgentMode.SuggestOnly;
-            state.StateReason = isSelected ? "用户明确恢复。" : "由另一账号继续客户关系。";
-            state.ExplicitResumeRequired = false;
+            ConversationAgentStateMachine.ConfigureMode(
+                state,
+                isSelected ? resumedMode : ConversationAgentMode.SuggestOnly,
+                isSelected ? "用户明确选择恢复策略；尚未启动运行。" : "由另一账号继续客户关系。" );
             state.PausedMessageCount = 0;
             await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
             if (isSelected) selected = state;
@@ -567,7 +1198,299 @@ public sealed partial class CustomerSuccessAgentService
             handoff.Status = HandoffStatus.Resumed;
             await _repository.UpsertHumanHandoffAsync(handoff, cancellationToken);
         }
+        if (resumedMode == ConversationAgentMode.AutoActive)
+            return await StartHostingAsync(customerId, accountId, conversationId, "user_resume", cancellationToken);
+        if (resumedMode == ConversationAgentMode.CopilotActive)
+            return await StartCollaborationAsync(customerId, accountId, conversationId, "user_resume", cancellationToken);
         return selected;
+    }
+
+    public async Task<ConversationAgentState?> InvalidateDraftAsync(
+        string accountId,
+        string conversationId,
+        string reason,
+        string sourceMessageId = "",
+        CancellationToken cancellationToken = default)
+    {
+        var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
+        if (state is null) return null;
+        if (state.RunState is not ConversationAgentRunState.AutoProcessing and
+            not ConversationAgentRunState.AutoSending and
+            not ConversationAgentRunState.CollabActive &&
+            string.IsNullOrWhiteSpace(state.PendingRunContextToken) &&
+            string.IsNullOrWhiteSpace(state.LastGeneratedReply))
+            return state;
+        var before = state.RunState;
+        ConversationAgentStateMachine.InvalidateDraft(
+            state,
+            string.IsNullOrWhiteSpace(reason) ? "客户发来新消息，旧草稿已失效。" : reason.Trim());
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.DraftInvalidated,
+            before,
+            state.RunState,
+            "draft_invalidated",
+            state.StateReason,
+            sourceMessageId,
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
+    public async Task<WhatsAppConversation> BeginSendAsync(
+        CustomerSuccessRunContextToken contextToken,
+        CustomerSuccessAgentDecision decision,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        var conversation = await EnsureRunContextCurrentAsync(
+            contextToken,
+            requireAutoLock: true,
+            requireProcessedState: true,
+            cancellationToken);
+        var state = await RequireStateAsync(
+            contextToken.CustomerId,
+            contextToken.AccountId,
+            contextToken.ConversationId,
+            cancellationToken);
+        if (!decision.ShouldReply || decision.TopicState is ConversationTopicState.Resolved or ConversationTopicState.Ended)
+            throw new InvalidOperationException("当前话题已结束，草稿已作废。" );
+        var draftHash = HashText(decision.ReplyText);
+        if (string.IsNullOrWhiteSpace(state.LastDraftHash) ||
+            !state.LastDraftHash.Equals(draftHash, StringComparison.Ordinal))
+            throw new InvalidOperationException(ContextChangedMessage);
+        var before = state.RunState;
+        ConversationAgentStateMachine.BeginSending(state, idempotencyKey, draftHash);
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.SendStarted,
+            before,
+            state.RunState,
+            "send_started",
+            "已通过发送前话题、人工外发、身份、上下文版本和草稿哈希复核。",
+            contextToken.SourceMessageId,
+            idempotencyKey: idempotencyKey,
+            model: decision.Model,
+            contextSafetyPassed: true,
+            cancellationToken: cancellationToken);
+        return conversation;
+    }
+
+    public async Task<ConversationAgentState?> PauseErrorAsync(
+        string accountId,
+        string conversationId,
+        string reason,
+        string sourceMessageId = "",
+        CancellationToken cancellationToken = default)
+    {
+        var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
+        if (state is null) return null;
+        var before = state.RunState;
+        ConversationAgentStateMachine.PauseError(state, reason);
+        await _repository.ReleaseGlobalCustomerAgentLockAsync(state.CustomerId, cancellationToken);
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        await SaveAuditAsync(
+            state,
+            ConversationAgentAuditAction.ErrorPaused,
+            before,
+            state.RunState,
+            "error_paused",
+            reason,
+            sourceMessageId,
+            contextSafetyPassed: false,
+            cancellationToken: cancellationToken);
+        return state;
+    }
+
+    public async Task RecoverAfterRestartAsync(CancellationToken cancellationToken = default)
+    {
+        await _repository.ClearGlobalCustomerAgentLocksAsync(cancellationToken);
+        foreach (var state in await _repository.GetAgentStatesAsync(cancellationToken: cancellationToken))
+        {
+            var activeRuntime = ConversationAgentStateMachine.IsHosting(state) ||
+                                state.RunState is ConversationAgentRunState.CollabActive or
+                                    ConversationAgentRunState.AutoProcessing or
+                                    ConversationAgentRunState.AutoSending ||
+                                !string.IsNullOrWhiteSpace(state.PendingRunContextToken) ||
+                                !string.IsNullOrWhiteSpace(state.HostingSessionToken);
+            var migratedAutoState = state.Mode == ConversationAgentMode.AutoActive &&
+                                    state.ExplicitResumeRequired &&
+                                    state.RunState == ConversationAgentRunState.Ended;
+            if (!activeRuntime && !migratedAutoState) continue;
+            var before = state.RunState;
+            if (state.Mode == ConversationAgentMode.CopilotActive)
+                ConversationAgentStateMachine.StopCollaboration(
+                    state,
+                    "应用重启后协作监听未自动恢复；请复核最近消息后重新开始协作。");
+            else
+                ConversationAgentStateMachine.Stop(
+                    state,
+                    "应用重启后未补发旧草稿；请复核最近客户与人工消息后重新托管。");
+            state.LastGeneratedReply = "";
+            state.LastDraftHash = "";
+            state.LastSourceMessageIds = [];
+            state.ExplicitResumeRequired = true;
+            await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.RestartRecovered,
+                before,
+                state.RunState,
+                "restart_recovered_fail_closed",
+                state.StateReason,
+                contextSafetyPassed: true,
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    private async Task<ConversationAgentState> RequireStateAsync(
+        string customerId,
+        string accountId,
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken)
+                    ?? throw new InvalidOperationException("请先配置当前会话的 Customer Success Agent 模式。" );
+        state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        if (!state.CustomerId.Equals(customerId, StringComparison.OrdinalIgnoreCase) ||
+            !state.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) ||
+            !state.ConversationId.Equals(conversationId, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(ContextChangedMessage);
+        return state;
+    }
+
+    private async Task<ConversationAgentPreflightResult> RunPreflightAsync(
+        ConversationAgentState state,
+        CancellationToken cancellationToken)
+    {
+        var result = new ConversationAgentPreflightResult
+        {
+            CustomerId = state.CustomerId,
+            AccountId = state.AccountId,
+            ConversationId = state.ConversationId,
+            OpportunityId = state.OpportunityId,
+            ContextNamespace = ConversationAgentStateMachine.BuildContextNamespace(
+                state.TenantId,
+                state.UserId,
+                state.CustomerId,
+                state.AccountId,
+                state.ConversationId)
+        };
+        void Check(string code, string label, bool passed, string success, string failure) =>
+            result.Checks.Add(new ConversationAgentPreflightCheck
+            {
+                Code = code,
+                Label = label,
+                Passed = passed,
+                Detail = passed ? success : failure
+            });
+
+        var connected = _hostingReadiness?.IsConnectedFor(state.AccountId) == true;
+        Check(
+            "whatsapp_connected",
+            "WhatsApp 连接",
+            connected,
+            "当前 WhatsApp 账号已连接。",
+            $"当前 WhatsApp 账号未连接（{_hostingReadiness?.ConnectionStateFor(state.AccountId) ?? "readiness_unavailable"}）。" );
+        if (connected)
+        {
+            var outbound = await _hostingReadiness!.OutboundStatusAsync(state.AccountId, cancellationToken);
+            var outboundAllowed = !outbound.Suspended &&
+                                  (!outbound.Enabled || (outbound.RemainingToday > 0 && outbound.RemainingAiToday > 0));
+            Check(
+                "outbound_available",
+                "发送能力与限流",
+                outboundAllowed,
+                "当前账号未暂停，且自动发送额度可用。",
+                outbound.Suspended
+                    ? $"当前账号发送已暂停：{outbound.SuspendReason}"
+                    : "当前账号自动发送额度不足。" );
+        }
+        else
+        {
+            Check("outbound_available", "发送能力与限流", false, "", "连接未就绪，无法核实发送限流状态。" );
+        }
+
+        var catchupComplete = _whatsAppSync?.IsOfflineCatchupActive(state.AccountId) != true;
+        Check(
+            "offline_catchup_complete",
+            "离线消息补齐",
+            catchupComplete,
+            "当前账号没有进行中的离线消息补齐。",
+            "当前账号正在补齐离线消息；为避免把历史消息当成实时消息，暂不能开始托管。" );
+
+        Check(
+            "model_configured",
+            "AI 模型",
+            _provider.HasApiKey(AiModuleKeys.WhatsAppInbox),
+            "Customer Success Agent 模型已配置。",
+            "Customer Success Agent 模型或 API Key 尚未配置。" );
+
+        var conversation = (await _repository.GetWhatsAppConversationsAsync(state.AccountId, cancellationToken))
+            .FirstOrDefault(item => item.Id.Equals(state.ConversationId, StringComparison.OrdinalIgnoreCase));
+        var conversationSafe = conversation is not null && !conversation.IsGroup &&
+                               !string.IsNullOrWhiteSpace(conversation.Phone) &&
+                               PhoneIdentity.Digits(conversation.Phone).Length >= 6;
+        Check(
+            "conversation_synced",
+            "会话同步与目标",
+            conversationSafe,
+            "当前单聊会话已同步，目标号码可验证。",
+            "当前会话未完整同步、属于群聊或缺少可验证号码。" );
+
+        var link = await _repository.GetWhatsAppIdentityLinkAsync(
+            state.AccountId,
+            state.ConversationId,
+            cancellationToken);
+        var identitySafe = link is not null && link.IsActive &&
+                           link.CustomerId.Equals(state.CustomerId, StringComparison.OrdinalIgnoreCase) &&
+                           link.MatchResult is CustomerIdentityMatchResult.ExactMatch or
+                               CustomerIdentityMatchResult.ConfirmedAliasMatch or
+                               CustomerIdentityMatchResult.UniqueInferredMatch;
+        Check(
+            "customer_identity",
+            "客户身份",
+            identitySafe,
+            "账号、会话、标准化号码与 customer_id 绑定有效。",
+            "客户身份不明确、冲突或绑定已失效。" );
+
+        CustomerSuccessContext? context = null;
+        if (conversationSafe && identitySafe)
+            context = await GetContextAsync(state.AccountId, state.ConversationId, cancellationToken);
+        var contextSafe = context is not null && context.CustomerId.Equals(state.CustomerId, StringComparison.OrdinalIgnoreCase);
+        Check(
+            "context_isolation",
+            "上下文隔离",
+            contextSafe,
+            $"独立上下文已建立：{result.ContextNamespace}",
+            "无法建立仅属于当前客户的独立上下文。" );
+
+        var noOpenHandoff = await _repository.GetOpenHumanHandoffAsync(state.CustomerId, cancellationToken) is null;
+        Check(
+            "human_handoff",
+            "人工接管",
+            noOpenHandoff,
+            "当前没有开放的人工交接。",
+            "当前客户正在等待人工处理，不能开始自动托管。" );
+
+        var existingLock = await _repository.GetGlobalCustomerAgentLockAsync(state.CustomerId, cancellationToken);
+        var lockAvailable = existingLock is null ||
+                            existingLock.ActiveAccountId.Equals(state.AccountId, StringComparison.OrdinalIgnoreCase) &&
+                            existingLock.ActiveConversationId.Equals(state.ConversationId, StringComparison.OrdinalIgnoreCase);
+        Check(
+            "customer_lock",
+            "跨账号客户锁",
+            lockAvailable,
+            "当前客户没有被其他账号会话托管。",
+            $"当前客户已由账号 {existingLock?.ActiveAccountId} 的其他会话托管。" );
+
+        var settings = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation ?? new AgentAutomationSettings();
+        state.MaxAutomaticTurns = settings.NormalizedMaxAutomaticTurns();
+        state.OpportunityId = context?.Opportunity?.LeadId ?? "";
+        state.ContextNamespace = result.ContextNamespace;
+        await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
+        return result;
     }
 
     public static AgentQuestionSafety ClassifySafety(string text)
@@ -586,14 +1509,29 @@ public sealed partial class CustomerSuccessAgentService
         IReadOnlyCollection<string> allowedCrmFields,
         IReadOnlyCollection<string> incomingMessages,
         IReadOnlyCollection<string>? allowedKnowledgeChunkIds = null,
-        bool requireKnowledgeCitation = false)
+        bool requireKnowledgeCitation = false,
+        IReadOnlyCollection<string>? allowedSourceMessageIds = null)
     {
         decision.Signals ??= [];
         decision.SourcingFields ??= [];
         decision.CrmProposals ??= [];
         decision.KnowledgeChunkIds ??= [];
-        if (string.IsNullOrWhiteSpace(decision.ReplyText) || decision.ReplyText.Length > 4096)
-            return "replyText 必须是 1–4096 个字符。";
+        decision.SourceMessageIds ??= [];
+        if (decision.TopicState == ConversationTopicState.Unknown)
+        {
+            decision.TopicState = decision.ShouldReply
+                ? ConversationTopicState.Open
+                : ConversationTopicState.Resolved;
+            decision.TopicDecisionReason = string.IsNullOrWhiteSpace(decision.TopicDecisionReason)
+                ? "依据当前客户最新消息，仍需继续处理。"
+                : decision.TopicDecisionReason;
+        }
+        if (decision.ShouldReply &&
+            (string.IsNullOrWhiteSpace(decision.ReplyText) || decision.ReplyText.Length > 4096))
+            return "需要回复时 replyText 必须是 1–4096 个字符。";
+        if (!decision.ShouldReply &&
+            decision.TopicState is not ConversationTopicState.Resolved and not ConversationTopicState.Ended)
+            return "不回复时 topicState 必须是 Resolved 或 Ended。";
         if (string.IsNullOrWhiteSpace(decision.ChineseSummary) || string.IsNullOrWhiteSpace(decision.RecommendedNextAction))
             return "必须提供中文摘要和下一步行动。";
         if (decision.Confidence is < 0 or > 1) return "confidence 必须在 0–1。";
@@ -610,6 +1548,10 @@ public sealed partial class CustomerSuccessAgentService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (decision.KnowledgeChunkIds.Any(id => !allowedKnowledge.Contains(id)))
             return "knowledgeChunkIds 包含检索结果之外的知识块。";
+        var allowedSources = (allowedSourceMessageIds ?? [])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (decision.SourceMessageIds.Any(id => !allowedSources.Contains(id)))
+            return "sourceMessageIds 包含本次归并窗口之外的消息。";
         if (requireKnowledgeCitation &&
             decision.Safety != AgentQuestionSafety.ImmediateHuman &&
             decision.KnowledgeChunkIds.Count == 0)
@@ -653,6 +1595,7 @@ public sealed partial class CustomerSuccessAgentService
 
         var messages = await _repository.GetWhatsAppMessagesAsync(conversationId, 5000, cancellationToken);
         var incoming = messages.Where(message => IsCurrentIncoming(message, accountId, conversationId)).ToList();
+        var outgoing = messages.Where(message => IsCurrentOutgoing(message, accountId, conversationId)).ToList();
         var currentSource = incoming.FirstOrDefault(message =>
             message.Id.Equals(source.Id, StringComparison.OrdinalIgnoreCase));
         var latest = incoming.OrderBy(message => message.Timestamp)
@@ -668,12 +1611,19 @@ public sealed partial class CustomerSuccessAgentService
         {
             var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
             if (state is null || state.Mode != ConversationAgentMode.AutoActive ||
+                state.RunState != ConversationAgentRunState.AutoProcessing ||
+                string.IsNullOrWhiteSpace(state.HostingSessionToken) ||
                 !state.CustomerId.Equals(context.CustomerId, StringComparison.OrdinalIgnoreCase) ||
                 agentLock is null ||
                 !agentLock.ActiveAccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) ||
                 !agentLock.ActiveConversationId.Equals(conversationId, StringComparison.OrdinalIgnoreCase))
                 throw ContextChanged();
         }
+
+        var currentState = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
+        var latestOutgoing = outgoing.OrderBy(message => message.Timestamp)
+            .ThenBy(message => message.Id, StringComparer.Ordinal)
+            .LastOrDefault();
 
         return new CustomerSuccessRunContextToken
         {
@@ -687,7 +1637,17 @@ public sealed partial class CustomerSuccessAgentService
             ConversationTargetToken = BuildConversationTargetToken(conversation),
             SourceMessageId = source.Id,
             SourceMessageToken = BuildSourceMessageToken(source),
-            AgentLockToken = agentLock is null ? "" : BuildAgentLockToken(agentLock)
+            LatestOutgoingMessageId = latestOutgoing?.Id ?? "",
+            LatestOutgoingMessageToken = latestOutgoing is null ? "" : BuildSourceMessageToken(latestOutgoing),
+            AgentLockToken = agentLock is null ? "" : BuildAgentLockToken(agentLock),
+            HostingSessionToken = currentState?.HostingSessionToken ?? "",
+            ContextNamespace = ConversationAgentStateMachine.BuildContextNamespace(
+                currentState?.TenantId ?? "local",
+                currentState?.UserId ?? "local",
+                context.CustomerId,
+                accountId,
+                conversationId),
+            ContextVersion = currentState?.ContextVersion ?? 0
         };
     }
 
@@ -695,7 +1655,8 @@ public sealed partial class CustomerSuccessAgentService
         CustomerSuccessRunContextToken contextToken,
         bool requireAutoLock,
         bool requireProcessedState,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string acknowledgedProviderMessageId = "")
     {
         if (contextToken is null ||
             string.IsNullOrWhiteSpace(contextToken.RunToken) ||
@@ -708,7 +1669,8 @@ public sealed partial class CustomerSuccessAgentService
             string.IsNullOrWhiteSpace(contextToken.ActiveFactSetToken) ||
             string.IsNullOrWhiteSpace(contextToken.ConversationTargetToken) ||
             string.IsNullOrWhiteSpace(contextToken.SourceMessageId) ||
-            string.IsNullOrWhiteSpace(contextToken.SourceMessageToken))
+            string.IsNullOrWhiteSpace(contextToken.SourceMessageToken) ||
+            string.IsNullOrWhiteSpace(contextToken.ContextNamespace))
             throw ContextChanged();
 
         var link = await _repository.GetWhatsAppIdentityLinkAsync(
@@ -745,6 +1707,10 @@ public sealed partial class CustomerSuccessAgentService
             message,
             contextToken.AccountId,
             contextToken.ConversationId)).ToList();
+        var outgoing = messages.Where(message => IsCurrentOutgoing(
+            message,
+            contextToken.AccountId,
+            contextToken.ConversationId)).ToList();
         var source = incoming.FirstOrDefault(message =>
             message.Id.Equals(contextToken.SourceMessageId, StringComparison.OrdinalIgnoreCase));
         var latest = incoming.OrderBy(message => message.Timestamp)
@@ -753,6 +1719,20 @@ public sealed partial class CustomerSuccessAgentService
         if (source is null || latest is null ||
             !latest.Id.Equals(contextToken.SourceMessageId, StringComparison.OrdinalIgnoreCase) ||
             !BuildSourceMessageToken(source).Equals(contextToken.SourceMessageToken, StringComparison.Ordinal))
+            throw ContextChanged();
+
+        var latestOutgoing = outgoing.OrderBy(message => message.Timestamp)
+            .ThenBy(message => message.Id, StringComparer.Ordinal)
+            .LastOrDefault();
+        var latestOutgoingIsAcknowledgedAgentMessage = latestOutgoing is not null &&
+            !string.IsNullOrWhiteSpace(acknowledgedProviderMessageId) &&
+            latestOutgoing.ProviderMessageId.Equals(acknowledgedProviderMessageId, StringComparison.OrdinalIgnoreCase);
+        if (!latestOutgoingIsAcknowledgedAgentMessage &&
+            (!string.Equals(latestOutgoing?.Id ?? "", contextToken.LatestOutgoingMessageId, StringComparison.OrdinalIgnoreCase) ||
+             !string.Equals(
+                 latestOutgoing is null ? "" : BuildSourceMessageToken(latestOutgoing),
+                 contextToken.LatestOutgoingMessageToken,
+                 StringComparison.Ordinal)))
             throw ContextChanged();
 
         ConversationAgentState? state = null;
@@ -767,12 +1747,25 @@ public sealed partial class CustomerSuccessAgentService
                 !state.AccountId.Equals(contextToken.AccountId, StringComparison.OrdinalIgnoreCase) ||
                 !state.ConversationId.Equals(contextToken.ConversationId, StringComparison.OrdinalIgnoreCase))
                 throw ContextChanged();
+            var expectedNamespace = ConversationAgentStateMachine.BuildContextNamespace(
+                state.TenantId,
+                state.UserId,
+                state.CustomerId,
+                state.AccountId,
+                state.ConversationId);
+            if (!expectedNamespace.Equals(contextToken.ContextNamespace, StringComparison.Ordinal) ||
+                state.ContextVersion != contextToken.ContextVersion)
+                throw ContextChanged();
         }
 
         if (requireAutoLock)
         {
             var agentLock = await _repository.GetGlobalCustomerAgentLockAsync(contextToken.CustomerId, cancellationToken);
             if (state?.Mode != ConversationAgentMode.AutoActive || agentLock is null ||
+                state.RunState is not ConversationAgentRunState.AutoProcessing and not ConversationAgentRunState.AutoSending ||
+                state.TopicState is ConversationTopicState.Resolved or ConversationTopicState.Ended ||
+                string.IsNullOrWhiteSpace(contextToken.HostingSessionToken) ||
+                !state.HostingSessionToken.Equals(contextToken.HostingSessionToken, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(contextToken.AgentLockToken) ||
                 !agentLock.ActiveAccountId.Equals(contextToken.AccountId, StringComparison.OrdinalIgnoreCase) ||
                 !agentLock.ActiveConversationId.Equals(contextToken.ConversationId, StringComparison.OrdinalIgnoreCase) ||
@@ -793,7 +1786,16 @@ public sealed partial class CustomerSuccessAgentService
         message.Direction == WhatsAppMessageDirection.Incoming &&
         !message.IsRevoked &&
         !message.IsStatusUpdate &&
-        !string.IsNullOrWhiteSpace(message.Body) &&
+        (!string.IsNullOrWhiteSpace(message.Body) ||
+         !string.IsNullOrWhiteSpace(message.FileName) ||
+         !string.IsNullOrWhiteSpace(message.MediaPath)) &&
+        message.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) &&
+        message.ConversationId.Equals(conversationId, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCurrentOutgoing(WhatsAppMessage message, string accountId, string conversationId) =>
+        message.Direction == WhatsAppMessageDirection.Outgoing &&
+        !message.IsRevoked &&
+        !message.IsStatusUpdate &&
         message.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) &&
         message.ConversationId.Equals(conversationId, StringComparison.OrdinalIgnoreCase);
 
@@ -876,56 +1878,122 @@ public sealed partial class CustomerSuccessAgentService
             autoLockStillRequired,
             false,
             cancellationToken);
+        var stateBeforeCompletion = state.RunState;
+        var topicResolved = !decision.ShouldReply ||
+                            decision.TopicState is ConversationTopicState.Resolved or ConversationTopicState.Ended;
         state.LastProcessedMessageId = source.Id;
-        state.PendingRunContextToken = contextToken.RunToken;
-        if (handoff is not null)
-        {
-            // CreateHandoffAsync freezes every linked conversation. Keep the
-            // current in-memory state aligned so this final turn write cannot
-            // accidentally restore AUTO_ACTIVE after the global freeze.
-            state.Mode = ConversationAgentMode.HumanRequired;
-            state.ExplicitResumeRequired = true;
-        }
-        state.StateReason = handoff is null
-            ? string.IsNullOrWhiteSpace(state.StateReason)
-                ? CustomerSuccessAgentLabels.ModeStateReason(state.Mode)
-                : state.StateReason
-            : "高风险问题已全局转人工。";
-        state.LastRunStatus = handoff is not null
-            ? CustomerSuccessRunStatus.HumanRequired
-            : trigger == CustomerSuccessRunTrigger.Manual
-                ? CustomerSuccessRunStatus.SuggestionReady
-                : state.Mode == ConversationAgentMode.CopilotActive
-                    ? CustomerSuccessRunStatus.CopilotDraftReady
-                    : CustomerSuccessRunStatus.AutoReplyPending;
-        state.LastRunDetail = handoff is not null
-            ? decision.SafetyReason
-            : decision.UsedSafeFallback
-                ? "AI 输出格式异常，已生成不包含价格、库存、交期或政策承诺的安全确认草稿；请人工检查后发送。"
-            : trigger == CustomerSuccessRunTrigger.Manual
-                ? "建议已填入会话输入框，发送前由用户确认。"
-                : state.Mode == ConversationAgentMode.CopilotActive
-                    ? "草稿已保存在 Agent 产出区，等待用户填入输入框并发送。"
-                    : "回复已生成，正在执行 WhatsApp 目标与服务端状态校验。";
+        state.LastCustomerMessageId = source.Id;
+        state.LastSourceMessageIds = decision.SourceMessageIds.Count > 0
+            ? decision.SourceMessageIds
+            : [source.Id];
+        state.TopicState = decision.TopicState;
         state.LastRunError = "";
         state.LastSourcePreview = source.Body.Length <= 180 ? source.Body : $"{source.Body[..177]}...";
-        state.LastGeneratedReply = decision.ReplyText.Trim();
         state.LastRunSummary = decision.ChineseSummary.Trim();
         state.LastRecommendedAction = decision.RecommendedNextAction.Trim();
         state.LastProviderMessageId = "";
         state.LastRunAt = DateTimeOffset.Now;
+        state.LastAgentActionAt = DateTimeOffset.Now;
+        state.LastCustomerBrainReferences = context.Brain?.Statements
+            .Where(item => item.Nature == IntelligenceStatementNature.Fact)
+            .Select(item => item.Source)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToList() ?? [];
+        state.LastKnowledgeReferences = decision.KnowledgeCitations
+            .Select(item => $"{item.DocumentTitle} · {item.Locator}".Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToList();
+        state.LastContextSafetyCheck = $"passed:{context.CustomerId}:{state.ContextNamespace}";
+
+        if (topicResolved)
+        {
+            state.LastGeneratedReply = "";
+            state.LastDraftHash = "";
+            var topicBefore = state.RunState;
+            ConversationAgentStateMachine.MarkTopicResolved(
+                state,
+                string.IsNullOrWhiteSpace(decision.TopicDecisionReason)
+                    ? "当前话题已经结束且没有开放问题，不生成也不发送额外消息。"
+                    : decision.TopicDecisionReason);
+            await SaveAuditAsync(
+                state,
+                ConversationAgentAuditAction.TopicResolved,
+                topicBefore,
+                state.RunState,
+                "topic_resolved_no_reply",
+                state.StateReason,
+                source.Id,
+                model: decision.Model,
+                customerBrainReferences: state.LastCustomerBrainReferences,
+                knowledgeReferences: state.LastKnowledgeReferences,
+                cancellationToken: cancellationToken);
+            ConversationAgentStateMachine.Stop(state, "当前话题已结束；本轮托管正式结束，不发送收尾消息。");
+            state.LastRunStatus = CustomerSuccessRunStatus.Blocked;
+            state.LastRunDetail = $"未发送：{state.StateReason}";
+            await _repository.ReleaseGlobalCustomerAgentLockAsync(context.CustomerId, cancellationToken);
+        }
+        else if (handoff is not null)
+        {
+            state.LastGeneratedReply = decision.ReplyText.Trim();
+            state.LastDraftHash = HashText(state.LastGeneratedReply);
+            if (decision.IsRiskInformationCollection)
+            {
+                ConversationAgentStateMachine.MarkRiskInformationCollectionSent(
+                    state,
+                    $"pending:{contextToken.RunToken}",
+                    "仅生成一次风险信息收集消息；发送后必须等待人工处理。");
+            }
+            else
+            {
+                ConversationAgentStateMachine.WaitForHuman(state, decision.SafetyReason);
+            }
+            // The pending run token remains only until the one bounded handoff
+            // acknowledgement is sent. It never re-arms background hosting.
+            state.PendingRunContextToken = contextToken.RunToken;
+            state.LastRunStatus = CustomerSuccessRunStatus.HumanRequired;
+            state.LastRunDetail = decision.IsRiskInformationCollection
+                ? "风险事项仅允许一次信息收集；正在执行发送前复核，随后等待人工。"
+                : decision.SafetyReason;
+            await _repository.ReleaseGlobalCustomerAgentLockAsync(context.CustomerId, cancellationToken);
+        }
+        else
+        {
+            state.PendingRunContextToken = contextToken.RunToken;
+            state.LastGeneratedReply = decision.ReplyText.Trim();
+            state.LastDraftHash = HashText(state.LastGeneratedReply);
+            state.StateReason = string.IsNullOrWhiteSpace(state.StateReason)
+                ? CustomerSuccessAgentLabels.ModeStateReason(state.Mode)
+                : state.StateReason;
+            state.LastRunStatus = trigger == CustomerSuccessRunTrigger.Manual
+                ? CustomerSuccessRunStatus.SuggestionReady
+                : state.Mode == ConversationAgentMode.CopilotActive
+                    ? CustomerSuccessRunStatus.CopilotDraftReady
+                    : CustomerSuccessRunStatus.AutoReplyPending;
+            state.LastRunDetail = decision.UsedSafeFallback
+                ? "AI 输出格式异常，已生成不包含价格、库存、交期或政策承诺的安全确认草稿；请人工检查后发送。"
+                : trigger == CustomerSuccessRunTrigger.Manual
+                    ? "建议已填入会话输入框，发送前由用户确认。"
+                    : state.Mode == ConversationAgentMode.CopilotActive
+                        ? "草稿已保存在 Agent 产出区，等待用户检查并发送。"
+                        : "回复已生成，正在执行话题、人工外发、目标与上下文二次复核。";
+        }
         await _repository.UpsertConversationAgentStateAsync(state, cancellationToken);
-        var autoAllowed = handoff is null && !decision.UsedSafeFallback &&
+        var autoAllowed = !topicResolved && handoff is null && decision.ShouldReply && !decision.UsedSafeFallback &&
                           trigger == CustomerSuccessRunTrigger.IncomingAutomation &&
-                          state.Mode == ConversationAgentMode.AutoActive && autoLockStillRequired;
+                          state.Mode == ConversationAgentMode.AutoActive &&
+                          state.RunState == ConversationAgentRunState.AutoProcessing &&
+                          autoLockStillRequired;
         await _repository.SaveAgentTurnLogAsync(new AgentTurnLog
         {
             CustomerId = context.CustomerId,
             AccountId = source.AccountId,
             ConversationId = source.ConversationId,
             SourceMessageId = source.Id,
-            StateBefore = context.AgentState?.Mode.ToString() ?? ConversationAgentMode.SuggestOnly.ToString(),
-            StateAfter = state.Mode.ToString(),
+            StateBefore = stateBeforeCompletion.ToString(),
+            StateAfter = state.RunState.ToString(),
             IdentityResult = identity.Result,
             Safety = decision.Safety,
             ContextHash = BuildContextHash(context),
@@ -940,11 +2008,26 @@ public sealed partial class CustomerSuccessAgentService
                 knowledge.Id,
                 decision.KnowledgeChunkIds,
                 cancellationToken);
+        await SaveAuditAsync(
+            state,
+            topicResolved
+                ? ConversationAgentAuditAction.TopicEvaluated
+                : ConversationAgentAuditAction.DraftGenerated,
+            stateBeforeCompletion,
+            state.RunState,
+            topicResolved ? "reply_not_required" : handoff is null ? "draft_generated" : "handoff_draft_generated",
+            state.LastRunDetail,
+            source.Id,
+            model: decision.Model,
+            customerBrainReferences: state.LastCustomerBrainReferences,
+            knowledgeReferences: state.LastKnowledgeReferences,
+            contextSafetyPassed: true,
+            cancellationToken: cancellationToken);
         await _repository.LogEventAsync("customer_success_agent_turn", context.CustomerId, null, Json.Serialize(new
         {
             source.AccountId, source.ConversationId, sourceMessageId = source.Id,
             identity = identity.Result.ToString(), safety = decision.Safety.ToString(),
-            state = state.Mode.ToString(), autoAllowed, decision.RecommendedNextAction,
+            mode = state.Mode.ToString(), runState = state.RunState.ToString(), topic = state.TopicState.ToString(), autoAllowed, decision.RecommendedNextAction,
             usedSafeFallback = decision.UsedSafeFallback,
             sourcingCompleteness = sourcing?.Completeness,
             knowledgeRetrievalId = knowledge?.Id,
@@ -961,7 +2044,8 @@ public sealed partial class CustomerSuccessAgentService
 
     private async Task<HumanHandoffEvent> CreateHandoffAsync(
         CustomerSuccessContext context, WhatsAppMessage source, string reason, string chineseAssist,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool riskInformationCollection = false)
     {
         var existing = await _repository.GetOpenHumanHandoffAsync(context.CustomerId, cancellationToken);
         var handoff = existing ?? new HumanHandoffEvent
@@ -973,7 +2057,12 @@ public sealed partial class CustomerSuccessAgentService
             OriginalMessage = source.Body,
             Language = IsChinese(source.Body) ? "zh" : "en",
             ChineseAssistTranslation = chineseAssist,
-            HoldingReply = IsChinese(source.Body) ? "我先和同事确认一下。" : "Let me check this with my colleague.",
+            HoldingReply = riskInformationCollection
+                ? CreateRiskInformationCollectionDecision(
+                    source,
+                    [source.Id],
+                    ClassifyRiskCategory(source.Body)).ReplyText
+                : IsChinese(source.Body) ? "我先和同事确认一下。" : "Let me check this with my colleague.",
             Reason = string.IsNullOrWhiteSpace(reason) ? "问题超出智能助手安全答复边界。" : reason,
             Safety = AgentQuestionSafety.ImmediateHuman,
             Status = HandoffStatus.Open,
@@ -988,10 +2077,24 @@ public sealed partial class CustomerSuccessAgentService
                               {
                                   CustomerId = context.CustomerId, AccountId = linked.AccountId, ConversationId = linked.ConversationId
                               };
-            linkedState.Mode = ConversationAgentMode.HumanRequired;
-            linkedState.StateReason = handoff.Reason;
-            linkedState.ExplicitResumeRequired = true;
+            var before = linkedState.RunState;
+            ConversationAgentStateMachine.WaitForHuman(
+                linkedState,
+                riskInformationCollection
+                    ? "风险信息收集后等待人工处理；AI 不再自动解决或重复询问。"
+                    : handoff.Reason);
             await _repository.UpsertConversationAgentStateAsync(linkedState, cancellationToken);
+            await SaveAuditAsync(
+                linkedState,
+                riskInformationCollection
+                    ? ConversationAgentAuditAction.RiskDetected
+                    : ConversationAgentAuditAction.HostingPaused,
+                before,
+                linkedState.RunState,
+                riskInformationCollection ? "risk_waiting_human" : "human_handoff_required",
+                linkedState.PauseReason,
+                source.Id,
+                cancellationToken: cancellationToken);
         }
         await _repository.ReleaseGlobalCustomerAgentLockAsync(context.CustomerId, cancellationToken);
         await _repository.UpsertCustomerEventAsync(new CustomerEventLogEntry
@@ -1039,7 +2142,227 @@ public sealed partial class CustomerSuccessAgentService
         }, cancellationToken);
     }
 
-    private static CustomerSuccessAgentDecision CreateHoldingDecision(WhatsAppMessage source) => new()
+    private sealed record TopicEvaluation(ConversationTopicState State, string Reason);
+
+    private static TopicEvaluation EvaluateTopicBeforeGeneration(
+        CustomerSuccessContext context,
+        IReadOnlyCollection<WhatsAppMessage> sourceBatch)
+    {
+        var combined = string.Join(' ', sourceBatch
+            .Select(item => item.Body)
+            .Where(item => !string.IsNullOrWhiteSpace(item)))
+            .Trim();
+        var hasOpenWork = context.OpenHandoff is not null ||
+                          context.PendingQuestions.Any(question => !question.IsResolved) ||
+                          context.AgentState?.RiskState is ConversationRiskVerificationState.OpenUnverified or
+                              ConversationRiskVerificationState.InformationCollectionSent or
+                              ConversationRiskVerificationState.WaitingHuman or
+                              ConversationRiskVerificationState.Conflict;
+        if (string.IsNullOrWhiteSpace(combined))
+            return new TopicEvaluation(
+                ConversationTopicState.Open,
+                "客户发送了附件或非文本消息，需要结合附件继续处理。" );
+
+        var normalized = NormalizeEvidence(combined).Trim(' ', '.', ',', '!', '\u3002', '\uff0c', '\uff01');
+        var containsContinuation = normalized.Contains(" but ", StringComparison.OrdinalIgnoreCase) ||
+                                   normalized.Contains(" however", StringComparison.OrdinalIgnoreCase) ||
+                                   normalized.Contains("但是", StringComparison.Ordinal) ||
+                                   normalized.Contains("不过", StringComparison.Ordinal) ||
+                                   QuestionRegex().IsMatch(normalized);
+        var isClosing = TopicClosingTerms.Any(term =>
+            normalized.Equals(term, StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith($"{term} ", StringComparison.OrdinalIgnoreCase) && normalized.Length <= term.Length + 16);
+        if (isClosing && !containsContinuation && !hasOpenWork)
+            return new TopicEvaluation(
+                ConversationTopicState.Resolved,
+                "客户仅确认、致谢、告别或表示暂不需要，且当前没有开放问题；话题结束，不生成额外收尾消息。" );
+
+        return new TopicEvaluation(
+            context.OpenHandoff is null ? ConversationTopicState.Open : ConversationTopicState.WaitingHuman,
+            hasOpenWork ? "当前仍有开放问题或人工事项，需要继续处理。" : "客户提出了新的有效信息或问题，话题保持开放。" );
+    }
+
+    private static CustomerSuccessAgentDecision CreateTopicResolvedDecision(
+        WhatsAppMessage source,
+        IReadOnlyCollection<string> sourceMessageIds,
+        string reason) => new()
+    {
+        ReplyText = "",
+        ReplyLanguage = IsChinese(source.Body) ? "zh" : "en",
+        Safety = AgentQuestionSafety.SafeToAnswer,
+        SafetyReason = "当前话题已自然结束，不需要对外发送消息。",
+        ChineseSummary = "客户已结束当前话题，且没有待处理的开放问题。",
+        CustomerIntent = "结束当前话题",
+        RecommendedNextAction = "保持静默；仅在客户再次发来新问题并重新开始托管后处理。",
+        Confidence = 1,
+        LatestIncomingMessageId = source.Id,
+        SourceMessageIds = sourceMessageIds.ToList(),
+        TopicState = ConversationTopicState.Resolved,
+        TopicDecisionReason = reason,
+        ShouldReply = false
+    };
+
+    private static string ClassifyRiskCategory(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        if (PaymentRiskTerms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase)))
+            return "payment";
+        if (DisputeRiskTerms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase)))
+            return "dispute";
+        return "";
+    }
+
+    private static bool WasRiskPreviouslyDiscussed(
+        IEnumerable<WhatsAppMessage> messages,
+        IReadOnlyCollection<string> currentSourceMessageIds,
+        string riskCategory)
+    {
+        var sourceIds = currentSourceMessageIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var terms = riskCategory.Equals("payment", StringComparison.OrdinalIgnoreCase)
+            ? PaymentRiskTerms
+            : DisputeRiskTerms;
+        return messages.Any(message =>
+            !sourceIds.Contains(message.Id) &&
+            !string.IsNullOrWhiteSpace(message.Body) &&
+            terms.Any(term => message.Body.Contains(term, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool RiskAlreadyRecordedInOpportunity(
+        OpportunitySnapshot? opportunity,
+        string riskCategory) =>
+        opportunity is not null &&
+        (riskCategory.Equals("payment", StringComparison.OrdinalIgnoreCase)
+            ? opportunity.FailedPaymentCount > 0
+            : opportunity.DisputeCount > 0 || opportunity.HasChargeback);
+
+    private static CustomerSuccessAgentDecision CreateRiskInformationCollectionDecision(
+        WhatsAppMessage source,
+        IReadOnlyCollection<string> sourceMessageIds,
+        string riskCategory)
+    {
+        var chinese = IsChinese(source.Body);
+        var payment = riskCategory.Equals("payment", StringComparison.OrdinalIgnoreCase);
+        return new CustomerSuccessAgentDecision
+        {
+            ReplyText = chinese
+                ? payment
+                    ? "我先帮你记录这个支付问题。请告诉我大概发生时间、支付方式、页面提示和订单号；如有截图可隐去卡号等敏感信息后发送。请不要发送密码、验证码、完整卡号或 CVV，我会把信息交给同事处理。"
+                    : "我先帮你记录这个纠纷问题。请提供订单号、问题类型、发生时间、涉及商品或物流情况、期望处理方向，以及可用的脱敏凭证；我会把信息交给同事处理。"
+                : payment
+                    ? "I’ll record the payment issue first. Please share the approximate time, payment method, on-screen error, and order ID. You may attach a redacted screenshot, but never send passwords, verification codes, a full card number, or CVV. I’ll pass the details to a colleague."
+                    : "I’ll record the dispute first. Please share the order ID, issue type, when it happened, the product or logistics details, your preferred resolution, and any redacted evidence. I’ll pass the details to a colleague.",
+            ReplyLanguage = chinese ? "zh" : "en",
+            Safety = AgentQuestionSafety.ImmediateHuman,
+            SafetyReason = payment
+                ? "检测到支付失败或拒付风险；只允许一次基础信息收集，随后等待人工。"
+                : "检测到退款、投诉或纠纷风险；只允许一次基础信息收集，随后等待人工。",
+            ChineseSummary = payment ? "客户反馈支付风险，需要一次性收集脱敏基础信息并转人工。" : "客户反馈纠纷风险，需要一次性收集基础事实并转人工。",
+            CustomerIntent = payment ? "报告支付问题" : "报告纠纷或投诉",
+            RecommendedNextAction = "发送一次信息收集消息后立即暂停 AI，由人工查看商机、邮件、WhatsApp 历史和证据。",
+            Confidence = 1,
+            LatestIncomingMessageId = source.Id,
+            SourceMessageIds = sourceMessageIds.ToList(),
+            TopicState = ConversationTopicState.WaitingHuman,
+            TopicDecisionReason = "风险事项不能由 AI 解决；完成一次基础信息收集后等待人工。",
+            ShouldReply = true,
+            IsRiskInformationCollection = true
+        };
+    }
+
+    private static bool KnowledgeHitBelongsToContext(
+        KnowledgeRetrievalHit hit,
+        KnowledgeRetrievalRequest request)
+    {
+        if (hit.UsageMode == KnowledgeUsageMode.Excluded) return false;
+        var scope = hit.Scope ?? new KnowledgeScope();
+        return scope.Kind switch
+        {
+            KnowledgeScopeKind.Global =>
+                string.IsNullOrWhiteSpace(scope.AccountId) &&
+                string.IsNullOrWhiteSpace(scope.CustomerId) &&
+                string.IsNullOrWhiteSpace(scope.ConversationId) &&
+                string.IsNullOrWhiteSpace(scope.TemporaryTaskId),
+            KnowledgeScopeKind.Account =>
+                scope.AccountId.Equals(request.AccountId, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(scope.CustomerId) &&
+                string.IsNullOrWhiteSpace(scope.ConversationId),
+            KnowledgeScopeKind.Customer =>
+                scope.CustomerId.Equals(request.CustomerId, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(scope.AccountId) ||
+                 scope.AccountId.Equals(request.AccountId, StringComparison.OrdinalIgnoreCase)),
+            KnowledgeScopeKind.Conversation =>
+                scope.AccountId.Equals(request.AccountId, StringComparison.OrdinalIgnoreCase) &&
+                scope.ConversationId.Equals(request.ConversationId, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(scope.CustomerId) ||
+                 scope.CustomerId.Equals(request.CustomerId, StringComparison.OrdinalIgnoreCase)),
+            KnowledgeScopeKind.Temporary => false,
+            _ => false
+        };
+    }
+
+    private static bool RequiresApprovedKnowledge(string text) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        (PolicyTermsRegex().IsMatch(text) ||
+         Regex.IsMatch(
+             text,
+             @"price|fee|cost|refund|warranty|service|feature|product|shipping|delivery|inventory|stock|\u4ef7\u683c|\u6536\u8d39|\u8d39\u7528|\u9000\u6b3e|\u4fdd\u4fee|\u670d\u52a1|\u529f\u80fd|\u4ea7\u54c1|\u8fd0\u8f93|\u7269\u6d41|\u4ea4\u671f|\u5e93\u5b58",
+             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+
+    private async Task SaveAuditAsync(
+        ConversationAgentState state,
+        ConversationAgentAuditAction action,
+        ConversationAgentRunState stateBefore,
+        ConversationAgentRunState stateAfter,
+        string decision,
+        string detail,
+        string sourceMessageId = "",
+        string idempotencyKey = "",
+        string model = "",
+        IEnumerable<string>? retrievedCustomerIds = null,
+        IEnumerable<string>? customerBrainReferences = null,
+        IEnumerable<string>? knowledgeReferences = null,
+        bool contextSafetyPassed = true,
+        CancellationToken cancellationToken = default)
+    {
+        var currentCustomerIds = (retrievedCustomerIds ?? [state.CustomerId])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(100)
+            .ToList();
+        await _repository.SaveConversationAgentAuditEventAsync(new ConversationAgentAuditEvent
+        {
+            TenantId = state.TenantId,
+            UserId = state.UserId,
+            CustomerId = state.CustomerId,
+            AccountId = state.AccountId,
+            ConversationId = state.ConversationId,
+            OpportunityId = state.OpportunityId,
+            SourceMessageId = sourceMessageId.Trim(),
+            ContextVersion = state.ContextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            IdempotencyKey = idempotencyKey.Trim(),
+            Action = action,
+            Mode = state.Mode,
+            StateBefore = stateBefore,
+            StateAfter = stateAfter,
+            Decision = decision.Trim(),
+            Detail = detail.Trim(),
+            Model = model.Trim(),
+            PromptVersion = PromptVersion,
+            FinalResult = state.LastRunStatus.ToString(),
+            RetrievedCustomerIds = currentCustomerIds,
+            CustomerBrainReferences = Clean(customerBrainReferences),
+            KnowledgeReferences = Clean(knowledgeReferences),
+            ContextSafetyPassed = contextSafetyPassed
+        }, cancellationToken);
+    }
+
+    private static string HashText(string value) => Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes(value ?? string.Empty)));
+
+    private static CustomerSuccessAgentDecision CreateHoldingDecision(
+        WhatsAppMessage source,
+        IReadOnlyCollection<string>? sourceMessageIds = null) => new()
     {
         ReplyText = IsChinese(source.Body) ? "我先和同事确认一下。" : "Let me check this with my colleague.",
         ReplyLanguage = IsChinese(source.Body) ? "zh" : "en",
@@ -1050,7 +2373,11 @@ public sealed partial class CustomerSuccessAgentService
         CustomerIntent = "请求人工判断或高风险承诺",
         RecommendedNextAction = "人工查看客户原话并在同一客户的全部关联账号中统一处理。",
         Confidence = 1,
-        LatestIncomingMessageId = source.Id
+        LatestIncomingMessageId = source.Id,
+        SourceMessageIds = (sourceMessageIds ?? [source.Id]).ToList(),
+        TopicState = ConversationTopicState.WaitingHuman,
+        TopicDecisionReason = "问题超出 AI 可自动回答边界，转人工后保持静默。",
+        ShouldReply = true
     };
 
     private static CustomerSuccessAgentDecision CreateSafeManualFallbackDecision(

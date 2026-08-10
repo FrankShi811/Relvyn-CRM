@@ -1124,7 +1124,6 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         finally
         {
             _aiAssisting = false;
-            AiAssistantButton.Content = "✦ AI";
             GenerateAgentSuggestionButton.Content = _currentCustomerSuccessContext?.AgentState?.LastRunStatus == CustomerSuccessRunStatus.None
                 ? "立即生成建议"
                 : "重新生成建议";
@@ -1394,6 +1393,25 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                   string.Equals(text, _draftTranslationText, StringComparison.Ordinal)
                     ? "human_translated"
                     : origin;
+            var persistenceContextToken = draftContextToken;
+            if (!string.IsNullOrWhiteSpace(sendBinding.CustomerId))
+            {
+                // The local user owns the conversation before the bridge sees
+                // the message. This closes the race where an in-flight Agent
+                // draft could otherwise send after a desktop manual reply.
+                await _services.CustomerSuccessAgent.HumanTakeoverAsync(
+                    sendBinding.CustomerId,
+                    conversation.AccountId,
+                    conversation.Id,
+                    "desktop_user",
+                    "",
+                    "桌面端用户准备发送人工消息；已在外发前取消旧草稿并停止当前托管。" );
+                // The takeover intentionally invalidates the Agent run token.
+                // Customer attribution remains protected by the fresh identity
+                // binding token captured above, so do not treat that expected
+                // invalidation as a cross-customer context failure.
+                persistenceContextToken = null;
+            }
             var pendingId = $"local-{Guid.NewGuid():N}";
             var pendingTimestamp = DateTimeOffset.Now;
             var pendingKind = string.IsNullOrWhiteSpace(attachmentPath) ? "text" : KindFromFileName(attachmentPath);
@@ -1444,8 +1462,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             }
 
             var confirmedByServer = status is WhatsAppMessageStatus.Sent or WhatsAppMessageStatus.Delivered or WhatsAppMessageStatus.Read;
-            var sourceContextCurrent = draftContextToken is null ||
-                                       await IsAgentDraftContextCurrentAsync(draftContextToken);
+            var sourceContextCurrent = persistenceContextToken is null ||
+                                       await IsAgentDraftContextCurrentAsync(persistenceContextToken);
             var proposedConversation = new WhatsAppConversation
             {
                 Id = conversation.Id,
@@ -1484,12 +1502,12 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 sendBinding.BindingToken,
                 sourceContextCurrent,
                 confirmedByServer,
-                expectedCustomerIdentityHash: draftContextToken?.CustomerIdentityHash ?? "",
-                expectedActiveFactSetToken: draftContextToken?.ActiveFactSetToken ?? "",
-                expectedRunContextToken: draftContextToken?.RunToken ?? "",
-                expectedConversationTargetToken: draftContextToken?.ConversationTargetToken ?? "",
-                expectedSourceMessageId: draftContextToken?.SourceMessageId ?? "",
-                expectedSourceMessageToken: draftContextToken?.SourceMessageToken ?? "");
+                expectedCustomerIdentityHash: persistenceContextToken?.CustomerIdentityHash ?? "",
+                expectedActiveFactSetToken: persistenceContextToken?.ActiveFactSetToken ?? "",
+                expectedRunContextToken: persistenceContextToken?.RunToken ?? "",
+                expectedConversationTargetToken: persistenceContextToken?.ConversationTargetToken ?? "",
+                expectedSourceMessageId: persistenceContextToken?.SourceMessageId ?? "",
+                expectedSourceMessageToken: persistenceContextToken?.SourceMessageToken ?? "");
             storedMessage = commit.Message;
             // From this point the transport ACK and local message commit are durable.
             // Follow-up analytics are best effort and must never turn a confirmed send
@@ -1780,9 +1798,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     {
         var available = _connected && ConversationList.SelectedItem is ConversationItem { Phone.Length: > 0 } && !_sending;
         var groupSelected = ConversationList.SelectedItem is ConversationItem { IsGroup: true };
-        var agentMode = _currentCustomerSuccessContext?.AgentState?.Mode ?? ConversationAgentMode.SuggestOnly;
-        var canGenerate = _currentCustomerSuccessContext is not null &&
-                          agentMode is ConversationAgentMode.SuggestOnly or ConversationAgentMode.CopilotActive or ConversationAgentMode.AutoActive &&
+        var agentState = _currentCustomerSuccessContext?.AgentState;
+        var canGenerate = agentState is not null &&
+                          (agentState.Mode == ConversationAgentMode.SuggestOnly ||
+                           agentState.Mode == ConversationAgentMode.CopilotActive &&
+                           agentState.RunState == ConversationAgentRunState.CollabActive) &&
                           ConversationList.SelectedItem is ConversationItem { Phone.Length: > 0 } &&
                           !_sending && !_aiAssisting;
         ComposerBox.IsEnabled = available;
@@ -1798,8 +1818,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         TranslateConversationButton.IsEnabled = ConversationList.SelectedItem is ConversationItem &&
                                                  !_translationBusy &&
                                                  !string.IsNullOrWhiteSpace(_translationProfile?.CustomerLanguageCode);
-        AiAssistantButton.IsEnabled = canGenerate;
+        AiAssistantButton.IsEnabled = agentState is not null &&
+                                      agentState.RunState != ConversationAgentRunState.AutoPreflight &&
+                                      !_sending && !_aiAssisting;
         GenerateAgentSuggestionButton.IsEnabled = canGenerate;
+        RefreshAgentPrimaryButton();
     }
 
     private void ResetTranslationUi(ConversationItem? conversation = null)
@@ -1982,6 +2005,227 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         }
     }
 
+    private async void AgentPrimaryAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_aiAssisting || _currentLead is null ||
+            ConversationList.SelectedItem is not ConversationItem conversation)
+            return;
+        var state = _currentCustomerSuccessContext?.AgentState;
+        if (state is null) return;
+
+        try
+        {
+            if (state.Mode == ConversationAgentMode.AutoOff)
+            {
+                await _services.CustomerSuccessAgent.SetModeAsync(
+                    _currentLead.Id,
+                    conversation.AccountId,
+                    conversation.Id,
+                    ConversationAgentMode.SuggestOnly,
+                    true);
+            }
+            else if (state.Mode == ConversationAgentMode.SuggestOnly)
+            {
+                await GenerateAgentSuggestionAsync();
+                return;
+            }
+            else if (state.Mode == ConversationAgentMode.CopilotActive)
+            {
+                if (state.RunState == ConversationAgentRunState.CollabActive)
+                {
+                    await _services.CustomerSuccessAgent.StopCollaborationAsync(
+                        _currentLead.Id,
+                        conversation.AccountId,
+                        conversation.Id,
+                        "desktop_user",
+                        "用户从会话主按钮停止协作。" );
+                }
+                else if (state.RunState is ConversationAgentRunState.WaitingHuman or
+                             ConversationAgentRunState.PausedRisk or
+                             ConversationAgentRunState.PausedError or
+                             ConversationAgentRunState.RiskInfoCollectionSent)
+                {
+                    ShowAgentStateDetail(state);
+                    return;
+                }
+                else
+                {
+                    await _services.CustomerSuccessAgent.StartCollaborationAsync(
+                        _currentLead.Id,
+                        conversation.AccountId,
+                        conversation.Id,
+                        "desktop_user");
+                }
+            }
+            else if (state.Mode == ConversationAgentMode.AutoActive)
+            {
+                if (state.RunState is ConversationAgentRunState.AutoPreflight or
+                    ConversationAgentRunState.AutoArmed or
+                    ConversationAgentRunState.AutoProcessing or
+                    ConversationAgentRunState.AutoSending or
+                    ConversationAgentRunState.WaitingCustomer or
+                    ConversationAgentRunState.TopicResolved or
+                    ConversationAgentRunState.RiskInfoCollectionSent or
+                    ConversationAgentRunState.WaitingHuman or
+                    ConversationAgentRunState.PausedRisk or
+                    ConversationAgentRunState.PausedError)
+                {
+                    ShowAgentStateDetail(state);
+                    return;
+                }
+                await _services.CustomerSuccessAgent.StartHostingAsync(
+                    _currentLead.Id,
+                    conversation.AccountId,
+                    conversation.Id,
+                    "desktop_user");
+            }
+
+            await LoadLeadAsync(conversation);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "Customer Success Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await LoadLeadAsync(conversation);
+        }
+    }
+
+    private async void StopAgent_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentLead is null || ConversationList.SelectedItem is not ConversationItem conversation ||
+            _currentCustomerSuccessContext?.AgentState is not { } state)
+            return;
+        if (MessageBox.Show(
+                state.Mode == ConversationAgentMode.CopilotActive
+                    ? "停止当前会话协作？已生成但未发送的草稿会失效。"
+                    : "停止当前会话托管？已生成但未发送的草稿会失效，之后不会自动恢复。",
+                "确认停止 Customer Success Agent",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        try
+        {
+            if (state.Mode == ConversationAgentMode.CopilotActive)
+                await _services.CustomerSuccessAgent.StopCollaborationAsync(
+                    _currentLead.Id, conversation.AccountId, conversation.Id,
+                    "desktop_user", "用户显式停止当前会话协作。" );
+            else
+                await _services.CustomerSuccessAgent.StopHostingAsync(
+                    _currentLead.Id, conversation.AccountId, conversation.Id,
+                    "desktop_user", "用户显式停止当前会话托管。" );
+            await LoadLeadAsync(conversation);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "停止失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void HumanTakeover_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentLead is null || ConversationList.SelectedItem is not ConversationItem conversation) return;
+        try
+        {
+            await _services.CustomerSuccessAgent.HumanTakeoverAsync(
+                _currentLead.Id,
+                conversation.AccountId,
+                conversation.Id,
+                "desktop_user",
+                "",
+                "用户从 Inbox 显式人工接管；旧草稿和自动发送权限已撤销。" );
+            await LoadLeadAsync(conversation);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "人工接管失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void ViewAgentLog_Click(object sender, RoutedEventArgs e)
+    {
+        if (ConversationList.SelectedItem is not ConversationItem conversation) return;
+        try
+        {
+            var events = await _services.Repository.GetConversationAgentAuditEventsAsync(
+                conversation.AccountId,
+                conversation.Id,
+                500);
+            var grid = new Grid { Margin = new Thickness(14) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var table = new DataGrid
+            {
+                ItemsSource = events,
+                IsReadOnly = true,
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                SelectionMode = DataGridSelectionMode.Single,
+                HeadersVisibility = DataGridHeadersVisibility.Column,
+                MinHeight = 300
+            };
+            System.Windows.Automation.AutomationProperties.SetName(
+                table,
+                "Customer Success Agent 会话审计事件列表");
+            table.Columns.Add(new DataGridTextColumn { Header = "时间", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.CreatedAt)) { StringFormat = "MM-dd HH:mm:ss" }, Width = 125 });
+            table.Columns.Add(new DataGridTextColumn { Header = "动作", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.Action)), Width = 150 });
+            table.Columns.Add(new DataGridTextColumn { Header = "运行状态", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.StateAfter)), Width = 120 });
+            table.Columns.Add(new DataGridTextColumn { Header = "决策", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.Decision)), Width = new DataGridLength(1, DataGridLengthUnitType.Star) });
+            var detail = new TextBox
+            {
+                Margin = new Thickness(0, 10, 0, 0),
+                MinHeight = 96,
+                MaxHeight = 180,
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Text = events.Count == 0 ? "当前会话尚无审计事件。" : "选择一条事件查看上下文版本、幂等键、模型、来源和完整结果。"
+            };
+            System.Windows.Automation.AutomationProperties.SetName(
+                detail,
+                "所选 Customer Success Agent 审计事件详情");
+            System.Windows.Automation.AutomationProperties.SetLiveSetting(
+                detail,
+                System.Windows.Automation.AutomationLiveSetting.Polite);
+            table.SelectionChanged += (_, _) =>
+            {
+                if (table.SelectedItem is not ConversationAgentAuditEvent item) return;
+                detail.Text = $"{item.Detail}\n\n模式/状态：{item.Mode} · {item.StateBefore} → {item.StateAfter}\n客户/会话：{item.CustomerId} · {item.AccountId} · {item.ConversationId}\n商机：{item.OpportunityId}\n来源消息：{item.SourceMessageId}\n上下文版本：{item.ContextVersion}\n幂等键：{item.IdempotencyKey}\n模型/提示版本：{item.Model} · {item.PromptVersion}\nBrain：{string.Join("；", item.CustomerBrainReferences)}\n知识：{string.Join("；", item.KnowledgeReferences)}\n最终结果：{item.FinalResult}";
+            };
+            Grid.SetRow(table, 0);
+            Grid.SetRow(detail, 1);
+            grid.Children.Add(table);
+            grid.Children.Add(detail);
+            new Window
+            {
+                Title = $"Customer Success Agent 审计日志 · {conversation.DisplayName}",
+                Owner = Window.GetWindow(this),
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Width = 960,
+                Height = 650,
+                MinWidth = 760,
+                MinHeight = 500,
+                Content = grid
+            }.ShowDialog();
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "日志读取失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private static void ShowAgentStateDetail(ConversationAgentState state)
+    {
+        var detail = new[] { state.StateReason, state.PauseReason, state.LastRunDetail, state.LastRunError }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase);
+        MessageBox.Show(
+            $"模式：{CustomerSuccessAgentLabels.Mode(state.Mode)}\n运行：{CustomerSuccessAgentLabels.RunState(state.RunState)}\n话题：{AgentTopicStateLabel(state.TopicState)}\n风险：{AgentRiskStateLabel(state.RiskState)}\n\n{string.Join("\n", detail)}",
+            "Customer Success Agent 当前状态",
+            MessageBoxButton.OK,
+            state.RunState is ConversationAgentRunState.PausedError or ConversationAgentRunState.PausedRisk
+                ? MessageBoxImage.Warning
+                : MessageBoxImage.Information);
+    }
+
     private async void UseAgentDraft_Click(object sender, RoutedEventArgs e)
     {
         if (ConversationList.SelectedItem is not ConversationItem conversation ||
@@ -2079,6 +2323,77 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         AgentModeCombo.IsEnabled = context is not null;
         UpdateAgentModeGuide(selectableMode);
 
+        ChatAgentTrack.Visibility = context is null ? Visibility.Collapsed : Visibility.Visible;
+        ChatAgentModeText.Text = CustomerSuccessAgentLabels.Mode(selectableMode);
+        ChatAgentRunStateText.Text = CustomerSuccessAgentLabels.RunState(
+            state?.RunState ?? ConversationAgentRunState.SuggestReady);
+        ChatAgentIdentityText.Text = state?.AssistantIdentity ?? "Customer Success Agent";
+        ChatAgentCustomerText.Text = context?.Customer is null
+            ? "等待客户身份"
+            : $"{context.Customer.Name} · {context.Customer.Id}";
+        AgentRuntimeIdentityText.Text = context?.Customer is null
+            ? "Customer Success Agent · 等待客户身份"
+            : $"{state?.AssistantIdentity ?? "Customer Success Agent"} · {context.Customer.Name}";
+        AgentRunStateBadgeText.Text = CustomerSuccessAgentLabels.RunState(
+            state?.RunState ?? ConversationAgentRunState.SuggestReady);
+        AgentRiskStateBadgeText.Text = AgentRiskStateLabel(
+            state?.RiskState ?? ConversationRiskVerificationState.None);
+        AgentTopicStateText.Text = $"话题：{AgentTopicStateLabel(state?.TopicState ?? ConversationTopicState.Unknown)}";
+        var startedAt = state?.HostingStartedAt;
+        var lastActionAt = state?.LastAgentActionAt ?? state?.LastRunAt;
+        var runtimeTiming = startedAt is null
+            ? "尚未开始运行"
+            : $"开始 {startedAt.Value.LocalDateTime:MM-dd HH:mm} · 最近动作 {(lastActionAt ?? startedAt).Value.LocalDateTime:MM-dd HH:mm}";
+        AgentRuntimeTimingText.Text = runtimeTiming;
+        ChatAgentRuntimeMetaText.Text = runtimeTiming;
+        AgentBrainSourceText.Text = $"Customer Brain {context?.Brain?.Statements.Count ?? 0}";
+        AgentWhatsAppSourceText.Text = $"WhatsApp {context?.Messages.Count ?? 0}";
+        AgentEmailSourceText.Text = $"邮件 {context?.EmailMessages.Count ?? 0}";
+        AgentKnowledgeSourceText.Text = $"知识库 {state?.LastKnowledgeReferences.Count ?? 0}";
+        var references = new List<string>();
+        if (context?.Opportunity is { } opportunity)
+            references.Add($"商机 {opportunity.IntentSummary} / {opportunity.RiskSummary}");
+        if (state is not null)
+        {
+            references.AddRange(state.LastCustomerBrainReferences.Take(3).Select(value => $"Brain {value}"));
+            references.AddRange(state.LastKnowledgeReferences.Take(3).Select(value => $"KB {value}"));
+        }
+        AgentLatestReferencesText.Text = references.Count == 0
+            ? "最近引用：未记录"
+            : $"最近引用：{string.Join("；", references)}";
+        var paused = state?.RunState is ConversationAgentRunState.RiskInfoCollectionSent or
+            ConversationAgentRunState.WaitingHuman or
+            ConversationAgentRunState.PausedRisk or
+            ConversationAgentRunState.PausedError or
+            ConversationAgentRunState.HumanTakeover;
+        AgentPauseReasonPanel.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
+        AgentPauseReasonText.Text = state is null
+            ? "暂停原因：未记录"
+            : $"暂停原因：{(string.IsNullOrWhiteSpace(state.PauseReason) ? state.StateReason : state.PauseReason)}";
+        var canStopRuntime = state is not null &&
+                             (ConversationAgentStateMachine.IsHosting(state) ||
+                              ConversationAgentStateMachine.AllowsCollaboration(state));
+        var canTakeOver = state is not null &&
+                          (canStopRuntime || state.RunState is ConversationAgentRunState.RiskInfoCollectionSent or
+                              ConversationAgentRunState.WaitingHuman or
+                              ConversationAgentRunState.PausedRisk or
+                              ConversationAgentRunState.PausedError);
+        StopAgentButton.Visibility = canStopRuntime ? Visibility.Visible : Visibility.Collapsed;
+        RuntimeStopAgentButton.Visibility = canStopRuntime ? Visibility.Visible : Visibility.Collapsed;
+        StopAgentButton.Content = state?.Mode == ConversationAgentMode.CopilotActive ? "停止协作" : "停止托管";
+        RuntimeStopAgentButton.Content = StopAgentButton.Content;
+        var stopAutomationName = state?.Mode == ConversationAgentMode.CopilotActive
+            ? "停止当前会话协作"
+            : "停止当前会话托管";
+        System.Windows.Automation.AutomationProperties.SetName(StopAgentButton, stopAutomationName);
+        System.Windows.Automation.AutomationProperties.SetName(RuntimeStopAgentButton, stopAutomationName);
+        HeaderHumanTakeoverButton.Visibility = canTakeOver ? Visibility.Visible : Visibility.Collapsed;
+        RuntimeHumanTakeoverButton.Visibility = canTakeOver ? Visibility.Visible : Visibility.Collapsed;
+        ViewAgentLogButton.IsEnabled = state is not null;
+        RuntimeViewAgentLogButton.IsEnabled = state is not null;
+        ApplyAgentRunStateVisual(state?.RunState ?? ConversationAgentRunState.SuggestReady);
+        RefreshAgentPrimaryButton();
+
         var runStatus = state?.LastRunStatus ?? CustomerSuccessRunStatus.None;
         AgentRunStatusText.Text = CustomerSuccessAgentLabels.RunStatus(runStatus);
         AgentRunTimeText.Text = state?.LastRunAt is { } runAt
@@ -2090,7 +2405,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         AgentRunReplyText.Text = string.IsNullOrWhiteSpace(state?.LastGeneratedReply)
             ? "生成的建议回复会显示在这里。"
             : runStatus is CustomerSuccessRunStatus.AutoReplySent or CustomerSuccessRunStatus.AutoReplyPending
-                ? $"自动回复：{state.LastGeneratedReply}"
+                ? $"托管回复：{state.LastGeneratedReply}"
                 : $"建议回复：{state.LastGeneratedReply}";
         AgentRunSummaryText.Text = string.IsNullOrWhiteSpace(state?.LastRunSummary)
             ? "分析摘要：—"
@@ -2134,6 +2449,63 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         HandoffPausedText.Text = handoff is null ? "" : $"状态：{handoff.Status} · 已暂停 {handoff.PausedMessageCount} 条消息";
         UpdateComposerState();
     }
+
+    private void RefreshAgentPrimaryButton()
+    {
+        var state = _currentCustomerSuccessContext?.AgentState;
+        var label = state is null ? "启用 AI" : CustomerSuccessAgentLabels.PrimaryAction(state);
+        var visibleLabel = _aiAssisting ? "分析中…" : label;
+        AiAssistantButton.Content = visibleLabel;
+        ToolTipService.SetToolTip(AiAssistantButton, state is null
+            ? "请先关联当前会话客户。"
+            : $"{CustomerSuccessAgentLabels.Mode(state.Mode)} · {CustomerSuccessAgentLabels.RunState(state.RunState)}");
+        System.Windows.Automation.AutomationProperties.SetName(
+            AiAssistantButton,
+            $"Customer Success Agent：{visibleLabel}");
+    }
+
+    private void ApplyAgentRunStateVisual(ConversationAgentRunState runState)
+    {
+        var (background, foreground) = runState switch
+        {
+            ConversationAgentRunState.CollabActive or
+            ConversationAgentRunState.AutoArmed or
+            ConversationAgentRunState.AutoProcessing or
+            ConversationAgentRunState.AutoSending or
+            ConversationAgentRunState.WaitingCustomer => ("SuccessSoft", "Success"),
+            ConversationAgentRunState.RiskInfoCollectionSent or
+            ConversationAgentRunState.WaitingHuman or
+            ConversationAgentRunState.PausedRisk => ("WarningSoft", "Warning"),
+            ConversationAgentRunState.PausedError or
+            ConversationAgentRunState.HumanTakeover => ("DangerSoft", "Danger"),
+            _ => ("SurfaceElevated", "InkSecondary")
+        };
+        ChatAgentRunStateBorder.SetResourceReference(Border.BackgroundProperty, background);
+        ChatAgentRunStateText.SetResourceReference(TextBlock.ForegroundProperty, foreground);
+        AgentRunStateBadgeBorder.SetResourceReference(Border.BackgroundProperty, background);
+        AgentRunStateBadgeText.SetResourceReference(TextBlock.ForegroundProperty, foreground);
+    }
+
+    private static string AgentTopicStateLabel(ConversationTopicState value) => value switch
+    {
+        ConversationTopicState.Open => "开放",
+        ConversationTopicState.WaitingCustomer => "等待客户",
+        ConversationTopicState.WaitingHuman => "等待人工",
+        ConversationTopicState.Resolved => "已解决",
+        ConversationTopicState.Ended => "已结束",
+        _ => "等待判断"
+    };
+
+    private static string AgentRiskStateLabel(ConversationRiskVerificationState value) => value switch
+    {
+        ConversationRiskVerificationState.OpenUnverified => "风险待核实",
+        ConversationRiskVerificationState.AlreadyDiscussed => "风险已讨论",
+        ConversationRiskVerificationState.InformationCollectionSent => "已收集一次信息",
+        ConversationRiskVerificationState.WaitingHuman => "风险待人工",
+        ConversationRiskVerificationState.Resolved => "风险已解决",
+        ConversationRiskVerificationState.Conflict => "风险信息冲突",
+        _ => "无风险事项"
+    };
 
     private static string SourcingFieldLabel(SourcingFieldKey value) => value switch
     {

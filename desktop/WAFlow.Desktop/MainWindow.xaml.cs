@@ -903,7 +903,7 @@ public partial class MainWindow : Window
         _dashboard.NotifyUnreadChanged();
     }
 
-    private void MessagingUnreadChanged(object? sender, WhatsAppMessage e)
+    private void MessagingUnreadChanged(object? sender, WhatsAppMessageSyncedEvent e)
     {
         QueueUnreadBadgeRefresh();
         _services.DashboardUnreadDigest.QueueBackgroundRefresh();

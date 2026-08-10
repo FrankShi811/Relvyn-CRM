@@ -80,6 +80,9 @@ jobs:
         shell: pwsh
         run: .\scripts\test-compliance.ps1
 
+      - name: Run bridge unit smoke tests
+        run: pnpm --dir bridge run smoke:units
+
       - name: Install Inno Setup for Chinese installer
         shell: pwsh
         run: choco install innosetup --no-progress -y

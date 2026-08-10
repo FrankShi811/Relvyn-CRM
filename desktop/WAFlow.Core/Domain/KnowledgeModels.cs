@@ -252,6 +252,8 @@ public sealed class KnowledgeConflict
 public sealed class KnowledgeRetrievalRequest
 {
     public string Query { get; set; } = "";
+    public string TenantId { get; set; } = "local";
+    public string UserId { get; set; } = "local";
     public string CustomerId { get; set; } = "";
     public string AccountId { get; set; } = "";
     public string ConversationId { get; set; } = "";

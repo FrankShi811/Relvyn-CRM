@@ -1128,8 +1128,11 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
         }
     }
 
-    private void WhatsAppSync_MessageSynchronized(object? sender, WhatsAppMessage message)
+    private void WhatsAppSync_MessageSynchronized(object? sender, WhatsAppMessageSyncedEvent e)
     {
+        // Enrichment only reads; withholding it for backlog would lose data the
+        // user already has locally.
+        var message = e.Message;
         if (Volatile.Read(ref _started) == 0 || message.Direction != WhatsAppMessageDirection.Incoming
             || message.IsGroup || message.IsStatusUpdate || string.IsNullOrWhiteSpace(message.LeadId)) return;
         _ = QueueAutomaticallyAsync(message.LeadId, CustomerEnrichmentTriggerType.NewWhatsAppConversation);

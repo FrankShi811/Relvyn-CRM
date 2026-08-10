@@ -318,8 +318,11 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
         BulkAnalysisProgressChanged?.Invoke(this, value);
     }
 
-    private void Sync_MessageSynchronized(object? sender, WhatsAppMessage message)
+    private void Sync_MessageSynchronized(object? sender, WhatsAppMessageSyncedEvent e)
     {
+        // Lead scoring reads messages, it does not answer them, so backlog and
+        // live traffic are equally valid input here.
+        var message = e.Message;
         if (message.IsGroup || message.IsStatusUpdate || message.Direction != WhatsAppMessageDirection.Incoming) return;
         _ = QueueReplySafelyAsync(message);
     }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using WAFlow.Core.Domain;
 using WAFlow.Core.Infrastructure;
@@ -9,12 +10,36 @@ public sealed record CustomerSuccessAgentRunCompletedEvent(
     string ConversationId,
     CustomerSuccessRunStatus Status);
 
+/// <summary>
+/// A conversation whose offline-backlog message was withheld from automatic
+/// sending. <paramref name="DraftGenerated"/> is false when the per-catch-up
+/// draft budget was already spent (PRD v0.4 F5.5).
+/// </summary>
+public sealed record CustomerSuccessOfflineBacklogEvent(
+    string AccountId,
+    string ConversationId,
+    bool DraftGenerated);
+
+/// <summary>What an offline-backlog message is permitted to do.</summary>
+public enum OfflineBacklogDisposition
+{
+    /// <summary>Generate a draft for confirmation, never send.</summary>
+    DraftOnly,
+
+    /// <summary>Budget spent: record the conversation, do not call the model.</summary>
+    SummaryOnly,
+
+    /// <summary>The gate is switched off; treat the message as live.</summary>
+    GateDisabled
+}
+
 public interface ICustomerSuccessMessageSender
 {
     Task<JsonElement> SendTextAsync(
         string accountId,
         string phone,
         string text,
+        OutboundSendOptions options,
         CancellationToken cancellationToken = default);
 }
 
@@ -27,33 +52,326 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
     private readonly ICustomerSuccessMessageSender _connections;
     private readonly CustomerSuccessAgentService _agent;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly Func<AgentAutomationSettings, TimeSpan>? _coalescingDelayOverride;
+    private readonly ConcurrentDictionary<string, ConversationWork> _conversationWork =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Conversations already drafted in the current offline catch-up window, per
+    /// account. A set rather than a counter because the budget in PRD F5.5 is
+    /// fifty *conversations*: one customer who sent forty messages during the
+    /// outage must not starve thirty-nine others.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _backlogDraftedConversations =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<CustomerSuccessAgentRunCompletedEvent>? RunCompleted;
+
+    /// <summary>Raised when backlog messages were withheld from automatic sending.</summary>
+    public event EventHandler<CustomerSuccessOfflineBacklogEvent>? OfflineBacklogDeferred;
 
     public CustomerSuccessAgentCoordinator(
         LocalRepository repository,
         WhatsAppSyncService sync,
         ICustomerSuccessMessageSender connections,
-        CustomerSuccessAgentService agent)
+        CustomerSuccessAgentService agent,
+        Func<AgentAutomationSettings, TimeSpan>? coalescingDelayOverride = null)
     {
         _repository = repository;
         _sync = sync;
         _connections = connections;
         _agent = agent;
+        _coalescingDelayOverride = coalescingDelayOverride;
         _sync.MessageSynchronized += OnMessageSynchronized;
+        _sync.OfflineCatchupChanged += OnOfflineCatchupChanged;
     }
 
-    private void OnMessageSynchronized(object? sender, WhatsAppMessage message)
+    /// <summary>
+    /// Resets on both edges of the catch-up window, not just the opening one.
+    /// The age threshold can classify a straggler as backlog long after any
+    /// catch-up — clock skew, a delayed stanza — and without a closing reset
+    /// those would slowly consume the budget of a long-lived session until
+    /// drafting stopped altogether, silently and indefinitely. Overshooting the
+    /// budget by a few drafts is the recoverable direction.
+    /// </summary>
+    private void OnOfflineCatchupChanged(object? sender, WhatsAppOfflineCatchupEvent e) =>
+        _backlogDraftedConversations[e.AccountId] = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+
+    private void OnMessageSynchronized(object? sender, WhatsAppMessageSyncedEvent e)
     {
+        if (_shutdown.IsCancellationRequested) return;
+        var message = e.Message;
         if (message.IsGroup) return;
         if (message.Direction == WhatsAppMessageDirection.Outgoing && !message.IsRevoked)
         {
-            _ = ReconcileOutgoingStatusAsync(message, _shutdown.Token);
+            _ = HandleOutgoingAsync(message, e.Arrival, _shutdown.Token);
             return;
         }
         if (message.Direction != WhatsAppMessageDirection.Incoming || message.IsStatusUpdate ||
-            message.IsRevoked || string.IsNullOrWhiteSpace(message.Body)) return;
-        _ = HandleAsync(message, _shutdown.Token);
+            message.IsRevoked || !HasAnalyzableContent(message)) return;
+        QueueIncoming(message, e.Arrival);
+    }
+
+    private void QueueIncoming(WhatsAppMessage message, MessageArrival arrival)
+    {
+        if (_shutdown.IsCancellationRequested) return;
+        CancellationTokenSource current;
+        try
+        {
+            current = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+        var key = ConversationWorkKey(message.AccountId, message.ConversationId);
+        var work = _conversationWork.GetOrAdd(key, _ => new ConversationWork());
+        CancellationTokenSource? previous;
+        long generation;
+        lock (work.SyncRoot)
+        {
+            work.Pending[message.Id] = new QueuedIncoming(message, arrival);
+            previous = work.ActiveCancellation;
+            work.ActiveCancellation = current;
+            generation = ++work.Generation;
+        }
+
+        try { previous?.Cancel(); }
+        catch (ObjectDisposedException) { }
+
+        _ = ProcessConversationWorkAsync(work, generation, message, current);
+    }
+
+    private async Task ProcessConversationWorkAsync(
+        ConversationWork work,
+        long generation,
+        WhatsAppMessage newestMessage,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            var state = await _repository.GetConversationAgentStateAsync(
+                newestMessage.AccountId,
+                newestMessage.ConversationId,
+                cancellation.Token);
+            var alreadyProcessed = state is not null &&
+                                   state.LastProcessedMessageId.Equals(
+                                       newestMessage.Id,
+                                       StringComparison.OrdinalIgnoreCase);
+            if (!alreadyProcessed)
+            {
+                await _agent.InvalidateDraftAsync(
+                    newestMessage.AccountId,
+                    newestMessage.ConversationId,
+                    "收到新的客户消息，旧草稿和旧运行已失效。",
+                    newestMessage.Id,
+                    cancellation.Token);
+            }
+
+            var delay = await ResolveCoalescingDelayAsync(cancellation.Token);
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, cancellation.Token);
+
+            List<QueuedIncoming> batch;
+            lock (work.SyncRoot)
+            {
+                if (work.Generation != generation ||
+                    !ReferenceEquals(work.ActiveCancellation, cancellation) ||
+                    cancellation.IsCancellationRequested)
+                    return;
+                batch = work.Pending.Values
+                    .OrderBy(item => item.Message.Timestamp)
+                    .ThenBy(item => item.Message.Id, StringComparer.Ordinal)
+                    .ToList();
+            }
+            if (batch.Count == 0) return;
+
+            var sourceMessageIds = batch.Select(item => item.Message.Id).ToList();
+            var representative = batch[^1].Message;
+            var batchArrival = batch.Any(item => item.Arrival == MessageArrival.OfflineBacklog)
+                ? MessageArrival.OfflineBacklog
+                : batch.Any(item => item.Arrival == MessageArrival.HistorySync)
+                    ? MessageArrival.HistorySync
+                    : MessageArrival.Live;
+            await HandleBatchAsync(
+                representative,
+                batchArrival,
+                sourceMessageIds,
+                cancellation.Token);
+
+            lock (work.SyncRoot)
+            {
+                if (work.Generation != generation ||
+                    !ReferenceEquals(work.ActiveCancellation, cancellation))
+                    return;
+                foreach (var sourceMessageId in sourceMessageIds)
+                    work.Pending.Remove(sourceMessageId);
+            }
+        }
+        catch (OperationCanceledException) when (
+            cancellation.IsCancellationRequested || _shutdown.IsCancellationRequested)
+        {
+            // A newer message, a human send or shutdown owns the conversation now.
+            // Cancellation is expected invalidation, never a failed Agent run.
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                await _repository.LogEventAsync(
+                    "customer_success_coalescing_failed",
+                    null,
+                    null,
+                    Json.Serialize(new
+                    {
+                        newestMessage.AccountId,
+                        newestMessage.ConversationId,
+                        sourceMessageId = newestMessage.Id,
+                        error = error.Message
+                    }),
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Diagnostics must not surface as an unobserved background task.
+            }
+        }
+        finally
+        {
+            lock (work.SyncRoot)
+            {
+                if (work.Generation == generation && ReferenceEquals(work.ActiveCancellation, cancellation))
+                {
+                    work.ActiveCancellation = null;
+                }
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task<TimeSpan> ResolveCoalescingDelayAsync(CancellationToken cancellationToken)
+    {
+        AgentAutomationSettings automation;
+        try
+        {
+            automation = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation
+                         ?? new AgentAutomationSettings();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            automation = new AgentAutomationSettings();
+        }
+
+        return _coalescingDelayOverride?.Invoke(automation)
+               ?? TimeSpan.FromSeconds(automation.NormalizedCoalescingSeconds());
+    }
+
+    private async Task HandleOutgoingAsync(
+        WhatsAppMessage message,
+        MessageArrival arrival,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var state = await _repository.GetConversationAgentStateAsync(
+                message.AccountId,
+                message.ConversationId,
+                cancellationToken);
+            if (state is null) return;
+            if (!string.IsNullOrWhiteSpace(state.LastProviderMessageId) &&
+                state.LastProviderMessageId.Equals(message.ProviderMessageId, StringComparison.OrdinalIgnoreCase))
+            {
+                await ReconcileOutgoingStatusAsync(message, cancellationToken);
+                return;
+            }
+            if (arrival != MessageArrival.Live || string.IsNullOrWhiteSpace(state.CustomerId)) return;
+
+            CancelConversationWork(message.AccountId, message.ConversationId, clearPending: true);
+            await _agent.HumanTakeoverAsync(
+                state.CustomerId,
+                message.AccountId,
+                message.ConversationId,
+                "mobile_or_external",
+                message.Id,
+                "检测到人工外发消息。",
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            // An outgoing synchronization event must never interrupt WhatsApp sync.
+        }
+    }
+
+    /// <summary>
+    /// Decides what a backlog message is allowed to do this catch-up window.
+    ///
+    /// Three outcomes, in order of preference: generate a draft the user
+    /// confirms; record a summary without spending an LLM call once the budget
+    /// is gone; or — when the gate is switched off — behave exactly as before.
+    /// </summary>
+    private async Task<OfflineBacklogDisposition> ResolveBacklogDispositionAsync(
+        WhatsAppMessage message,
+        CancellationToken cancellationToken)
+    {
+        AgentAutomationSettings automation;
+        try
+        {
+            automation = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation
+                         ?? new AgentAutomationSettings();
+        }
+        catch
+        {
+            // Fail closed: if the gate's own configuration cannot be read, hold
+            // the message back rather than send on an unverified assumption.
+            automation = new AgentAutomationSettings();
+        }
+        if (!automation.OfflineBacklogGateEnabled) return OfflineBacklogDisposition.GateDisabled;
+
+        var drafted = _backlogDraftedConversations.GetOrAdd(
+            message.AccountId, _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+        // A conversation already inside the budget keeps drafting for every
+        // further message it receives; only a *new* conversation spends a slot.
+        if (drafted.ContainsKey(message.ConversationId)) return OfflineBacklogDisposition.DraftOnly;
+        if (drafted.Count >= automation.NormalizedDraftLimit()) return OfflineBacklogDisposition.SummaryOnly;
+        drafted.TryAdd(message.ConversationId, 0);
+        return OfflineBacklogDisposition.DraftOnly;
+    }
+
+    private async Task RecordBacklogSummaryAsync(
+        WhatsAppMessage message,
+        IReadOnlyList<string> sourceMessageIds,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _repository.LogEventAsync(
+                "customer_success_offline_backlog_deferred",
+                null,
+                null,
+                Json.Serialize(new
+                {
+                    message.AccountId,
+                    message.ConversationId,
+                    sourceMessageId = message.Id,
+                    sourceMessageIds,
+                    message.Timestamp,
+                    notSentReason = "offline_backlog_draft_limit"
+                }),
+                cancellationToken);
+        }
+        catch
+        {
+            // Diagnostics must never take down the sync loop.
+        }
+        OfflineBacklogDeferred?.Invoke(this, new CustomerSuccessOfflineBacklogEvent(
+            message.AccountId, message.ConversationId, false));
     }
 
     private async Task ReconcileOutgoingStatusAsync(WhatsAppMessage message, CancellationToken cancellationToken)
@@ -108,7 +426,17 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         }
     }
 
-    private async Task HandleAsync(WhatsAppMessage message, CancellationToken cancellationToken)
+    // Single overload on purpose: a convenience wrapper defaulting to
+    // MessageArrival.Live would be the fail-open direction, and the smoke tests
+    // reach this by name through reflection.
+    private Task HandleAsync(WhatsAppMessage message, MessageArrival arrival, CancellationToken cancellationToken) =>
+        HandleBatchAsync(message, arrival, [message.Id], cancellationToken);
+
+    private async Task HandleBatchAsync(
+        WhatsAppMessage message,
+        MessageArrival arrival,
+        IReadOnlyList<string> sourceMessageIds,
+        CancellationToken cancellationToken)
     {
         CustomerSuccessAgentRunResult? result = null;
         var expectedCustomerId = "";
@@ -120,21 +448,52 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 .FirstOrDefault(item => item.Id == message.ConversationId);
             if (conversation is null) return;
             var state = await _repository.GetConversationAgentStateAsync(message.AccountId, message.ConversationId, cancellationToken);
-            if (state?.Mode is not ConversationAgentMode.CopilotActive and not ConversationAgentMode.AutoActive &&
-                state?.Mode is not ConversationAgentMode.HumanRequired and not ConversationAgentMode.HumanActive and not ConversationAgentMode.ResumeReview)
-                return;
+            if (state is null) return;
+            if (state.LastProcessedMessageId.Equals(message.Id, StringComparison.OrdinalIgnoreCase)) return;
+            var collaborationAllowed = ConversationAgentStateMachine.AllowsCollaboration(state);
+            var autoProcessingAllowed = ConversationAgentStateMachine.AllowsAutoProcessing(state);
+            if (!collaborationAllowed && !autoProcessingAllowed) return;
             expectedCustomerId = state.CustomerId;
-            var requestedMode = state.Mode;
+            var requestedMode = autoProcessingAllowed
+                ? ConversationAgentMode.AutoActive
+                : ConversationAgentMode.CopilotActive;
+            var backlogGated = false;
+            if (arrival == MessageArrival.OfflineBacklog)
+            {
+                var disposition = await ResolveBacklogDispositionAsync(message, cancellationToken);
+                if (disposition == OfflineBacklogDisposition.SummaryOnly)
+                {
+                    await RecordBacklogSummaryAsync(message, sourceMessageIds, cancellationToken);
+                    await TryUpdateRunOutcomeAsync(
+                        null,
+                        expectedCustomerId,
+                        message,
+                        CustomerSuccessRunStatus.Blocked,
+                        "离线期间堆积的消息数量超过本次补齐的草稿上限，未生成草稿，也未发送。",
+                        cancellationToken: cancellationToken);
+                    RaiseRunCompleted(message, CustomerSuccessRunStatus.Blocked);
+                    return;
+                }
+                if (disposition == OfflineBacklogDisposition.DraftOnly)
+                {
+                    // Downgrading the mode — rather than adding a parallel
+                    // "draft only" path — reuses the copilot flow that is already
+                    // proven not to send, so there is no second place where a
+                    // send could slip through.
+                    backlogGated = true;
+                    if (requestedMode == ConversationAgentMode.AutoActive)
+                        requestedMode = ConversationAgentMode.CopilotActive;
+                }
+            }
             result = await _agent.AnalyzeAsync(
                 message.AccountId, message.ConversationId, conversation.Phone, conversation.DisplayName,
                 sourceMessageId: message.Id,
+                sourceMessageIds: sourceMessageIds,
                 trigger: CustomerSuccessRunTrigger.IncomingAutomation,
                 cancellationToken: cancellationToken);
             if (result.Decision is null)
             {
-                var status = requestedMode is ConversationAgentMode.HumanRequired or ConversationAgentMode.HumanActive or ConversationAgentMode.ResumeReview
-                    ? CustomerSuccessRunStatus.HumanRequired
-                    : CustomerSuccessRunStatus.Blocked;
+                const CustomerSuccessRunStatus status = CustomerSuccessRunStatus.Blocked;
                 await TryUpdateRunOutcomeAsync(
                     result,
                     expectedCustomerId,
@@ -161,6 +520,20 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
 
             if (requestedMode == ConversationAgentMode.CopilotActive)
             {
+                if (backlogGated)
+                {
+                    await TryUpdateRunOutcomeAsync(
+                        result,
+                        expectedCustomerId,
+                        message,
+                        CustomerSuccessRunStatus.CopilotDraftReady,
+                        "这条消息是电脑离线期间堆积的，已生成待确认草稿，未自动发送。",
+                        cancellationToken: cancellationToken);
+                    // Raised only now: before AnalyzeAsync there is nothing for the
+                    // user to confirm, and the run can still end without a draft.
+                    OfflineBacklogDeferred?.Invoke(this, new CustomerSuccessOfflineBacklogEvent(
+                        message.AccountId, message.ConversationId, true));
+                }
                 RaiseRunCompleted(message, CustomerSuccessRunStatus.CopilotDraftReady);
                 return;
             }
@@ -194,16 +567,56 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             if (capturedIdentityLink is null || !capturedIdentityLink.IsActive)
                 throw new InvalidOperationException(ContextChangedMessage);
             var acknowledgedSendBindingToken = BuildAcknowledgedSendBindingToken(capturedIdentityLink);
-            var verifiedConversation = await _agent.EnsureRunContextCurrentAsync(
-                result.ContextToken,
-                requireAutoLock: !shouldSendHolding,
-                requireProcessedState: true,
-                cancellationToken);
-            var response = await _connections.SendTextAsync(
-                message.AccountId,
-                verifiedConversation.Phone,
-                result.Decision.ReplyText,
-                cancellationToken);
+            var sendOptions = OutboundSendOptions.ForAgent(
+                message.ConversationId,
+                result.ContextToken.RunToken);
+            var verifiedConversation = shouldSendHolding
+                ? await _agent.EnsureRunContextCurrentAsync(
+                    result.ContextToken,
+                    requireAutoLock: false,
+                    requireProcessedState: true,
+                    cancellationToken)
+                : await _agent.BeginSendAsync(
+                    result.ContextToken,
+                    result.Decision,
+                    sendOptions.IdempotencyKey,
+                    cancellationToken);
+            // Last line of defence for the offline gate. The mode downgrade above
+            // is what normally stops a backlog reply, but that decision lives in a
+            // local read taken before the analysis; this one is local to the send
+            // itself, so no future branch can reach WhatsApp behind the gate's back.
+            if (backlogGated) throw new InvalidOperationException(ContextChangedMessage);
+            // The run token makes the key stable across an RPC timeout retry for
+            // the same generated reply, and different for a regenerated one.
+            JsonElement response;
+            try
+            {
+                response = await _connections.SendTextAsync(
+                    message.AccountId,
+                    verifiedConversation.Phone,
+                    result.Decision.ReplyText,
+                    sendOptions,
+                    cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                // One bounded retry only. The same stable key is reused so an
+                // acknowledgement that raced the 45s RPC timeout cannot create
+                // a second WhatsApp message in the same bridge session.
+                if (shouldSendHolding)
+                    await EnsureHoldingContextCurrentAsync(result, message, cancellationToken);
+                await _agent.EnsureRunContextCurrentAsync(
+                    result.ContextToken,
+                    requireAutoLock: !shouldSendHolding,
+                    requireProcessedState: true,
+                    cancellationToken);
+                response = await _connections.SendTextAsync(
+                    message.AccountId,
+                    verifiedConversation.Phone,
+                    result.Decision.ReplyText,
+                    sendOptions,
+                    cancellationToken);
+            }
             var providerMessageId = ReadProviderId(response);
             var targetVerified = ReadBool(response, "targetVerified");
             var providerStatus = ReadNumericStatus(response);
@@ -222,7 +635,8 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                     result.ContextToken,
                     requireAutoLock: !shouldSendHolding,
                     requireProcessedState: true,
-                    CancellationToken.None);
+                    CancellationToken.None,
+                    acknowledgedProviderMessageId: providerMessageId);
             }
             catch (InvalidOperationException error) when (error.Message == ContextChangedMessage)
             {
@@ -327,6 +741,7 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 runDetail,
                 providerMessageId,
                 holdingReplyMessageId: shouldSendHolding ? providerMessageId : "",
+                riskInformationCollection: result.Decision.IsRiskInformationCollection,
                 cancellationToken: CancellationToken.None);
             if (updatedState is null)
             {
@@ -369,6 +784,13 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 CancellationToken.None);
             RaiseRunCompleted(message, runStatus);
         }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested || _shutdown.IsCancellationRequested)
+        {
+            // A newer conversation generation owns the work. Do not overwrite it
+            // with a Failed outcome and do not surface expected cancellation.
+            return;
+        }
         catch (Exception ex)
         {
             if (transportAcknowledged)
@@ -408,6 +830,40 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                     "客户上下文已变化，本轮已关闭发送且未覆盖当前客户状态。",
                     cancellationToken: CancellationToken.None);
                 RaiseRunCompleted(message, CustomerSuccessRunStatus.Failed);
+                return;
+            }
+            // A governor refusal is not a failure of this run: nothing was sent,
+            // the reply is intact, and the only question is when to try again.
+            // Recording it as Failed would bury the reason in an error string and
+            // make the throttle look like a bug.
+            if (ex is WhatsAppBridgeException { IsOutboundBlocked: true } blocked)
+            {
+                var retryAfter = blocked.RetryAfter;
+                var detail = retryAfter is null || OutboundBlockCodes.IsHardStop(blocked.Code)
+                    ? blocked.Message
+                    : $"{blocked.Message}约 {Math.Max(1, (int)Math.Ceiling(retryAfter.Value.TotalSeconds))} 秒后可重试。";
+                await TryUpdateRunOutcomeAsync(
+                    result,
+                    expectedCustomerId,
+                    message,
+                    CustomerSuccessRunStatus.Blocked,
+                    detail,
+                    error: blocked.Code,
+                    cancellationToken: CancellationToken.None);
+                await _repository.LogEventAsync(
+                    "customer_success_outbound_blocked",
+                    result?.ContextToken?.CustomerId ?? expectedCustomerId,
+                    null,
+                    Json.Serialize(new
+                    {
+                        message.AccountId,
+                        message.ConversationId,
+                        sourceMessageId = message.Id,
+                        code = blocked.Code,
+                        retryAfterMs = (int?)retryAfter?.TotalMilliseconds
+                    }),
+                    CancellationToken.None);
+                RaiseRunCompleted(message, CustomerSuccessRunStatus.Blocked);
                 return;
             }
             var outcomeUpdated = await TryUpdateRunOutcomeAsync(
@@ -478,7 +934,13 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             message.ConversationId,
             cancellationToken);
         var currentHandoff = await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken);
-        if (currentState?.Mode != ConversationAgentMode.HumanRequired ||
+        var validRiskCollection = result.Decision?.IsRiskInformationCollection == true &&
+                                  currentState?.RunState == ConversationAgentRunState.RiskInfoCollectionSent &&
+                                  currentState.RiskState == ConversationRiskVerificationState.InformationCollectionSent;
+        var validGenericHandoff = result.Decision?.IsRiskInformationCollection != true &&
+                                  currentState?.RunState == ConversationAgentRunState.WaitingHuman;
+        if (currentState?.Mode != ConversationAgentMode.AutoActive ||
+            (!validRiskCollection && !validGenericHandoff) ||
             currentHandoff is null || result.Handoff is null ||
             !currentHandoff.Id.Equals(result.Handoff.Id, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(ContextChangedMessage);
@@ -633,10 +1095,54 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         link.ManuallyConfirmed,
         link.UpdatedAt.ToUniversalTime().ToString("O"));
 
+    private static bool HasAnalyzableContent(WhatsAppMessage message) =>
+        !string.IsNullOrWhiteSpace(message.Body) ||
+        !string.IsNullOrWhiteSpace(message.FileName) ||
+        !string.IsNullOrWhiteSpace(message.MediaPath) ||
+        message.Kind is "image" or "video" or "audio" or "document" or "sticker";
+
+    private static string ConversationWorkKey(string accountId, string conversationId) =>
+        $"{accountId}\u001f{conversationId}";
+
+    private void CancelConversationWork(string accountId, string conversationId, bool clearPending)
+    {
+        if (!_conversationWork.TryGetValue(ConversationWorkKey(accountId, conversationId), out var work)) return;
+        CancelConversationWork(work, clearPending);
+    }
+
+    private static void CancelConversationWork(ConversationWork work, bool clearPending)
+    {
+        CancellationTokenSource? cancellation;
+        lock (work.SyncRoot)
+        {
+            cancellation = work.ActiveCancellation;
+            work.ActiveCancellation = null;
+            work.Generation++;
+            if (clearPending) work.Pending.Clear();
+        }
+        try { cancellation?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
     public void Dispose()
     {
         _sync.MessageSynchronized -= OnMessageSynchronized;
+        _sync.OfflineCatchupChanged -= OnOfflineCatchupChanged;
         _shutdown.Cancel();
+        foreach (var work in _conversationWork.Values)
+            CancelConversationWork(work, clearPending: true);
+        _conversationWork.Clear();
+        _backlogDraftedConversations.Clear();
         _shutdown.Dispose();
     }
+
+    private sealed class ConversationWork
+    {
+        public object SyncRoot { get; } = new();
+        public Dictionary<string, QueuedIncoming> Pending { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public CancellationTokenSource? ActiveCancellation { get; set; }
+        public long Generation { get; set; }
+    }
+
+    private sealed record QueuedIncoming(WhatsAppMessage Message, MessageArrival Arrival);
 }

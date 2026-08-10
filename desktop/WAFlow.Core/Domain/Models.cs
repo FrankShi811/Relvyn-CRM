@@ -701,6 +701,12 @@ public sealed class AppSettings
     public List<string> AvailableModels { get; set; } = [];
     public string ModelsBaseUrl { get; set; } = "";
     public DateTimeOffset? ModelsFetchedAt { get; set; }
+
+    /// <summary>Account-level send limits enforced by the bridge (PRD v0.4 §6).</summary>
+    public OutboundGovernorSettings Outbound { get; set; } = new();
+
+    /// <summary>Automation guardrails around offline catch-up (PRD v0.4 §5).</summary>
+    public AgentAutomationSettings AgentAutomation { get; set; } = new();
 }
 
 public sealed class AiProviderProfile

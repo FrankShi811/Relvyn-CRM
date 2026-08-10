@@ -5,7 +5,11 @@ using WAFlow.Core.Infrastructure;
 
 namespace WAFlow.Core.Services;
 
-public sealed class WhatsAppConnectionManager : IWhatsAppNumberRegistrationLookup, ICustomerSuccessMessageSender, IAsyncDisposable
+public sealed class WhatsAppConnectionManager :
+    IWhatsAppNumberRegistrationLookup,
+    ICustomerSuccessMessageSender,
+    ICustomerSuccessHostingReadiness,
+    IAsyncDisposable
 {
     private readonly string _dataRoot;
     private readonly ConcurrentDictionary<string, WhatsAppBridgeClient> _clients = new(StringComparer.OrdinalIgnoreCase);
@@ -22,6 +26,44 @@ public sealed class WhatsAppConnectionManager : IWhatsAppNumberRegistrationLooku
         _dataRoot = Path.GetFullPath(dataRoot
             ?? new DataWorkspaceManager().Resolve().RootDirectory);
     }
+
+    /// <summary>
+    /// Outbound governor configuration applied to every bridge client, existing
+    /// and future. Set once from persisted settings during startup; see
+    /// <c>AppServices.InitializeAsync</c>.
+    /// </summary>
+    public OutboundGovernorSettings OutboundSettings
+    {
+        get => _outboundSettings;
+        set
+        {
+            _outboundSettings = value ?? new OutboundGovernorSettings();
+            foreach (var client in _clients.Values) client.OutboundSettings = _outboundSettings;
+        }
+    }
+    private OutboundGovernorSettings _outboundSettings = new();
+
+    /// <summary>
+    /// Pushes new limits to a running bridge. Unlike assigning
+    /// <see cref="OutboundSettings"/> this takes effect without a reconnect.
+    /// </summary>
+    public Task<OutboundGovernorStatus> ConfigureOutboundAsync(string accountId, OutboundGovernorSettings settings, CancellationToken cancellationToken = default)
+    {
+        OutboundSettings = settings;
+        return GetClient(accountId).ConfigureOutboundAsync(settings, cancellationToken);
+    }
+
+    /// <summary>Reads today's send budget for the account health panel.</summary>
+    public Task<OutboundGovernorStatus> OutboundStatusAsync(string accountId, CancellationToken cancellationToken = default) =>
+        GetClient(accountId).OutboundStatusAsync(false, cancellationToken);
+
+    /// <summary>
+    /// Clears a governor suspension. A 403 suspension is indefinite by design —
+    /// it means WhatsApp may have restricted the account — so it is only ever
+    /// lifted by an explicit human action, never automatically.
+    /// </summary>
+    public Task<OutboundGovernorStatus> ResumeOutboundAsync(string accountId, CancellationToken cancellationToken = default) =>
+        GetClient(accountId).OutboundStatusAsync(true, cancellationToken);
 
     public void SetActiveAccount(string accountId) => ActiveAccountId = Normalize(accountId);
     public bool IsConnectedFor(string accountId) => _clients.TryGetValue(Normalize(accountId), out var client) && client.IsConnected;
@@ -94,7 +136,8 @@ public sealed class WhatsAppConnectionManager : IWhatsAppNumberRegistrationLooku
         finally { gate.Release(); }
     }
     public Task<JsonElement> SendTextAsync(string phone, string text, CancellationToken cancellationToken = default) => SendTextAsync(ActiveAccountId, phone, text, cancellationToken);
-    public Task<JsonElement> SendTextAsync(string accountId, string phone, string text, CancellationToken cancellationToken = default) => GetClient(accountId).SendTextAsync(phone, text, cancellationToken);
+    public Task<JsonElement> SendTextAsync(string accountId, string phone, string text, CancellationToken cancellationToken = default) => SendTextAsync(accountId, phone, text, OutboundSendOptions.Human, cancellationToken);
+    public Task<JsonElement> SendTextAsync(string accountId, string phone, string text, OutboundSendOptions options, CancellationToken cancellationToken = default) => GetClient(accountId).SendTextAsync(phone, text, options, cancellationToken);
     public Task<JsonElement> ValidateNumberAsync(string accountId, string phone, CancellationToken cancellationToken = default) => GetClient(accountId).ValidateNumberAsync(phone, cancellationToken);
     public async Task<WhatsAppNumberRegistrationLookupResult> LookupRegistrationAsync(string accountId, string phone, CancellationToken cancellationToken = default)
     {
@@ -175,7 +218,7 @@ public sealed class WhatsAppConnectionManager : IWhatsAppNumberRegistrationLooku
         accountId = Normalize(accountId);
         return _clients.GetOrAdd(accountId, id =>
         {
-            var client = new WhatsAppBridgeClient(_dataRoot);
+            var client = new WhatsAppBridgeClient(_dataRoot) { OutboundSettings = _outboundSettings };
             client.EventReceived += (_, e) => EventReceived?.Invoke(this, string.IsNullOrWhiteSpace(e.AccountId) ? e with { AccountId = id } : e);
             return client;
         });

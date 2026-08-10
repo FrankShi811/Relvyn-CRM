@@ -33,10 +33,86 @@ public enum ConversationAgentMode
     SuggestOnly,
     CopilotActive,
     AutoActive,
+    // Legacy values below are retained so existing JSON rows remain readable.
+    // Runtime state is stored in ConversationAgentState.RunState instead.
     IdentityResolutionRequired,
     HumanRequired,
     HumanActive,
     ResumeReview
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ConversationAgentRunState
+{
+    Off,
+    SuggestReady,
+    CollabActive,
+    AutoPreflight,
+    AutoArmed,
+    AutoProcessing,
+    AutoSending,
+    WaitingCustomer,
+    TopicResolved,
+    RiskInfoCollectionSent,
+    WaitingHuman,
+    PausedRisk,
+    PausedError,
+    HumanTakeover,
+    Ended
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ConversationTopicState
+{
+    Unknown,
+    Open,
+    WaitingCustomer,
+    WaitingHuman,
+    Resolved,
+    Ended
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ConversationRiskVerificationState
+{
+    None,
+    OpenUnverified,
+    AlreadyDiscussed,
+    InformationCollectionSent,
+    WaitingHuman,
+    Resolved,
+    Conflict
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ConversationAgentAuditAction
+{
+    ModeConfigured,
+    CollaborationStarted,
+    CollaborationStopped,
+    PreflightStarted,
+    PreflightBlocked,
+    HostingStarted,
+    HostingStopped,
+    HostingPaused,
+    MessageQueued,
+    MessageCoalesced,
+    DuplicateMessageIgnored,
+    ContextRead,
+    ContextSafetyBlocked,
+    TopicEvaluated,
+    TopicResolved,
+    RiskDetected,
+    DraftGenerated,
+    DraftInvalidated,
+    SendStarted,
+    SendCompleted,
+    SendFailed,
+    RiskInformationCollectionSent,
+    ManualMessageDetected,
+    HumanTakeover,
+    RestartRecovered,
+    ErrorPaused
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -202,14 +278,30 @@ public sealed class GlobalCustomerAgentLock
 
 public sealed class ConversationAgentState
 {
+    public int StateSchemaVersion { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = "local";
+    public string UserId { get; set; } = "local";
     public string CustomerId { get; set; } = "";
     public string AccountId { get; set; } = "";
     public string ConversationId { get; set; } = "";
+    public string OpportunityId { get; set; } = "";
+    public string ContextNamespace { get; set; } = "";
+    public string AssistantIdentity { get; set; } = "Customer Success Agent";
     public ConversationAgentMode Mode { get; set; } = ConversationAgentMode.SuggestOnly;
+    public ConversationAgentRunState RunState { get; set; } = ConversationAgentRunState.SuggestReady;
+    public ConversationTopicState TopicState { get; set; } = ConversationTopicState.Unknown;
+    public ConversationRiskVerificationState RiskState { get; set; } = ConversationRiskVerificationState.None;
     public string StateReason { get; set; } = "";
+    public string PauseReason { get; set; } = "";
     public int PausedMessageCount { get; set; }
+    public int AutomaticTurnCount { get; set; }
+    public int MaxAutomaticTurns { get; set; } = 8;
+    public long ContextVersion { get; set; }
     public string LastProcessedMessageId { get; set; } = "";
+    public string LastCustomerMessageId { get; set; } = "";
+    public string LastHumanMessageId { get; set; } = "";
+    public string LastAgentMessageId { get; set; } = "";
     public string LastHoldingReplyMessageId { get; set; } = "";
     public CustomerSuccessRunStatus LastRunStatus { get; set; }
     public string LastRunDetail { get; set; } = "";
@@ -219,10 +311,74 @@ public sealed class ConversationAgentState
     public string LastRunSummary { get; set; } = "";
     public string LastRecommendedAction { get; set; } = "";
     public string LastProviderMessageId { get; set; } = "";
+    public string LastIdempotencyKey { get; set; } = "";
+    public string LastDraftHash { get; set; } = "";
+    public string LastRiskCategory { get; set; } = "";
+    public string LastContextSafetyCheck { get; set; } = "";
+    public List<string> LastSourceMessageIds { get; set; } = [];
+    public List<string> LastCustomerBrainReferences { get; set; } = [];
+    public List<string> LastKnowledgeReferences { get; set; } = [];
     public string PendingRunContextToken { get; set; } = "";
+    public string HostingSessionToken { get; set; } = "";
+    public DateTimeOffset? HostingStartedAt { get; set; }
+    public DateTimeOffset? HostingEndedAt { get; set; }
+    public DateTimeOffset? LastAgentActionAt { get; set; }
     public DateTimeOffset? LastRunAt { get; set; }
     public bool ExplicitResumeRequired { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
+}
+
+public sealed class ConversationAgentPreflightCheck
+{
+    public string Code { get; set; } = "";
+    public string Label { get; set; } = "";
+    public bool Passed { get; set; }
+    public string Detail { get; set; } = "";
+}
+
+public sealed class ConversationAgentPreflightResult
+{
+    public string CustomerId { get; set; } = "";
+    public string AccountId { get; set; } = "";
+    public string ConversationId { get; set; } = "";
+    public string OpportunityId { get; set; } = "";
+    public string ContextNamespace { get; set; } = "";
+    public List<ConversationAgentPreflightCheck> Checks { get; set; } = [];
+    public DateTimeOffset CheckedAt { get; set; } = DateTimeOffset.Now;
+
+    [JsonIgnore]
+    public bool Passed => Checks.Count > 0 && Checks.All(check => check.Passed);
+
+    [JsonIgnore]
+    public string FailureReason => string.Join("；", Checks.Where(check => !check.Passed).Select(check => check.Detail));
+}
+
+public sealed class ConversationAgentAuditEvent
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = "local";
+    public string UserId { get; set; } = "local";
+    public string CustomerId { get; set; } = "";
+    public string AccountId { get; set; } = "";
+    public string ConversationId { get; set; } = "";
+    public string OpportunityId { get; set; } = "";
+    public string SourceMessageId { get; set; } = "";
+    public string ContextVersion { get; set; } = "";
+    public string IdempotencyKey { get; set; } = "";
+    public ConversationAgentAuditAction Action { get; set; }
+    public ConversationAgentMode Mode { get; set; }
+    public ConversationAgentRunState StateBefore { get; set; }
+    public ConversationAgentRunState StateAfter { get; set; }
+    public string Decision { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string Model { get; set; } = "";
+    public string PromptVersion { get; set; } = "conversation-agent-v0.3";
+    public string FinalResult { get; set; } = "";
+    public List<string> RetrievedCustomerIds { get; set; } = [];
+    public List<string> CustomerBrainReferences { get; set; } = [];
+    public List<string> KnowledgeReferences { get; set; } = [];
+    public bool ContextSafetyPassed { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
 }
 
 public sealed class CustomerSuccessRunContextToken
@@ -238,7 +394,12 @@ public sealed class CustomerSuccessRunContextToken
     public string ConversationTargetToken { get; set; } = "";
     public string SourceMessageId { get; set; } = "";
     public string SourceMessageToken { get; set; } = "";
+    public string LatestOutgoingMessageId { get; set; } = "";
+    public string LatestOutgoingMessageToken { get; set; } = "";
     public string AgentLockToken { get; set; } = "";
+    public string HostingSessionToken { get; set; } = "";
+    public string ContextNamespace { get; set; } = "";
+    public long ContextVersion { get; set; }
     public DateTimeOffset CapturedAt { get; set; } = DateTimeOffset.Now;
 }
 
@@ -399,6 +560,9 @@ public sealed class CustomerSuccessContext
     public HumanHandoffEvent? OpenHandoff { get; set; }
     public List<WhatsAppIdentityLink> IdentityLinks { get; set; } = [];
     public List<WhatsAppMessage> Messages { get; set; } = [];
+    public List<EmailMessage> EmailMessages { get; set; } = [];
+    public OpportunitySnapshot? Opportunity { get; set; }
+    public List<OpportunityTransactionEvent> OpportunityEvents { get; set; } = [];
     public List<PendingQuestion> PendingQuestions { get; set; } = [];
 }
 
@@ -438,6 +602,11 @@ public sealed class CustomerSuccessAgentDecision
     public double Confidence { get; set; }
     public string Model { get; set; } = "";
     public string LatestIncomingMessageId { get; set; } = "";
+    public List<string> SourceMessageIds { get; set; } = [];
+    public ConversationTopicState TopicState { get; set; } = ConversationTopicState.Unknown;
+    public string TopicDecisionReason { get; set; } = "";
+    public bool ShouldReply { get; set; } = true;
+    public bool IsRiskInformationCollection { get; set; }
     [JsonIgnore] public bool UsedSafeFallback { get; set; }
     [JsonIgnore] public string FallbackReason { get; set; } = "";
     public bool RequiresHuman => Safety == AgentQuestionSafety.ImmediateHuman;
@@ -464,7 +633,7 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "自动关闭",
         ConversationAgentMode.SuggestOnly => "仅建议",
         ConversationAgentMode.CopilotActive => "协作模式",
-        ConversationAgentMode.AutoActive => "自动回复",
+        ConversationAgentMode.AutoActive => "自动托管",
         ConversationAgentMode.IdentityResolutionRequired => "待确认客户身份",
         ConversationAgentMode.HumanRequired => "需要人工处理",
         ConversationAgentMode.HumanActive => "人工接管中",
@@ -477,7 +646,7 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "关闭：不分析、不生成、不发送",
         ConversationAgentMode.SuggestOnly => "仅建议：由你手动生成并确认",
         ConversationAgentMode.CopilotActive => "协作模式：新消息自动生成草稿",
-        ConversationAgentMode.AutoActive => "自动回复：通过安全校验后自动发送",
+        ConversationAgentMode.AutoActive => "自动托管：配置完成，需点击“开始托管”才运行",
         _ => Mode(value)
     };
 
@@ -486,7 +655,7 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "触发：无",
         ConversationAgentMode.SuggestOnly => "触发：点击下方“立即生成建议”或会话输入区的“AI”",
         ConversationAgentMode.CopilotActive => "触发：客户每次发来新的文字消息",
-        ConversationAgentMode.AutoActive => "触发：客户每次发来新的文字消息",
+        ConversationAgentMode.AutoActive => "触发：仅在当前会话已开始托管后监听新消息",
         _ => "触发：按当前人工处理状态执行"
     };
 
@@ -495,7 +664,7 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "产出：保留历史，不生成新内容",
         ConversationAgentMode.SuggestOnly => "产出：显示在本卡片“最近一次 Agent 产出”，并填入输入框",
         ConversationAgentMode.CopilotActive => "产出：显示在本卡片“最近一次 Agent 产出”，点击后填入输入框",
-        ConversationAgentMode.AutoActive => "产出：本卡片显示生成内容、发送结果或阻断原因",
+        ConversationAgentMode.AutoActive => "产出：托管启动后显示判断、引用、发送结果或阻断原因",
         _ => "产出：显示人工接管与恢复状态"
     };
 
@@ -504,7 +673,7 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "发送：绝不自动发送",
         ConversationAgentMode.SuggestOnly => "发送：绝不自动发送，由你检查后点击发送",
         ConversationAgentMode.CopilotActive => "发送：绝不自动发送，由你检查、修改后点击发送",
-        ConversationAgentMode.AutoActive => "发送：仅身份、账号锁和安全校验全部通过时自动发送；高风险转人工",
+        ConversationAgentMode.AutoActive => "发送：仅托管中且身份、上下文与安全校验全部通过时自动发送；高风险转人工",
         _ => "发送：AI 暂停，由人工处理"
     };
 
@@ -513,8 +682,48 @@ public static class CustomerSuccessAgentLabels
         ConversationAgentMode.AutoOff => "Agent 已关闭；新消息只同步，不触发 AI。",
         ConversationAgentMode.SuggestOnly => "仅手动生成建议；AI 不会自动发送。",
         ConversationAgentMode.CopilotActive => "新消息自动生成待审核草稿；AI 不会自动发送。",
-        ConversationAgentMode.AutoActive => "新消息自动分析；安全校验通过后自动发送，高风险转人工。",
+        ConversationAgentMode.AutoActive => "自动托管已配置；点击“开始托管”并通过前置检查后才会处理新消息。",
         _ => "当前由人工处理流程接管。"
+    };
+
+    public static string RunState(ConversationAgentRunState value) => value switch
+    {
+        ConversationAgentRunState.Off => "未运行",
+        ConversationAgentRunState.SuggestReady => "可生成建议",
+        ConversationAgentRunState.CollabActive => "协作中",
+        ConversationAgentRunState.AutoPreflight => "托管检查中",
+        ConversationAgentRunState.AutoArmed => "托管已就绪",
+        ConversationAgentRunState.AutoProcessing => "托管处理中",
+        ConversationAgentRunState.AutoSending => "托管发送中",
+        ConversationAgentRunState.WaitingCustomer => "等待客户",
+        ConversationAgentRunState.TopicResolved => "话题已结束",
+        ConversationAgentRunState.RiskInfoCollectionSent => "风险信息已收集",
+        ConversationAgentRunState.WaitingHuman => "等待人工",
+        ConversationAgentRunState.PausedRisk => "风险暂停",
+        ConversationAgentRunState.PausedError => "异常暂停",
+        ConversationAgentRunState.HumanTakeover => "人工接管",
+        ConversationAgentRunState.Ended => "已结束",
+        _ => value.ToString()
+    };
+
+    public static string PrimaryAction(ConversationAgentState state) => state.RunState switch
+    {
+        ConversationAgentRunState.CollabActive => "停止协作",
+        ConversationAgentRunState.AutoPreflight => "检查中",
+        ConversationAgentRunState.AutoArmed or ConversationAgentRunState.AutoProcessing or ConversationAgentRunState.AutoSending or ConversationAgentRunState.WaitingCustomer => "托管中",
+        ConversationAgentRunState.PausedRisk or ConversationAgentRunState.WaitingHuman or ConversationAgentRunState.RiskInfoCollectionSent => "已暂停",
+        ConversationAgentRunState.HumanTakeover => "重新托管",
+        ConversationAgentRunState.PausedError => "托管异常",
+        ConversationAgentRunState.TopicResolved => "已结束",
+        ConversationAgentRunState.Ended => "重新托管",
+        _ => state.Mode switch
+        {
+            ConversationAgentMode.AutoOff => "启用 AI",
+            ConversationAgentMode.SuggestOnly => "生成建议",
+            ConversationAgentMode.CopilotActive => "开始协作",
+            ConversationAgentMode.AutoActive => "开始托管",
+            _ => "启用 AI"
+        }
     };
 
     public static string RunStatus(CustomerSuccessRunStatus value) => value switch

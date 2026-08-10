@@ -386,7 +386,17 @@ public sealed class CampaignAutomationService : IAsyncDisposable
                 else
                 {
                     await ConfirmNumberRegistrationAsync(campaign, recipient, eligibleLead, cancellationToken);
-                    var result = await _bridge.SendTextAsync(campaign.AccountId, recipient.Phone, recipient.RenderedMessage, cancellationToken);
+                    // Keyed on the recipient alone. The 45 second RPC timeout can
+                    // fire on a message WhatsApp already accepted, and this
+                    // scheduler retries two minutes later — inside the bridge's ten
+                    // minute replay window, so that retry returns the original
+                    // result instead of touching the customer twice.
+                    var result = await _bridge.SendTextAsync(
+                        campaign.AccountId,
+                        recipient.Phone,
+                        recipient.RenderedMessage,
+                        OutboundSendOptions.ForCampaign(campaign.Id, recipient.Id),
+                        cancellationToken);
                     recipient.ProviderMessageId = result.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "";
                     if (string.IsNullOrWhiteSpace(recipient.ProviderMessageId))
                         throw new WhatsAppBridgeException("message_id_missing", "WhatsApp 未返回消息编号，发送状态无法确认。为避免重复触达，系统不会自动重发。");
@@ -423,6 +433,30 @@ public sealed class CampaignAutomationService : IAsyncDisposable
                     recipient.Status = CampaignRecipientStatus.Failed;
                     recipient.SentAt = null;
                     await _repository.LogEventAsync("campaign_message_failed", eligibleLead.Id, null, $"campaign_id={campaign.Id};channel={campaign.Channel};recipient_id={recipient.Id};error={recipient.LastError}", cancellationToken);
+                }
+                else if (error is WhatsAppBridgeException { IsOutboundBlocked: true } blocked)
+                {
+                    // Nothing was sent, so this is a scheduling problem, not a
+                    // delivery failure — it must not burn an attempt or mark the
+                    // recipient failed. The governor already told us how long to
+                    // wait; a hard cap means "not today".
+                    recipient.AttemptCount = Math.Max(0, recipient.AttemptCount - 1);
+                    recipient.Status = CampaignRecipientStatus.Queued;
+                    if (OutboundBlockCodes.IsHardStop(blocked.Code))
+                    {
+                        // The governor's daily counters roll at local midnight, so
+                        // anything short of "tomorrow" just re-blocks; this matches
+                        // the campaign's own daily-limit deferral above.
+                        recipient.NextAttemptAt = NextBeijingDay(DateTimeOffset.Now, campaign.StartsAt);
+                        await PauseAsync(campaign, blocked.Message, cancellationToken);
+                    }
+                    else
+                    {
+                        recipient.NextAttemptAt = DateTimeOffset.Now.Add(
+                            blocked.RetryAfter is { } wait && wait > TimeSpan.Zero
+                                ? wait + TimeSpan.FromSeconds(5)
+                                : TimeSpan.FromMinutes(2));
+                    }
                 }
                 else if (campaign.Channel == CampaignChannel.WhatsApp && !_bridge.IsConnectedFor(campaign.AccountId))
                 {
