@@ -1,5 +1,5 @@
-const CACHE = "ai-sales-os-pwa-v5.5.3-1";
-const APP_ROOT = "/AI-whatsapp-OS/";
+const CACHE = "ai-sales-os-pwa-v5.5.4-1";
+const APP_ROOT = "/Relvyn-CRM/";
 const CORE = [
   APP_ROOT,
   `${APP_ROOT}manifest.webmanifest`,
