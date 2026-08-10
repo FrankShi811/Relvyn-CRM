@@ -84,6 +84,27 @@ try {
     $env:WAFLOW_DATABASE_PATH = $qaDatabase
     $app = Start-Process -FilePath $appPath -PassThru
     Start-Sleep -Seconds 8
+    $app.Refresh()
+    $observedMainWindowTitle = $app.MainWindowTitle
+    $processAlive = -not $app.HasExited
+    # Keep this check ASCII-only so Windows PowerShell 5.1 and PowerShell 7
+    # parse the installer smoke contract identically on every release runner.
+    $mainWindowMatched = $observedMainWindowTitle.StartsWith('AI Sales OS ', [StringComparison]::Ordinal) -and
+      $observedMainWindowTitle.IndexOf('WhatsApp', [StringComparison]::Ordinal) -ge 0
+    $applicationStarted = $processAlive -and $mainWindowMatched
+    if (-not $applicationStarted) {
+      $observedState = if ($app.HasExited) {
+        "process exited with code $($app.ExitCode)"
+      }
+      else {
+        "unexpected top-level window '$observedMainWindowTitle' (processAlive=$processAlive; mainWindowMatched=$mainWindowMatched)"
+      }
+      if (-not $app.HasExited) {
+        Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+        $app.WaitForExit(5000) | Out-Null
+      }
+      throw "Installed application did not reach its main window; a startup error dialog may be blocking it: $observedState"
+    }
     if (-not $app.HasExited) {
       $app.CloseMainWindow() | Out-Null
       if (-not $app.WaitForExit(5000)) { Stop-Process -Id $app.Id -Force }
@@ -134,7 +155,8 @@ try {
     InstallerExit = $installer.ExitCode
     InstalledExeVersion = $installedVersion
     InstalledVersionSource = $versionSource
-    ApplicationStarted = $true
+    ApplicationStarted = $applicationStarted
+    MainWindowTitle = $observedMainWindowTitle
     BridgeCompanionPresent = $bridgeCompanionPresent
     ShortcutTargets = $shortcutTargets -join '; '
     ShortcutsVerified = $shortcutTargets.Count -eq 2
