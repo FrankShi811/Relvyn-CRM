@@ -365,6 +365,8 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
         SendCommandAsync("set_chat_pin", new { phone, pinned }, cancellationToken);
     public Task<JsonElement> UpsertLabelAsync(WhatsAppLabel label, CancellationToken cancellationToken = default) =>
         SendCommandAsync("label_upsert", new { id = label.Id, name = label.Name, color = label.Color, deleted = label.Deleted }, cancellationToken);
+    public Task<JsonElement> CreateLabelAsync(string name, int color, CancellationToken cancellationToken = default) =>
+        SendCommandAsync("label_create", new { name, color }, cancellationToken);
     public Task<JsonElement> SetChatLabelAsync(string phone, string labelId, bool add, CancellationToken cancellationToken = default) =>
         SendCommandAsync("chat_label_set", new { phone, labelId, add }, cancellationToken);
     public Task<JsonElement> CreateGroupAsync(WhatsAppGroupCreateRequest request, CancellationToken cancellationToken = default) =>

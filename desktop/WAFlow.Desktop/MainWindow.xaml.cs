@@ -360,6 +360,15 @@ public partial class MainWindow : Window
         WindowsTaskbarIdentity.ApplyWindowIcon(this);
     }
 
+    protected override void OnContentRendered(EventArgs e)
+    {
+        base.OnContentRendered(e);
+        // WPF applies its XAML Icon during the first render. Reassert the
+        // exact per-DPI ICO frames afterwards so the live taskbar button does
+        // not fall back to a scaled small icon.
+        WindowsTaskbarIdentity.ApplyWindowIcon(this);
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         _navigationMotionCancellation?.Cancel();

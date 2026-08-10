@@ -66,6 +66,16 @@ public static class WindowsTaskbarIconProbe
         return iconHandle.ToInt64();
     }
 
+    public static uint GetWindowDpi(long rawWindowHandle)
+    {
+        return GetDpiForWindow(new IntPtr(rawWindowHandle));
+    }
+
+    public static int GetMetricForDpi(int metric, uint dpi)
+    {
+        return GetSystemMetricsForDpi(metric, dpi);
+    }
+
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
 
@@ -87,6 +97,12 @@ public static class WindowsTaskbarIconProbe
         uint flags,
         uint timeoutMilliseconds,
         out IntPtr result);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetricsForDpi(int metric, uint dpi);
 }
 '@
 }
@@ -222,8 +238,10 @@ try {
   }
   $bridgeCompanionPresent = Test-Path -LiteralPath (Join-Path $installedRoot 'WAFlow.WhatsApp.Bridge.exe') -PathType Leaf
   $previousDatabaseOverride = $env:WAFLOW_DATABASE_PATH
+  $previousSingleInstanceScope = $env:WAFLOW_SINGLE_INSTANCE_SCOPE
   try {
     $env:WAFLOW_DATABASE_PATH = $qaDatabase
+    $env:WAFLOW_SINGLE_INSTANCE_SCOPE = "windows-installer-qa-$([Guid]::NewGuid().ToString('N'))"
     $app = Start-Process -FilePath $appPath -PassThru
     $observedMainWindowTitle = ''
     $mainWindowHandle = 0L
@@ -256,12 +274,24 @@ try {
       }
       throw "Installed application did not reach its main window; a startup error dialog may be blocking it: $observedState"
     }
-    $taskbarSmall2 = Test-WindowIconMatchesBrand `
-      ([WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)) `
-      'small2'
-    $taskbarBig = Test-WindowIconMatchesBrand `
-      ([WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 1)) `
-      'big'
+    # The HWND becomes visible before WPF raises Loaded. Give the application
+    # time to replace WPF's provisional small icon with the protected
+    # per-monitor-DPI big/small handles before sampling WM_GETICON.
+    Start-Sleep -Seconds 2
+    $taskbarSmall2Handle = [WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)
+    $taskbarBigHandle = [WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 1)
+    $taskbarSmall2 = Test-WindowIconMatchesBrand $taskbarSmall2Handle 'small2'
+    $taskbarBig = Test-WindowIconMatchesBrand $taskbarBigHandle 'big'
+    $windowDpi = [WindowsTaskbarIconProbe]::GetWindowDpi($mainWindowHandle)
+    $expectedTaskbarSmallSize = [WindowsTaskbarIconProbe]::GetMetricForDpi(49, $windowDpi)
+    $expectedTaskbarBigSize = [WindowsTaskbarIconProbe]::GetMetricForDpi(11, $windowDpi)
+    Write-Host "Taskbar icon probe: dpi=$windowDpi smallHandle=$taskbarSmall2Handle bigHandle=$taskbarBigHandle small=$($taskbarSmall2.Size)/$expectedTaskbarSmallSize big=$($taskbarBig.Size)/$expectedTaskbarBigSize"
+    if ($taskbarSmall2.Size -ne "$expectedTaskbarSmallSize`x$expectedTaskbarSmallSize") {
+      throw "Main window small2 taskbar icon has the wrong per-DPI size. dpi=$windowDpi actual=$($taskbarSmall2.Size) expected=$expectedTaskbarSmallSize"
+    }
+    if ($taskbarBig.Size -ne "$expectedTaskbarBigSize`x$expectedTaskbarBigSize") {
+      throw "Main window big taskbar icon has the wrong per-DPI size. dpi=$windowDpi actual=$($taskbarBig.Size) expected=$expectedTaskbarBigSize"
+    }
     $taskbarIconVerified = $true
     if (-not $app.HasExited) {
       $app.CloseMainWindow() | Out-Null
@@ -270,6 +300,7 @@ try {
   }
   finally {
     $env:WAFLOW_DATABASE_PATH = $previousDatabaseOverride
+    $env:WAFLOW_SINGLE_INSTANCE_SCOPE = $previousSingleInstanceScope
   }
   $qaProcesses = Get-CimInstance Win32_Process | Where-Object {
     $_.ExecutablePath -and $_.ExecutablePath.StartsWith($QaDirectory, [StringComparison]::OrdinalIgnoreCase)
@@ -330,6 +361,7 @@ try {
     InstalledVersionSource = $versionSource
     ApplicationStarted = $applicationStarted
     MainWindowTitle = $observedMainWindowTitle
+    WindowDpi = $windowDpi
     TaskbarIconVerified = $taskbarIconVerified
     TaskbarSmall2Size = $taskbarSmall2.Size
     TaskbarSmall2PixelSha256 = $taskbarSmall2.PixelSha256
@@ -363,6 +395,13 @@ try {
   if (Test-Path -LiteralPath $qaDataDirectory) { [IO.Directory]::Delete($qaDataDirectory, $true) }
 }
 finally {
+  $remainingQaProcesses = Get-CimInstance Win32_Process | Where-Object {
+    $_.ExecutablePath -and
+    $_.ExecutablePath.StartsWith($QaDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+  }
+  foreach ($process in $remainingQaProcesses) {
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+  }
   foreach ($shortcutPath in $shortcutPaths) {
     if ($shortcutBackups.ContainsKey($shortcutPath)) {
       [IO.Directory]::CreateDirectory((Split-Path -Parent $shortcutPath)) | Out-Null
