@@ -30,7 +30,7 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
   const choose = (key: PageKey) => { setPage(key); setMobileOpen(false); };
   return <div className="app-shell">
     <aside id="primary-navigation" className={`sidebar ${mobileOpen ? "open" : ""}`}>
-      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} alt="" width={52} height={52}/><div><strong>AI Sales OS</strong><span>PWA v5.5.3 · LOCAL FIRST</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X/></button></div>
+      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} alt="" width={52} height={52}/><div><strong>AI Sales OS</strong><span>PWA v5.5.4 · LOCAL FIRST</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X/></button></div>
       <nav>
         <span className="nav-group">COMMAND CENTER</span>
         {nav.slice(0, 3).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
