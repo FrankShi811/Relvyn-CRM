@@ -63,6 +63,7 @@ internal static class DesktopShortcutService
             ?? (processPath is null ? null : Path.GetFileName(processPath))
             ?? "AISalesOS.exe";
         var targetPath = Path.Combine(contentDirectory, relativeExePath);
+        var iconPath = WindowsTaskbarIdentity.ResolveIconPath(targetPath);
         var desktopShortcut = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             ShortcutFileName);
@@ -73,7 +74,7 @@ internal static class DesktopShortcutService
         {
             try
             {
-                CreateWindowsShortcut(shortcutPath, targetPath);
+                CreateWindowsShortcut(shortcutPath, targetPath, iconPath);
                 if (!File.Exists(shortcutPath))
                     throw new IOException($"Windows did not create the shortcut: {shortcutPath}");
             }
@@ -86,7 +87,7 @@ internal static class DesktopShortcutService
         }
     }
 
-    private static void CreateWindowsShortcut(string shortcutPath, string targetPath)
+    private static void CreateWindowsShortcut(string shortcutPath, string targetPath, string iconPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(shortcutPath)!);
         var shellType = Type.GetTypeFromProgID("WScript.Shell")
@@ -109,7 +110,7 @@ internal static class DesktopShortcutService
             var shortcutType = shortcut.GetType();
             SetShortcutProperty(shortcutType, shortcut, "TargetPath", targetPath);
             SetShortcutProperty(shortcutType, shortcut, "WorkingDirectory", Path.GetDirectoryName(targetPath)!);
-            SetShortcutProperty(shortcutType, shortcut, "IconLocation", $"{targetPath},0");
+            SetShortcutProperty(shortcutType, shortcut, "IconLocation", $"{iconPath},0");
             SetShortcutProperty(shortcutType, shortcut, "Description", "AI Sales OS");
             shortcutType.InvokeMember(
                 "Save",

@@ -7,6 +7,143 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+Add-Type -AssemblyName System.Drawing
+if (-not ('WindowsTaskbarIconProbe' -as [type])) {
+  Add-Type -Language CSharp -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class WindowsTaskbarIconProbe
+{
+    private const uint WmGetIcon = 0x007F;
+    private const uint SmtoAbortIfHung = 0x0002;
+
+    public delegate bool EnumWindowsProc(IntPtr windowHandle, IntPtr parameter);
+
+    public static long FindMainWindow(int processId)
+    {
+        IntPtr match = IntPtr.Zero;
+        EnumWindows(delegate(IntPtr windowHandle, IntPtr parameter)
+        {
+            uint ownerProcessId;
+            GetWindowThreadProcessId(windowHandle, out ownerProcessId);
+            if (ownerProcessId != (uint)processId || !IsWindowVisible(windowHandle)) return true;
+
+            StringBuilder title = new StringBuilder(512);
+            GetWindowText(windowHandle, title, title.Capacity);
+            string text = title.ToString();
+            if (text.StartsWith("AI Sales OS ", StringComparison.Ordinal) &&
+                text.IndexOf("WhatsApp", StringComparison.Ordinal) >= 0)
+            {
+                match = windowHandle;
+                return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+        return match.ToInt64();
+    }
+
+    public static string GetTitle(long rawWindowHandle)
+    {
+        StringBuilder title = new StringBuilder(512);
+        GetWindowText(new IntPtr(rawWindowHandle), title, title.Capacity);
+        return title.ToString();
+    }
+
+    public static long GetIcon(long rawWindowHandle, int iconKind)
+    {
+        IntPtr iconHandle;
+        SendMessageTimeout(
+            new IntPtr(rawWindowHandle),
+            WmGetIcon,
+            new IntPtr(iconKind),
+            IntPtr.Zero,
+            SmtoAbortIfHung,
+            2000,
+            out iconHandle);
+        return iconHandle.ToInt64();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr windowHandle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr windowHandle, StringBuilder title, int maxLength);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr windowHandle,
+        uint message,
+        IntPtr wordParameter,
+        IntPtr longParameter,
+        uint flags,
+        uint timeoutMilliseconds,
+        out IntPtr result);
+}
+'@
+}
+
+function Get-BitmapPixelHash([Drawing.Bitmap]$Bitmap) {
+  $pixels = [byte[]]::new($Bitmap.Width * $Bitmap.Height * 4)
+  $offset = 0
+  for ($y = 0; $y -lt $Bitmap.Height; $y++) {
+    for ($x = 0; $x -lt $Bitmap.Width; $x++) {
+      $pixel = $Bitmap.GetPixel($x, $y)
+      $pixels[$offset++] = $pixel.A
+      $pixels[$offset++] = $pixel.R
+      $pixels[$offset++] = $pixel.G
+      $pixels[$offset++] = $pixel.B
+    }
+  }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { [BitConverter]::ToString($sha.ComputeHash($pixels)).Replace('-', '') }
+  finally { $sha.Dispose() }
+}
+
+function Test-WindowIconMatchesBrand([long]$IconHandle, [string]$Kind) {
+  if ($IconHandle -eq 0) { throw "Main window did not expose its $Kind taskbar icon through WM_GETICON." }
+  $borrowedIcon = [Drawing.Icon]::FromHandle([IntPtr]::new($IconHandle))
+  $icon = $borrowedIcon.Clone()
+  try {
+    $actual = $icon.ToBitmap()
+    try {
+      if ($actual.Width -ne $actual.Height) {
+        throw "Main window $Kind taskbar icon is not square: $($actual.Width)x$($actual.Height)."
+      }
+      $expectedPath = Join-Path $root "desktop\WAFlow.Desktop\Assets\Icons\AI-Sales-OS-$($actual.Width).png"
+      if (-not (Test-Path -LiteralPath $expectedPath -PathType Leaf)) {
+        throw "No protected brand reference exists for the runtime $Kind taskbar icon size: $expectedPath"
+      }
+      $expected = [Drawing.Bitmap]::FromFile($expectedPath)
+      try {
+        $actualHash = Get-BitmapPixelHash $actual
+        $expectedHash = Get-BitmapPixelHash $expected
+        if ($actual.Width -ne $expected.Width -or
+            $actual.Height -ne $expected.Height -or
+            $actualHash -ne $expectedHash) {
+          throw "Main window $Kind taskbar icon does not match the protected brand asset. size=$($actual.Width)x$($actual.Height) actual=$actualHash expected=$expectedHash"
+        }
+        [pscustomobject]@{
+          Kind = $Kind
+          Size = "$($actual.Width)x$($actual.Height)"
+          PixelSha256 = $actualHash
+        }
+      }
+      finally { $expected.Dispose() }
+    }
+    finally { $actual.Dispose() }
+  }
+  finally { $icon.Dispose() }
+}
+
 if (-not $InstallerPath) { $InstallerPath = Join-Path $root 'dist\installers\AI Sales OS Setup.exe' }
 $InstallerPath = [IO.Path]::GetFullPath($InstallerPath)
 if (-not (Test-Path -LiteralPath $InstallerPath)) { throw "Installer is missing: $InstallerPath" }
@@ -57,6 +194,11 @@ foreach ($shortcutPath in $shortcutPaths) {
     $shortcutBackups[$shortcutPath] = [IO.File]::ReadAllBytes($shortcutPath)
   }
 }
+$stableBrandIconPath = Join-Path $env:LOCALAPPDATA 'WAFlow\shell\AI-Sales-OS-D945B52D252F.ico'
+$stableBrandIconBackup = if (Test-Path -LiteralPath $stableBrandIconPath) {
+  [IO.File]::ReadAllBytes($stableBrandIconPath)
+}
+else { $null }
 try {
   $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$QaDirectory`"")
   $installer = Start-Process -FilePath $InstallerPath -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
@@ -84,6 +226,7 @@ try {
     $env:WAFLOW_DATABASE_PATH = $qaDatabase
     $app = Start-Process -FilePath $appPath -PassThru
     $observedMainWindowTitle = ''
+    $mainWindowHandle = 0L
     $processAlive = $true
     $mainWindowMatched = $false
     $startupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
@@ -91,11 +234,13 @@ try {
       Start-Sleep -Milliseconds 500
       $app.Refresh()
       $processAlive = -not $app.HasExited
-      $observedMainWindowTitle = [string]$app.MainWindowTitle
-      # Keep this check ASCII-only so Windows PowerShell 5.1 and PowerShell 7
-      # parse the installer smoke contract identically on every release runner.
-      $mainWindowMatched = $observedMainWindowTitle.StartsWith('AI Sales OS ', [StringComparison]::Ordinal) -and
-        $observedMainWindowTitle.IndexOf('WhatsApp', [StringComparison]::Ordinal) -ge 0
+      if ($processAlive) {
+        $mainWindowHandle = [WindowsTaskbarIconProbe]::FindMainWindow($app.Id)
+        $mainWindowMatched = $mainWindowHandle -ne 0
+        if ($mainWindowMatched) {
+          $observedMainWindowTitle = [WindowsTaskbarIconProbe]::GetTitle($mainWindowHandle)
+        }
+      }
     } while ($processAlive -and -not $mainWindowMatched -and [DateTimeOffset]::UtcNow -lt $startupDeadline)
     $applicationStarted = $processAlive -and $mainWindowMatched
     if (-not $applicationStarted) {
@@ -111,6 +256,13 @@ try {
       }
       throw "Installed application did not reach its main window; a startup error dialog may be blocking it: $observedState"
     }
+    $taskbarSmall2 = Test-WindowIconMatchesBrand `
+      ([WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)) `
+      'small2'
+    $taskbarBig = Test-WindowIconMatchesBrand `
+      ([WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 1)) `
+      'big'
+    $taskbarIconVerified = $true
     if (-not $app.HasExited) {
       $app.CloseMainWindow() | Out-Null
       if (-not $app.WaitForExit(5000)) { Stop-Process -Id $app.Id -Force }
@@ -126,6 +278,16 @@ try {
   Start-Sleep -Seconds 2
 
   $shell = New-Object -ComObject WScript.Shell
+  $sourceBrandIconPath = Join-Path $root 'desktop\WAFlow.Desktop\Assets\AI-Sales-OS.ico'
+  if (-not (Test-Path -LiteralPath $stableBrandIconPath -PathType Leaf)) {
+    throw "The application did not materialize its stable Windows shell icon: $stableBrandIconPath"
+  }
+  $materializedBrandIconHash = (Get-FileHash -LiteralPath $stableBrandIconPath -Algorithm SHA256).Hash
+  $sourceBrandIconHash = (Get-FileHash -LiteralPath $sourceBrandIconPath -Algorithm SHA256).Hash
+  if ($materializedBrandIconHash -ne $sourceBrandIconHash) {
+    throw "Materialized Windows shell icon hash mismatch. actual=$materializedBrandIconHash expected=$sourceBrandIconHash"
+  }
+  $shortcutIconLocations = @()
   $shortcutTargets = foreach ($shortcutPath in $shortcutPaths) {
     if (-not (Test-Path -LiteralPath $shortcutPath)) {
       throw "Installed application did not create the shortcut: $shortcutPath"
@@ -134,6 +296,11 @@ try {
     if (-not $shortcut.TargetPath.StartsWith($QaDirectory, [StringComparison]::OrdinalIgnoreCase)) {
       throw "Installed shortcut points outside the QA application: $shortcutPath -> $($shortcut.TargetPath)"
     }
+    $shortcutIconPath = ([string]$shortcut.IconLocation).Split(',')[0].Trim('"')
+    if (-not $shortcutIconPath.Equals($stableBrandIconPath, [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Installed shortcut does not use the stable brand icon: $shortcutPath -> $($shortcut.IconLocation)"
+    }
+    $shortcutIconLocations += $shortcut.IconLocation
     $shortcut.TargetPath
   }
 
@@ -163,8 +330,16 @@ try {
     InstalledVersionSource = $versionSource
     ApplicationStarted = $applicationStarted
     MainWindowTitle = $observedMainWindowTitle
+    TaskbarIconVerified = $taskbarIconVerified
+    TaskbarSmall2Size = $taskbarSmall2.Size
+    TaskbarSmall2PixelSha256 = $taskbarSmall2.PixelSha256
+    TaskbarBigSize = $taskbarBig.Size
+    TaskbarBigPixelSha256 = $taskbarBig.PixelSha256
+    MaterializedBrandIconPath = $stableBrandIconPath
+    MaterializedBrandIconSha256 = $materializedBrandIconHash
     BridgeCompanionPresent = $bridgeCompanionPresent
     ShortcutTargets = $shortcutTargets -join '; '
+    ShortcutIconLocations = $shortcutIconLocations -join '; '
     ShortcutsVerified = $shortcutTargets.Count -eq 2
     DatabaseHashBefore = $beforeHash
     DatabaseHashAfter = $afterHash
@@ -179,6 +354,7 @@ try {
        $installedVersion -ne $ExpectedVersion)) {
     throw "Installed version mismatch. expected=$ExpectedVersion actual=$installedVersion"
   }
+  if (-not $result.TaskbarIconVerified) { throw 'Installer smoke test did not verify the live main-window taskbar icon.' }
   if (-not $result.ShortcutsVerified) { throw 'Installer smoke test did not verify both Windows shortcuts.' }
   if (-not $result.BridgeCompanionPresent) { throw 'Installer smoke test did not verify the separate GPL Bridge companion.' }
   if (-not $result.DatabasePreservationPassed) { throw 'Installer smoke test changed an existing user SQLite database.' }
@@ -195,5 +371,12 @@ finally {
     elseif (Test-Path -LiteralPath $shortcutPath) {
       Remove-Item -LiteralPath $shortcutPath -Force
     }
+  }
+  if ($null -ne $stableBrandIconBackup) {
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $stableBrandIconPath)) | Out-Null
+    [IO.File]::WriteAllBytes($stableBrandIconPath, $stableBrandIconBackup)
+  }
+  elseif (Test-Path -LiteralPath $stableBrandIconPath) {
+    Remove-Item -LiteralPath $stableBrandIconPath -Force
   }
 }

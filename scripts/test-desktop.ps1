@@ -26,6 +26,7 @@ $macProject = Join-Path $root 'desktop\WAFlow.Mac\WAFlow.Mac.csproj'
 $appXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\App.xaml')
 $appStartupSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\App.xaml.cs')
 $desktopShortcutSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\DesktopShortcutService.cs')
+$taskbarIdentitySource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\WindowsTaskbarIdentity.cs')
 $uiScaleSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\UiScaleManager.cs')
 $uiScaleHostSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Controls\UiScaleHost.cs')
 $windowsInstallerTestSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'scripts\test-windows-installer.ps1')
@@ -135,6 +136,7 @@ $allDesktopXaml = (Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.D
 $desktopVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $desktopProject)).Project.PropertyGroup.Version | Select-Object -First 1
 $coreVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $coreProject)).Project.PropertyGroup.Version | Select-Object -First 1
 $macVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $macProject)).Project.PropertyGroup.Version | Select-Object -First 1
+$desktopProjectSource = Get-Content -Raw -Encoding utf8 -LiteralPath $desktopProject
 $windowsIcon = Join-Path $root 'desktop\WAFlow.Desktop\Assets\AI-Sales-OS.ico'
 Add-Type -AssemblyName PresentationCore
 $iconStream = [IO.File]::OpenRead($windowsIcon)
@@ -156,6 +158,26 @@ finally {
   $iconStream.Dispose()
 }
 Write-Host "PASS  Windows application icon is WPF-decodable ($($iconDecoder.Frames.Count) frames)"
+if ($desktopProjectSource -notmatch [regex]::Escape('<ApplicationIcon>Assets\AI-Sales-OS.ico</ApplicationIcon>') -or
+    $desktopProjectSource -notmatch [regex]::Escape('<Resource Include="Assets\AI-Sales-OS.ico" />') -or
+    $mainWindowXaml -notmatch [regex]::Escape('Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"') -or
+    $mainWindowSource -notmatch [regex]::Escape('WindowsTaskbarIdentity.ApplyWindowIcon(this);') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('internal const string AppUserModelId = "AI.Sales.OS.Desktop";') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('internal const string BrandIconFileName = "AI-Sales-OS-D945B52D252F.ico";') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('internal const string BrandIconSha256 = "D945B52D252FBE72A44C985E6426C00967E8C35FE046973204B21309DD8037A4";') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('Application.GetResourceStream(') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('Environment.SpecialFolder.LocalApplicationData') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('var iconPath = ResolveIconPath(executablePath);') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('SetStringProperty(propertyStore, RelaunchIconResourceKey, $"{iconPath},0");') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall2), _smallIcon);') -or
+    $desktopShortcutSource -notmatch [regex]::Escape('var iconPath = WindowsTaskbarIdentity.ResolveIconPath(targetPath);') -or
+    $desktopShortcutSource -notmatch [regex]::Escape('SetShortcutProperty(shortcutType, shortcut, "IconLocation", $"{iconPath},0");') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('[WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('Test-WindowIconMatchesBrand') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('MaterializedBrandIconSha256')) {
+  throw 'Windows executable, live taskbar window, relaunch identity and shortcuts must use the same protected brand icon.'
+}
+Write-Host 'PASS  stable Windows executable, taskbar, relaunch and shortcut icon contract'
 if ($desktopVersion -notmatch '^\d+\.\d+\.\d+$' -or $desktopVersion -ne $coreVersion) {
   throw "Desktop/Core versions must be the same semantic version. desktop=$desktopVersion core=$coreVersion"
 }

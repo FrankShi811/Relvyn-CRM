@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Interop;
 
@@ -8,6 +10,8 @@ namespace WAFlow.Desktop;
 internal static class WindowsTaskbarIdentity
 {
     internal const string AppUserModelId = "AI.Sales.OS.Desktop";
+    internal const string BrandIconFileName = "AI-Sales-OS-D945B52D252F.ico";
+    internal const string BrandIconSha256 = "D945B52D252FBE72A44C985E6426C00967E8C35FE046973204B21309DD8037A4";
 
     private const uint WmSetIcon = 0x0080;
     private const int IconSmall = 0;
@@ -37,12 +41,13 @@ internal static class WindowsTaskbarIdentity
         var executablePath = Environment.ProcessPath;
         if (windowHandle == IntPtr.Zero || string.IsNullOrWhiteSpace(executablePath)) return;
 
-        ApplyWindowIdentity(windowHandle, executablePath);
+        var iconPath = ResolveIconPath(executablePath);
+        ApplyWindowIdentity(windowHandle, executablePath, iconPath);
         ReleaseWindowIcon();
 
         var largeIcons = new IntPtr[1];
         var smallIcons = new IntPtr[1];
-        if (ExtractIconEx(executablePath, 0, largeIcons, smallIcons, 1) == 0) return;
+        if (ExtractIconEx(iconPath, 0, largeIcons, smallIcons, 1) == 0) return;
 
         _largeIcon = largeIcons[0];
         _smallIcon = smallIcons[0];
@@ -59,7 +64,55 @@ internal static class WindowsTaskbarIdentity
         }
     }
 
-    private static void ApplyWindowIdentity(IntPtr windowHandle, string executablePath)
+    internal static string ResolveIconPath(string executablePath)
+    {
+        try
+        {
+            var shellDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WAFlow",
+                "shell");
+            var iconPath = Path.Combine(shellDirectory, BrandIconFileName);
+            if (File.Exists(iconPath) && GetFileSha256(iconPath) == BrandIconSha256) return iconPath;
+
+            var resource = Application.GetResourceStream(
+                new Uri("/AISalesOS;component/Assets/AI-Sales-OS.ico", UriKind.Relative));
+            if (resource is null) return executablePath;
+            using var input = resource.Stream;
+            using var buffer = new MemoryStream();
+            input.CopyTo(buffer);
+            var iconBytes = buffer.ToArray();
+            if (Convert.ToHexString(SHA256.HashData(iconBytes)) != BrandIconSha256)
+                throw new InvalidDataException("The embedded Windows brand icon does not match its protected hash.");
+
+            Directory.CreateDirectory(shellDirectory);
+            var temporaryPath = iconPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllBytes(temporaryPath, iconBytes);
+                File.Move(temporaryPath, iconPath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            }
+            return iconPath;
+        }
+        catch (Exception error)
+        {
+            Debug.WriteLine($"Unable to materialize the stable taskbar icon; using the executable icon: {error}");
+        }
+
+        return executablePath;
+    }
+
+    private static string GetFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static void ApplyWindowIdentity(IntPtr windowHandle, string executablePath, string iconPath)
     {
         var interfaceId = typeof(IPropertyStore).GUID;
         var result = SHGetPropertyStoreForWindow(windowHandle, ref interfaceId, out var propertyStore);
@@ -73,7 +126,7 @@ internal static class WindowsTaskbarIdentity
         {
             SetStringProperty(propertyStore, AppUserModelIdKey, AppUserModelId);
             SetStringProperty(propertyStore, RelaunchCommandKey, $"\"{executablePath}\"");
-            SetStringProperty(propertyStore, RelaunchIconResourceKey, $"{executablePath},0");
+            SetStringProperty(propertyStore, RelaunchIconResourceKey, $"{iconPath},0");
             result = propertyStore.Commit();
             if (result < 0) Debug.WriteLine($"Unable to commit taskbar identity: 0x{result:X8}");
         }
