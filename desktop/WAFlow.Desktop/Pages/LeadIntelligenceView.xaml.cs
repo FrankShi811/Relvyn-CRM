@@ -29,7 +29,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
     {
         InitializeComponent(); _services = services;
         GradeFilter.ItemsSource = new[] { "全部", "A", "B", "C", "D" }; GradeFilter.SelectedIndex = 0;
-        OpportunitySignalFilter.ItemsSource = new[] { "全部交易信号", "有未付款订单", "有支付失败", "有纠纷风险" }; OpportunitySignalFilter.SelectedIndex = 0;
+        OpportunitySignalFilter.ItemsSource = new[] { "全部交易信号", "有待付款交易", "有支付失败", "有纠纷风险" }; OpportunitySignalFilter.SelectedIndex = 0;
         OpportunityActivityFilter.ItemsSource = new[] { "全部更新时间", "最近 7 天有交易", "最近 30 天有交易", "最近 90 天有交易" }; OpportunityActivityFilter.SelectedIndex = 0;
         OpportunityCategoryFilter.ItemsSource = new[] { "全部一级品类" }; OpportunityCategoryFilter.SelectedIndex = 0;
         OpportunityAmountFilter.ItemsSource = new[] { "全部成交金额", "尚无成交", "0–1,000", "1,000–10,000", "10,000 以上" }; OpportunityAmountFilter.SelectedIndex = 0;
@@ -221,7 +221,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
         SignalItems.ItemsSource = lead.BehaviorSignals.Count > 0
             ? lead.BehaviorSignals.Select(signal => $"{signal.Signal} {signal.Score:+#;-#;0} · {signal.Evidence}").ToList()
             : new[] { "尚无经 AI 验证的 WhatsApp 行为信号" };
-        var labels = new Dictionary<string, string> { ["paid_marketing_willingness"]="付费营销意愿", ["supply_stability"]="供应链稳定性", ["ecommerce_foundation"]="电商基础", ["private_traffic"]="私域 / 流量", ["existing_sales"]="已有销售能力", ["materials_readiness"]="素材准备度" };
+        var labels = new Dictionary<string, string> { ["paid_marketing_willingness"]="增长投入意愿", ["supply_stability"]="运营与交付稳定性", ["ecommerce_foundation"]="相关业务基础", ["private_traffic"]="客户触达能力", ["existing_sales"]="商业验证程度", ["materials_readiness"]="合作准备度" };
         var factorByKey = lead.ScoreFactors.ToDictionary(factor => factor.Key, StringComparer.OrdinalIgnoreCase);
         FactorItems.ItemsSource = LeadScoringLabel.Order.Select(key =>
         {
@@ -247,10 +247,10 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
             OpportunityIntentText.Text = opportunity.IntentSummary
                 + (string.IsNullOrWhiteSpace(opportunity.LatestFailureReason) ? "" : $"\n最近障碍：{opportunity.LatestFailureReason}");
             OpportunityCategoryText.Text =
-                $"一级：{Fallback(opportunity.PrimaryCategory)} · 二级：{Fallback(opportunity.SecondaryCategory)}\n高频商品：{Fallback(opportunity.FrequentProduct)} · 最近商品：{Fallback(opportunity.LatestProduct)}";
+                $"一级：{Fallback(opportunity.PrimaryCategory)} · 二级：{Fallback(opportunity.SecondaryCategory)}\n高频产品/服务：{Fallback(opportunity.FrequentProduct)} · 最近产品/服务：{Fallback(opportunity.LatestProduct)}";
             OpportunityRiskText.Text = opportunity.RiskSummary
                 + (string.IsNullOrWhiteSpace(opportunity.PrimaryDisputeReason) ? "" : $"\n主要原因：{opportunity.PrimaryDisputeReason}")
-                + (opportunity.HasChargeback ? "\n含拒付订单，需人工核对。" : "");
+                + (opportunity.HasChargeback ? "\n含拒付交易，需人工核对。" : "");
             var recentEvents = (await _services.Repository.GetOpportunityEventsAsync([lead.Id]))
                 .OrderByDescending(item => item.OccurredAt ?? item.DataDate)
                 .Take(6)
@@ -258,7 +258,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
                 .ToList();
             OpportunityEventItems.ItemsSource = recentEvents.Count > 0
                 ? recentEvents
-                : ["尚无可核对的订单明细。"];
+                : ["尚无可核对的交易明细。"];
         }
     }
 
@@ -443,7 +443,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
             snapshots.TryGetValue(lead.Id, out var snapshot);
             var signalMatch = signal switch
             {
-                "有未付款订单" => snapshot?.AwaitingPaymentCount > 0,
+                "有待付款交易" => snapshot?.AwaitingPaymentCount > 0,
                 "有支付失败" => snapshot?.FailedPaymentCount > 0,
                 "有纠纷风险" => snapshot?.HasRisk == true,
                 _ => true
@@ -490,12 +490,12 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
         {
             OpportunityEventKind.PaymentSucceeded => "支付成功",
             OpportunityEventKind.PaymentFailed => "支付失败",
-            OpportunityEventKind.AwaitingPayment => "下单未付款",
-            OpportunityEventKind.Dispute => "纠纷订单",
+            OpportunityEventKind.AwaitingPayment => "待付款交易",
+            OpportunityEventKind.Dispute => "纠纷交易",
             _ => "交易事件"
         };
         var time = (item.OccurredAt ?? item.DataDate)?.LocalDateTime.ToString("yyyy-MM-dd HH:mm") ?? "时间未知";
-        var order = string.IsNullOrWhiteSpace(item.OrderId) ? "订单号缺失" : $"订单 {item.OrderId}";
+        var order = string.IsNullOrWhiteSpace(item.OrderId) ? "交易编号缺失" : $"交易 {item.OrderId}";
         var amount = item.Amount == 0
             ? ""
             : $" · {Fallback(item.Currency)} {item.Amount:N2}";

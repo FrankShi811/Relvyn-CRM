@@ -64,6 +64,21 @@ try {
 
   $appPath = Join-Path $QaDirectory 'current\AISalesOS.exe'
   if (-not (Test-Path -LiteralPath $appPath)) { throw "Installed application is missing: $appPath" }
+  $installedRoot = Join-Path $QaDirectory 'current'
+  foreach ($requiredFile in @(
+    'WAFlow.WhatsApp.Bridge.exe',
+    'LICENSE',
+    'EULA.md',
+    'PRIVACY.md',
+    'THIRD_PARTY_NOTICES.md',
+    'BRIDGE_GPL_COMPLIANCE.md',
+    'licenses\third-party\LIBSIGNAL-6.0.0-GPL-3.0.txt'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $installedRoot $requiredFile) -PathType Leaf)) {
+      throw "Installed application is missing required Bridge or license file: $requiredFile"
+    }
+  }
+  $bridgeCompanionPresent = Test-Path -LiteralPath (Join-Path $installedRoot 'WAFlow.WhatsApp.Bridge.exe') -PathType Leaf
   $previousDatabaseOverride = $env:WAFLOW_DATABASE_PATH
   try {
     $env:WAFLOW_DATABASE_PATH = $qaDatabase
@@ -120,6 +135,7 @@ try {
     InstalledExeVersion = $installedVersion
     InstalledVersionSource = $versionSource
     ApplicationStarted = $true
+    BridgeCompanionPresent = $bridgeCompanionPresent
     ShortcutTargets = $shortcutTargets -join '; '
     ShortcutsVerified = $shortcutTargets.Count -eq 2
     DatabaseHashBefore = $beforeHash
@@ -136,6 +152,7 @@ try {
     throw "Installed version mismatch. expected=$ExpectedVersion actual=$installedVersion"
   }
   if (-not $result.ShortcutsVerified) { throw 'Installer smoke test did not verify both Windows shortcuts.' }
+  if (-not $result.BridgeCompanionPresent) { throw 'Installer smoke test did not verify the separate GPL Bridge companion.' }
   if (-not $result.DatabasePreservationPassed) { throw 'Installer smoke test changed an existing user SQLite database.' }
   if ($result.UninstallExit -ne 0) { throw "Installer smoke uninstall failed with exit code $($result.UninstallExit)." }
   if ($result.QaDirectoryStillExists) { throw "Installer smoke uninstall left the QA directory behind: $QaDirectory" }

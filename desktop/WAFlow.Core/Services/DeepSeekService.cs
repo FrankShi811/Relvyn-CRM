@@ -677,6 +677,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 }
 
                 Dimension maxima are exactly those in scoring_contract.dimension_weights. base_profile_score must equal the six dimension scores.
+                The dimension property names are stable compatibility keys, not an industry assumption. Interpret them generically: paid_marketing_willingness = willingness to invest in growth or solving the need; supply_stability = operational or delivery stability; ecommerce_foundation = relevant business foundation; private_traffic = ability to reach and engage customers; existing_sales = existing commercial validation; materials_readiness = readiness to evaluate or begin cooperation. Do not assume ecommerce, a marketplace, physical goods, a seller, a factory or a procurement workflow without evidence.
                 behavior_signal_score must be an integer from -20 to +20 and equal the sum of behavior_signal_details[].score.
                 behavior_signals must list the same signal names as behavior_signal_details. Use both arrays empty when the behavior score is zero.
                 Positive WhatsApp evidence may include asking price or MOQ (+5), providing purchase quantity or requesting a quotation/cooperation (+10).
@@ -832,6 +833,9 @@ public sealed class DeepSeekService : IStructuredAiProvider
     {
         var key = ReadApiKey(execution);
         if (string.IsNullOrWhiteSpace(key)) throw new DeepSeekException("provider_not_configured", "请先在 AI 设置中填写 API Key。", false);
+        var settings = await _repository.GetAppSettingsAsync(cancellationToken);
+        instructions = BusinessRoleContextPolicy.ApplyInstructions(instructions);
+        payload = BusinessRoleContextPolicy.ApplyPayload(payload, settings.BusinessRoleProfile);
         DeepSeekException? lastError = null;
         for (var attempt = 0; attempt < ProviderAttemptLimit; attempt++)
         {
@@ -1139,11 +1143,11 @@ public sealed class DeepSeekService : IStructuredAiProvider
             var baseScore = factors.Sum(factor => factor.Score);
             var finalScore = Math.Clamp(baseScore + behaviorTotal, 0, 100);
             var profile = string.IsNullOrWhiteSpace(output.CustomerProfile)
-                ? $"{lead.DisplayName}{(string.IsNullOrWhiteSpace(lead.Country) ? "" : $"，来自{lead.Country}")}；当前可验证经营与采购信息有限。"
+                ? $"{lead.DisplayName}{(string.IsNullOrWhiteSpace(lead.Country) ? "" : $"，来自{lead.Country}")}；当前可验证业务与合作信息有限。"
                 : output.CustomerProfile.Trim();
             var segment = string.IsNullOrWhiteSpace(output.CustomerSegment) ? "待补充信息客户" : output.CustomerSegment.Trim();
             var nextAction = string.IsNullOrWhiteSpace(output.NextAction)
-                ? "优先补充经营模式、采购需求、预算与时间计划，并核对 WhatsApp 原始回复。"
+                ? "优先补充业务模式、具体需求、预算与时间计划，并核对 WhatsApp 原始回复。"
                 : output.NextAction.Trim();
             var riskWarning = string.IsNullOrWhiteSpace(output.RiskWarning)
                 ? "当前可验证信息有限，结论置信度较低，需人工核验。"

@@ -12,7 +12,7 @@ public sealed class ConversationAssistantService
         ["company"] = "公司",
         ["country"] = "国家",
         ["product_interest"] = "关注产品",
-        ["estimated_order_value"] = "预计订单额",
+        ["estimated_order_value"] = "预计机会金额",
         ["currency"] = "币种",
         ["preferred_language"] = "首选沟通语言",
         ["stage"] = "销售阶段",
@@ -30,7 +30,7 @@ public sealed class ConversationAssistantService
 
         目标：
         1. 根据最近一条客户来信和上下文，生成一条可直接发送的简洁、自然、专业回复。回复语言跟随客户最近使用的语言；不要虚构价格、库存、交期、承诺或政策。
-        2. 用中文总结客户当前需求、意向、采购信号、风险和下一步动作。
+        2. 用中文总结客户当前需求、合作或购买信号、风险和下一步动作。只有客户确实讨论采购时才使用采购术语。
         3. 只在客户原话明确支持时，提出 CRM 字段更新。field 必须逐字来自 allowedFields 的 key；evidenceQuote 必须逐字摘录客户发送的 incoming 消息。无法确认就不要提出更新。
         4. 不得根据销售人员自己发送的 outgoing 消息反推客户需求。不得改写姓名、电话、WhatsApp 号码、负责人、退订状态或 AI 分数。
         5. stage 仅允许 new、contacted、interested、negotiation、waiting、customer、lost；没有明确阶段证据时不要返回 stage 更新。
@@ -292,7 +292,7 @@ public sealed class ConversationAssistantService
         var now = DateTimeOffset.Now;
         lead.CustomFields["AI需求摘要"] = result.NeedsSummary.Trim();
         lead.CustomFields["AI意向判断"] = result.CustomerIntent.Trim();
-        lead.CustomFields["AI采购信号"] = string.Join("；", CleanList(result.PurchaseSignals));
+        lead.CustomFields["AI需求与合作信号"] = string.Join("；", CleanList(result.PurchaseSignals));
         lead.CustomFields["AI风险提醒"] = string.Join("；", CleanList(result.Risks));
         lead.CustomFields["AI建议动作"] = result.RecommendedNextAction.Trim();
         lead.CustomFields["AI最近分析模型"] = result.Model;

@@ -291,10 +291,11 @@
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
                             <ToggleButton x:Name="DropDownToggle" Focusable="False" ClickMode="Press"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="ComboBorder" Background="{DynamicResource SurfaceInput}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="10" Padding="10,0">
+                                        <Border x:Name="ComboBorder" Background="{DynamicResource SurfaceInput}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="10,0">
                                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/></Grid.ColumnDefinitions>
                                                 <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" VerticalAlignment="Center" HorizontalAlignment="Left" RecognizesAccessKey="True"/>
                                                 <Path Grid.Column="1" Data="M 0 0 L 4 4 L 8 0 Z" Fill="{DynamicResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -304,9 +305,23 @@
                                     </ControlTemplate>
                                 </ToggleButton.Template>
                             </ToggleButton>
-                            <TextBlock Margin="11,0,32,0" VerticalAlignment="Center" Foreground="{DynamicResource Ink}" TextTrimming="CharacterEllipsis" IsHitTestVisible="False">
+                            <TextBlock x:Name="SelectionText" Margin="11,0,32,0" VerticalAlignment="Center" Foreground="{DynamicResource Ink}" TextTrimming="CharacterEllipsis" IsHitTestVisible="False">
                                 <TextBlock.Text><MultiBinding Converter="{StaticResource ComboSelectionTextConverter}"><Binding Path="SelectedItem" RelativeSource="{RelativeSource TemplatedParent}"/><Binding Path="DisplayMemberPath" RelativeSource="{RelativeSource TemplatedParent}"/></MultiBinding></TextBlock.Text>
                             </TextBlock>
+                            <TextBox x:Name="PART_EditableTextBox"
+                                     Style="{x:Null}"
+                                     Margin="11,0,32,0"
+                                     Padding="0"
+                                     MinHeight="0"
+                                     VerticalAlignment="Center"
+                                     Background="Transparent"
+                                     Foreground="{DynamicResource Ink}"
+                                     CaretBrush="{DynamicResource Primary}"
+                                     BorderThickness="0"
+                                     FocusVisualStyle="{x:Null}"
+                                     AutomationProperties.Name="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=(AutomationProperties.Name)}"
+                                     Text="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Visibility="Collapsed"/>
                             <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
                                 <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="8" Margin="0,4,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}" Effect="{StaticResource CardShadow}">
                                     <ScrollViewer Margin="4" SnapsToDevicePixels="True"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
@@ -315,6 +330,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                            <Trigger Property="IsEditable" Value="True">
+                                <Setter TargetName="SelectionText" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                            </Trigger>
                             <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource Primary}"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

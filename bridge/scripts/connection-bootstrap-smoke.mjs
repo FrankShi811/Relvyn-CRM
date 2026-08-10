@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 import assert from 'node:assert/strict'
 import { BUNDLED_VALIDATED_VERSION, resolveBaileysVersion } from '../src/connection-bootstrap.mjs'
 

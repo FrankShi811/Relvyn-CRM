@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 export function normalizeGroupJid(value) {
   const candidate = String(value ?? '').trim()
   if (!candidate || /\s/.test(candidate)) return ''

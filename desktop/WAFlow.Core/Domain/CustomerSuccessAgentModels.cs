@@ -153,9 +153,9 @@ public sealed class AccountPersona
 {
     public string AccountId { get; set; } = "";
     public string DisplayName { get; set; } = "";
-    public string RoleName { get; set; } = "Customer Success Agent";
+    public string RoleName { get; set; } = "AI 协作助手";
     public string Introduction { get; set; } =
-        "I’m the intelligent assistant for the customer success team. I can help collect your sourcing needs and coordinate the next steps. A human colleague will follow up on matters that need judgment.";
+        "I’m the AI assistant for this team. I can help understand your needs and coordinate next steps. A human colleague will confirm matters that require judgment.";
     public string DefaultLanguage { get; set; } = "en";
     public string Tone { get; set; } = "warm, professional, patient, natural and credible";
     public List<string> AllowedClaims { get; set; } = [];

@@ -2060,6 +2060,10 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         CustomerIdentityText.Text = identity is null
             ? "等待会话身份"
             : $"{CustomerSuccessAgentLabels.Match(identity.Result)} · 置信度 {identity.Confidence:P0} · {identity.Reason}";
+        var accountRoleName = context?.Persona?.RoleName;
+        AgentRoleNameText.Text = string.IsNullOrWhiteSpace(accountRoleName)
+            ? "AI 协作助手"
+            : accountRoleName;
         var state = context?.AgentState;
         AgentModeBadgeText.Text = CustomerSuccessAgentLabels.Mode(state?.Mode ?? ConversationAgentMode.SuggestOnly);
         AgentStateReasonText.Text = state is null
@@ -2109,11 +2113,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         SourcingProgressBar.Value = completeness;
         SourcingProgressText.Text = $"{completeness}%";
         SourcingStatusText.Text = sourcing is null
-            ? "尚未建立采购需求"
+            ? "尚未整理客户需求"
             : $"状态：{SourcingStatusLabel(sourcing.Status)} · 版本 V{sourcing.Version}";
         SourcingFieldsText.Text = sourcing is null || sourcing.MissingFields.Count > 0
             ? $"缺失：{string.Join("、", (sourcing?.MissingFields ?? Enum.GetValues<SourcingFieldKey>()).Select(SourcingFieldLabel))}"
-            : "五个采购要素已齐全，等待人工复核后提交供应链。";
+            : "关键需求信息已齐全，等待人工复核并推进下一步。";
         var conflicts = sourcing?.Conflicts.Where(item => !item.IsResolved).Select(item => SourcingFieldLabel(item.Field)).ToList() ?? [];
         SourcingConflictText.Text = conflicts.Count == 0 ? "" : $"冲突待处理：{string.Join("、", conflicts)}";
         PendingQuestionText.Text = context?.PendingQuestions.FirstOrDefault(item => !item.IsResolved) is { } question
@@ -2131,11 +2135,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
 
     private static string SourcingFieldLabel(SourcingFieldKey value) => value switch
     {
-        SourcingFieldKey.ProductImage => "产品图片/链接",
-        SourcingFieldKey.Quantity => "数量",
-        SourcingFieldKey.TargetPrice => "目标价",
-        SourcingFieldKey.Destination => "目的地",
-        SourcingFieldKey.ShippingPreference => "运输偏好",
+        SourcingFieldKey.ProductImage => "产品/服务资料",
+        SourcingFieldKey.Quantity => "范围/数量",
+        SourcingFieldKey.TargetPrice => "预算/目标价格",
+        SourcingFieldKey.Destination => "交付地区",
+        SourcingFieldKey.ShippingPreference => "交付偏好",
         _ => value.ToString()
     };
 

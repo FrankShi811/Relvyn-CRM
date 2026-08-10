@@ -1,4 +1,4 @@
-name: Release Relvyn
+name: Release AI Sales OS
 
 on:
   push:
@@ -27,17 +27,17 @@ jobs:
       DOTNET_NOLOGO: '1'
       ENABLE_MACOS_RELEASE: ${{ vars.ENABLE_MACOS_RELEASE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '22.23.1'
 
       - name: Install pnpm
         shell: pwsh
@@ -59,6 +59,10 @@ jobs:
 
       - name: Install Bridge dependencies
         run: pnpm --dir bridge install --frozen-lockfile
+
+      - name: Validate licenses, Bridge separation and brand provenance
+        shell: pwsh
+        run: .\scripts\test-compliance.ps1
 
       - name: Install Inno Setup for Chinese installer
         shell: pwsh
@@ -97,14 +101,16 @@ jobs:
           dotnet tool restore
           dotnet tool run vpk -- upload github --outputDir dist/velopack --channel win --repoUrl "https://github.com/${{ github.repository }}" --token $env:GITHUB_TOKEN --publish true --merge true --releaseName "AI Sales OS $env:RELEASE_VERSION" --tag $env:RELEASE_TAG --targetCommitish "${{ github.sha }}"
           gh release upload $env:RELEASE_TAG "dist/installers/AI Sales OS Setup.exe" --clobber
+          gh release upload $env:RELEASE_TAG dist/source/*.zip LICENSE EULA.md PRIVACY.md THIRD_PARTY_NOTICES.md docs/BRIDGE_GPL_COMPLIANCE.md --clobber
 
       - name: Upload build evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AI-Sales-OS-${{ env.RELEASE_VERSION }}-windows
           path: |
             dist/installers/AI Sales OS Setup.exe
             dist/velopack/*
+            dist/source/*.zip
           if-no-files-found: error
 
   macos-preview:
@@ -118,13 +124,13 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -165,7 +171,7 @@ jobs:
             dist/velopack-macos-arm64/* dist/velopack-macos-x64/* --clobber
 
       - name: Upload macOS build evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AI-Sales-OS-${{ env.RELEASE_VERSION }}-macos-preview
           path: |

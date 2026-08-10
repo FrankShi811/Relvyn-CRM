@@ -312,8 +312,8 @@ public partial class CustomerEditWindow : Window
                 && !await _services.Repository.IsBuyerIdAvailableAsync(buyerId, _lead.Id))
             {
                 MessageBox.Show(
-                    $"Buyer ID“{buyerId}”已经属于另一个客户。为避免客户资料、分析和跨板块记忆串联错误，本次保存已阻止。",
-                    "Buyer ID 冲突",
+                    $"客户 ID“{buyerId}”已经属于另一个客户。为避免客户资料、分析和跨板块记忆串联错误，本次保存已阻止。",
+                    "客户 ID 冲突",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
@@ -427,7 +427,7 @@ public partial class CustomerEditWindow : Window
         if (value.Length == 0) return 0;
         if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount) || decimal.TryParse(value, NumberStyles.Any, CultureInfo.CurrentCulture, out amount))
             return Math.Max(0, amount);
-        throw new InvalidDataException("预计订单额必须是数字。");
+        throw new InvalidDataException("预计机会金额必须是数字。");
     }
 
     private static string CoreFieldValue(Lead lead, ImportField field) => field switch

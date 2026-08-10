@@ -63,14 +63,14 @@ public partial class OpportunitySupplementImportWindow : Window
         var issues = new List<string>
         {
             $"未匹配并丢弃：{preview.UnmatchedRows:N0} 行",
-            $"Buyer ID 空白或异常：{preview.InvalidBuyerIdRows:N0} 行",
-            $"客户主档 Buyer ID 冲突：{preview.BuyerIdConflicts:N0} 个",
+            $"客户 ID 空白或异常：{preview.InvalidBuyerIdRows:N0} 行",
+            $"客户主档客户 ID 冲突：{preview.BuyerIdConflicts:N0} 个",
             $"数据无变化客户：{preview.UnchangedCustomers:N0} 位"
         };
         if (preview.ConflictBuyerIds.Count > 0)
-            issues.Add($"\n冲突 Buyer ID：\n{string.Join("\n", preview.ConflictBuyerIds.Take(30))}");
+            issues.Add($"\n冲突客户 ID：\n{string.Join("\n", preview.ConflictBuyerIds.Take(30))}");
         if (preview.UnmatchedBuyerIds.Count > 0)
-            issues.Add($"\n未匹配 Buyer ID（最多展示 30 个）：\n{string.Join("\n", preview.UnmatchedBuyerIds.Take(30))}");
+            issues.Add($"\n未匹配客户 ID（最多展示 30 个）：\n{string.Join("\n", preview.UnmatchedBuyerIds.Take(30))}");
         IssuesText.Text = string.Join("\n", issues);
         PreviewPanel.Visibility = Visibility.Visible;
         StatusText.Text = preview.IsPreviouslyImportedFile

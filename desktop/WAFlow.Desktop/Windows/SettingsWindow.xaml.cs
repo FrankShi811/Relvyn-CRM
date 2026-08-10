@@ -38,6 +38,18 @@ public partial class SettingsWindow : Window
     private bool _updatingRoutingUi;
     private bool _hadConfiguredProviderAtLoad;
     private OnboardingState _onboardingState = new();
+    private string _lastPresetRoleSkill = BusinessRoleProfile.DefaultRoleSkillDescription;
+
+    private static readonly IReadOnlyList<BusinessRolePreset> BusinessRolePresets =
+    [
+        new("通用销售", BusinessRoleProfile.DefaultRoleSkillDescription),
+        new("销售负责人", "确定客户优先级和资源投入，复核商机判断、销售策略与团队下一步；重要决策和对外承诺由负责人确认。"),
+        new("商务拓展", "识别潜在合作机会、决策人、合作路径和关键风险，准备有依据的沟通建议并推动下一步会谈。"),
+        new("客户成功", "理解客户目标、使用情况和阻碍，识别续约、增购、流失与服务风险，提出需要人工确认的跟进建议。"),
+        new("客户经理", "维护客户关系和跨渠道上下文，明确需求、预算、时间和决策条件，协调内部资源并记录承诺。"),
+        new("市场与增长", "结合客户反馈和商机证据识别细分人群、内容方向与增长机会，不把推断写成客户事实。"),
+        new("创始人或经营者", "从收入机会、客户价值、交付能力和经营风险综合判断优先级，保留关键决策的人工控制。")
+    ];
 
     public SettingsWindow(
         AppServices services,
@@ -75,6 +87,7 @@ public partial class SettingsWindow : Window
     {
         _hadConfiguredProviderAtLoad = _services.DeepSeek.HasApiKey();
         _settings = await _services.Repository.GetAppSettingsAsync();
+        LoadBusinessRoleProfile();
         await LoadCustomerEnrichmentSettingsAsync();
         _settings.AiModulePreferences ??= new Dictionary<string, AiModuleModelPreference>(StringComparer.OrdinalIgnoreCase);
         ThemeModeBox.ItemsSource = new[]
@@ -128,6 +141,39 @@ public partial class SettingsWindow : Window
         }
         else if (!GuideCatalog.IsSeen(_onboardingState, "settings"))
             SettingsGuide.ShowGuide(GuideCatalog.ForModule("settings"));
+    }
+
+    private void LoadBusinessRoleProfile()
+    {
+        var profile = BusinessRoleProfile.Normalize(_settings.BusinessRoleProfile);
+        _settings.BusinessRoleProfile = profile;
+        BusinessRoleBox.ItemsSource = BusinessRolePresets;
+        BusinessRoleBox.DisplayMemberPath = nameof(BusinessRolePreset.Name);
+        BusinessOrganizationNameBox.Text = profile.OrganizationName;
+        BusinessDescriptionBox.Text = profile.BusinessDescription;
+        RoleSkillDescriptionBox.Text = profile.RoleSkillDescription;
+        var preset = BusinessRolePresets.FirstOrDefault(item =>
+            item.Name.Equals(profile.RoleName, StringComparison.Ordinal));
+        if (preset is not null)
+        {
+            BusinessRoleBox.SelectedItem = preset;
+            _lastPresetRoleSkill = preset.SkillDescription;
+        }
+        else
+        {
+            BusinessRoleBox.Text = profile.RoleName;
+            _lastPresetRoleSkill = "";
+        }
+    }
+
+    private void BusinessRoleBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded || BusinessRoleBox.SelectedItem is not BusinessRolePreset preset) return;
+        var current = RoleSkillDescriptionBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(current)
+            || current.Equals(_lastPresetRoleSkill, StringComparison.Ordinal))
+            RoleSkillDescriptionBox.Text = preset.SkillDescription;
+        _lastPresetRoleSkill = preset.SkillDescription;
     }
 
     private async Task LoadCustomerEnrichmentSettingsAsync()
@@ -688,6 +734,13 @@ public partial class SettingsWindow : Window
         SaveButton.IsEnabled = false;
         try
         {
+            _settings.BusinessRoleProfile = BusinessRoleProfile.Normalize(new BusinessRoleProfile
+            {
+                OrganizationName = BusinessOrganizationNameBox.Text,
+                BusinessDescription = BusinessDescriptionBox.Text,
+                RoleName = BusinessRoleBox.Text,
+                RoleSkillDescription = RoleSkillDescriptionBox.Text
+            });
             if (!string.IsNullOrWhiteSpace(TavilySearchKeyBox.Password))
                 _services.CustomerEnrichment.SaveProviderKey("tavily", TavilySearchKeyBox.Password);
             if (!string.IsNullOrWhiteSpace(BraveSearchKeyBox.Password))
@@ -1045,6 +1098,7 @@ public partial class SettingsWindow : Window
     };
 
     private sealed record ThemeOption(string Label, string Value);
+    private sealed record BusinessRolePreset(string Name, string SkillDescription);
     private sealed record UiScaleOption(string Label, int Value);
     private sealed record SearchProviderOrderOption(string Label, string Value);
     private sealed record ConfiguredProviderRow(string DisplayName, string ModelLabel, string StatusLabel);

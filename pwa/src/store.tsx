@@ -68,7 +68,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         email: "azita@example.com", company: "SP Trading", country: "United States", productInterest: "Industrial needle machine",
         stage: "需求确认", grade: "B", score: 74, owner: "Frank", tags: ["重点跟进", "样品"],
         notes: "关注申请审核和产品参数，需要进一步确认数量与时间。", source: "PWA 示例数据",
-        updatedAt: now.toISOString(), lastContactAt: now.toISOString(), customFields: { 平台: "DHgate", 客户类型: "批发商" },
+        updatedAt: now.toISOString(), lastContactAt: now.toISOString(), customFields: { 来源渠道: "行业活动", 客户类型: "企业客户" },
         aiSummary: "客户已经表达具体产品兴趣并持续互动，具备进一步确认采购要素的价值。",
         aiNextAction: "用简短问题确认数量、目标价、目的地和期望交期。", aiRisks: ["尚未确认预算与最终采购时间"]
       };

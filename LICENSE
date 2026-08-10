@@ -16,6 +16,12 @@ of third-party components, their notices, or contributions whose licensing
 authority has not been confirmed. Any prior product name or internal
 compatibility identifier does not grant any separate license.
 
+The source code under `bridge/`, the separately distributed
+`WAFlow.WhatsApp.Bridge.exe`, and the complete corresponding source archive
+published with each Windows release are excluded from this proprietary license.
+They are licensed under GNU GPL version 3 only as described in
+`bridge/LICENSE.md` and `docs/BRIDGE_GPL_COMPLIANCE.md`.
+
 The Project is proprietary software. Except for the limited GitHub platform
 permissions described below and rights expressly granted in a separate written
 agreement, no copyright or other intellectual-property license is granted.

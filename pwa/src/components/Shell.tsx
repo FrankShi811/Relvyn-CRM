@@ -7,11 +7,11 @@ import { useEffect, useState, type ReactNode } from "react";
 export type PageKey = "dashboard" | "intelligence" | "customers" | "whatsapp" | "email" | "campaigns" | "knowledge" | "analytics" | "settings";
 
 const nav: { key: PageKey; label: string; icon: typeof LayoutDashboard }[] = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "intelligence", label: "商机智能", icon: BrainCircuit },
+  { key: "dashboard", label: "看板", icon: LayoutDashboard },
   { key: "customers", label: "客户列表", icon: ContactRound },
-  { key: "whatsapp", label: "WhatsApp Inbox", icon: Bot },
-  { key: "email", label: "邮件 Inbox", icon: Mail },
+  { key: "intelligence", label: "商机智能", icon: BrainCircuit },
+  { key: "whatsapp", label: "WhatsApp", icon: Bot },
+  { key: "email", label: "邮件箱", icon: Mail },
   { key: "campaigns", label: "自动化触达", icon: Megaphone },
   { key: "knowledge", label: "知识库", icon: BookOpenText },
   { key: "analytics", label: "客户智能分析", icon: BarChart3 },
@@ -29,13 +29,13 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
   }, [dark]);
   const choose = (key: PageKey) => { setPage(key); setMobileOpen(false); };
   return <div className="app-shell">
-    <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
-      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} alt=""/><div><strong>AI Sales OS</strong><span>PWA v5.5.2 · LOCAL FIRST</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)}><X/></button></div>
+    <aside id="primary-navigation" className={`sidebar ${mobileOpen ? "open" : ""}`}>
+      <div className="brand"><img src={`${import.meta.env.BASE_URL}pwa-192.png`} alt="" width={52} height={52}/><div><strong>AI Sales OS</strong><span>PWA v5.5.3 · LOCAL FIRST</span></div><button className="mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X/></button></div>
       <nav>
         <span className="nav-group">COMMAND CENTER</span>
-        {nav.slice(0, 2).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
+        {nav.slice(0, 3).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
         <span className="nav-group">CUSTOMER OPERATIONS</span>
-        {nav.slice(2, 6).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
+        {nav.slice(3, 6).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
         <span className="nav-group">INSIGHTS</span>
         {nav.slice(6).map(item => <NavItem key={item.key} label={item.label} icon={item.icon} active={page === item.key} onClick={() => choose(item.key)}/>)}
       </nav>
@@ -44,7 +44,7 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
     {mobileOpen && <button className="nav-scrim" onClick={() => setMobileOpen(false)} aria-label="关闭导航"/>}
     <main className="main">
       <header className="topbar">
-        <button className="menu-button" onClick={() => setMobileOpen(true)}><Menu/></button>
+        <button className="menu-button" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-controls="primary-navigation" aria-expanded={mobileOpen}><Menu/></button>
         <div className="top-title"><strong>{nav.find(x => x.key === page)?.label}</strong><span>客户资料保存在当前浏览器</span></div>
         <div className="top-actions">
           <span className="local-status"><span/>本机数据</span>
@@ -65,5 +65,5 @@ export function Shell({ page, setPage, children, onInstall, canInstall }: {
 }
 
 function NavItem({ label, icon: Icon, active, onClick }: { label: string; icon: typeof LayoutDashboard; active: boolean; onClick: () => void }) {
-  return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}><Icon size={18}/><span>{label}</span>{active && <ChevronRight size={15}/>}</button>;
+  return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick} aria-current={active ? "page" : undefined}><Icon size={18}/><span>{label}</span>{active && <ChevronRight size={15}/>}</button>;
 }

@@ -427,7 +427,7 @@ public sealed class TodayBriefItem
     [JsonIgnore] public string CategoryLabel => Category switch
     {
         "handoff" => "人工接管",
-        "sourcing_complete" => "采购需求完整",
+        "sourcing_complete" => "客户需求完整",
         "cross_account" => "跨账号跟进",
         "knowledge_review" => "知识待审核",
         "knowledge_conflict" => "知识冲突",

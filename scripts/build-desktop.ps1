@@ -14,6 +14,7 @@ if (-not $dotnet -or -not (Test-Path -LiteralPath $dotnet)) {
 $work = Join-Path $root 'work'
 $publish = Join-Path $work "publish\$Runtime-$([Guid]::NewGuid().ToString('N'))"
 $rootOutput = Join-Path $root 'AI Sales OS.exe'
+$rootBridgeOutput = Join-Path $root 'WAFlow.WhatsApp.Bridge.exe'
 $bridgeBuild = Join-Path $root 'bridge\scripts\build-sea.mjs'
 
 $env:DOTNET_CLI_HOME = $work
@@ -31,7 +32,7 @@ if (Test-Path -LiteralPath $bridgeBuild) {
     $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
     if ($nodeCommand) { $node = $nodeCommand.Source }
   }
-  if (-not $node -or -not (Test-Path -LiteralPath $node)) { throw 'Node.js is required to build the embedded WhatsApp bridge. Set WAFLOW_NODE_PATH.' }
+  if (-not $node -or -not (Test-Path -LiteralPath $node)) { throw 'Node.js is required to build the companion WhatsApp Bridge. Set WAFLOW_NODE_PATH.' }
   & $node $bridgeBuild
   if ($LASTEXITCODE -ne 0) { throw 'AI Sales OS WhatsApp bridge SEA build failed.' }
 }
@@ -43,8 +44,12 @@ if (Test-Path -LiteralPath $bridgeBuild) {
 if ($LASTEXITCODE -ne 0) { throw 'AI Sales OS desktop publish failed.' }
 
 $publishedExe = Join-Path $publish 'AISalesOS.exe'
+$bridgeExe = Join-Path $root 'bridge\dist\WAFlow.WhatsApp.Bridge.exe'
+if (-not (Test-Path -LiteralPath $bridgeExe)) { throw 'Built WhatsApp Bridge executable is missing.' }
+Copy-Item -LiteralPath $bridgeExe -Destination (Join-Path $publish 'WAFlow.WhatsApp.Bridge.exe') -Force
 try {
   Copy-Item -LiteralPath $publishedExe -Destination $rootOutput -Force
+  Copy-Item -LiteralPath $bridgeExe -Destination $rootBridgeOutput -Force
 }
 catch [System.IO.IOException] {
   throw 'AI Sales OS.exe is currently running. Close the application and rebuild so the canonical EXE can be overwritten.'

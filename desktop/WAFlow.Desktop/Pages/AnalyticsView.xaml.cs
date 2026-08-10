@@ -153,7 +153,7 @@ public partial class AnalyticsView : UserControl, IRefreshableView
         var whatsapp = new StackPanel();
         whatsapp.Children.Add(Field("沟通积极度", content.WhatsAppAnalysis.EngagementLevel));
         whatsapp.Children.Add(BulletBlock("关注主题", content.WhatsAppAnalysis.FocusTopics));
-        whatsapp.Children.Add(BulletBlock("采购信号", content.WhatsAppAnalysis.PurchaseSignals, "SuccessSoft"));
+        whatsapp.Children.Add(BulletBlock("需求与合作信号", content.WhatsAppAnalysis.PurchaseSignals, "SuccessSoft"));
         whatsapp.Children.Add(BulletBlock("顾虑", content.WhatsAppAnalysis.Concerns, "WarningSoft"));
         foreach (var quote in content.WhatsAppAnalysis.Quotes.Take(12)) whatsapp.Children.Add(QuoteCard(quote));
         ReportPanel.Children.Add(CreateSection("06", "WhatsApp 沟通分析", whatsapp));
@@ -368,5 +368,5 @@ public partial class AnalyticsView : UserControl, IRefreshableView
     private static string ValueOrDash(string value) => string.IsNullOrWhiteSpace(value) ? "—" : value;
     private static string ValueOrPlaceholder(string value) => string.IsNullOrWhiteSpace(value) ? "暂无充分信息，建议后续补充验证。" : value;
     private static string SafeFileName(string value) => string.Concat(value.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
-    private static string DimensionLabel(string key) => key switch { "paid_marketing_willingness" => "付费营销意愿", "supply_stability" => "供应链稳定性", "ecommerce_foundation" => "电商基础", "private_traffic" => "私域 / 流量", "existing_sales" => "已有销售能力", "materials_readiness" => "素材准备度", _ => key };
+    private static string DimensionLabel(string key) => key switch { "paid_marketing_willingness" => "增长投入意愿", "supply_stability" => "运营与交付稳定性", "ecommerce_foundation" => "相关业务基础", "private_traffic" => "客户触达能力", "existing_sales" => "商业验证程度", "materials_readiness" => "合作准备度", _ => key };
 }

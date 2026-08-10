@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 function numericTimestamp(value) {
   const numeric = Number(value?.toString?.() ?? value)
   if (!Number.isFinite(numeric) || numeric <= 0) return 0

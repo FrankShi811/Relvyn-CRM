@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Experimental local WhatsApp multi-device bridge for the native AI Sales OS desktop app.",
+  "license": "GPL-3.0-only",
+  "files": [
+    "src",
+    "scripts",
+    "LICENSE.md"
+  ],
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",

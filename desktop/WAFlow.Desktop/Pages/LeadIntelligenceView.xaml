@@ -27,7 +27,7 @@
                             Style="{StaticResource SecondaryButton}"
                             Click="OpportunityImport_Click"
                             Margin="0,0,8,0"
-                            ToolTip="只为 Buyer ID 完全匹配的现有客户补充支付、未付款和纠纷证据"
+                            ToolTip="只为客户 ID 完全匹配的现有客户补充成功、失败、待付款和争议交易证据（兼容 Buyer ID）"
                             AutomationProperties.Name="导入现有客户的商机补充数据"/>
                     <Button x:Name="ImportButton" Content="导入客户" Style="{StaticResource SecondaryButton}" Click="Import_Click"/>
                 </StackPanel>
@@ -145,7 +145,7 @@
                                     <TextBlock Text="AI 置信度" Style="{StaticResource LabelText}"/>
                                     <TextBlock x:Name="ConfidenceText" Text="0%" FontSize="20" FontWeight="Bold" Margin="0,3,0,6"/>
                                     <ProgressBar x:Name="ConfidenceBar" Style="{StaticResource ConfidenceMeter}" Maximum="100"/>
-                                    <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="阶段" Style="{StaticResource LabelText}"/><TextBlock x:Name="StageText" Text="—" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="预估订单" Style="{StaticResource LabelText}"/><TextBlock x:Name="AmountText" Text="—" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel></Grid>
+                                    <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="阶段" Style="{StaticResource LabelText}"/><TextBlock x:Name="StageText" Text="—" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="预计机会金额" Style="{StaticResource LabelText}"/><TextBlock x:Name="AmountText" Text="—" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel></Grid>
                                     <Grid Margin="0,13,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="画像基础分" Style="{StaticResource LabelText}"/><TextBlock x:Name="BaseScoreText" Text="0 / 100" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel><StackPanel Grid.Column="1"><TextBlock Text="行为修正" Style="{StaticResource LabelText}"/><TextBlock x:Name="BehaviorScoreText" Text="0" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel></Grid>
                                 </StackPanel>
                             </Grid>
@@ -165,7 +165,7 @@
                                     <TextBlock x:Name="OpportunityCategoryText" TextWrapping="Wrap" Margin="0,3,0,0"/>
                                     <TextBlock Text="风险阻力" Style="{StaticResource LabelText}" Margin="0,10,0,0"/>
                                     <TextBlock x:Name="OpportunityRiskText" TextWrapping="Wrap" Margin="0,3,0,0"/>
-                                    <TextBlock Text="最近订单证据" Style="{StaticResource LabelText}" Margin="0,10,0,0"/>
+                                    <TextBlock Text="最近交易证据" Style="{StaticResource LabelText}" Margin="0,10,0,0"/>
                                     <ItemsControl x:Name="OpportunityEventItems" Margin="0,4,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>

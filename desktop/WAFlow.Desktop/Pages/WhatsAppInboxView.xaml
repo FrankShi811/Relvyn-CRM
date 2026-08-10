@@ -269,7 +269,7 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="Customer Success Agent" FontWeight="SemiBold" FontSize="13"/>
+                                        <TextBlock x:Name="AgentRoleNameText" Text="AI 协作助手" FontWeight="SemiBold" FontSize="13"/>
                                         <TextBlock x:Name="CustomerIdentityText" Text="等待会话身份" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,3,8,0"/>
                                     </StackPanel>
                                     <Border Grid.Column="1" Background="{DynamicResource PrimarySurface}" CornerRadius="8" Padding="8,4" VerticalAlignment="Top">
@@ -321,12 +321,12 @@
                             <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <TextBlock Text="采购需求五要素" FontWeight="SemiBold" FontSize="12"/>
+                                    <TextBlock Text="客户需求要点" FontWeight="SemiBold" FontSize="12"/>
                                     <TextBlock x:Name="SourcingProgressText" Grid.Column="1" Text="0%" Foreground="{DynamicResource Primary}" FontWeight="SemiBold"/>
                                 </Grid>
                                 <ProgressBar x:Name="SourcingProgressBar" Maximum="100" Height="6" Margin="0,8,0,7"/>
-                                <TextBlock x:Name="SourcingStatusText" Text="尚未建立采购需求" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap"/>
-                                <TextBlock x:Name="SourcingFieldsText" Text="缺失：产品图片/链接、数量、目标价、目的地、运输偏好" FontSize="9.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                <TextBlock x:Name="SourcingStatusText" Text="尚未整理客户需求" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="SourcingFieldsText" Text="缺失：产品/服务资料、范围/数量、预算/目标价格、交付地区、交付偏好" FontSize="9.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
                                 <TextBlock x:Name="SourcingConflictText" Text="" Foreground="{DynamicResource Warning}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 <TextBlock x:Name="PendingQuestionText" Text="待确认：—" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>

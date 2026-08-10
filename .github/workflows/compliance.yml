@@ -1,0 +1,20 @@
+name: License and distribution compliance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate legal files, Bridge separation and brand provenance
+        shell: pwsh
+        run: ./scripts/test-compliance.ps1

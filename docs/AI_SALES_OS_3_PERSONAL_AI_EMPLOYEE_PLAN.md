@@ -22,7 +22,7 @@
 ### 1.2 核心缺口
 
 1. Customer Brain 当前主要汇总已有分析，尚无自己的分阶段 AI 运行和中间结果。
-2. Lead Intelligence 缺少独立的采购概率和机会决策轨迹。
+2. Lead Intelligence 缺少独立的商机转化概率和机会决策轨迹。
 3. 生命周期未覆盖“确认需求、报价、复购”等个人销售常用节点。
 4. `NextFollowUpAt` 只是客户字段，不是可完成、可延期、可追溯的任务。
 5. 行为时间线已有渠道事件，但缺少统一的客户事件日志和状态变化记录。
@@ -103,7 +103,7 @@ Data Collection
 ### 4.2 失败策略
 
 - AI 未配置或失败：保留 CRM、历史消息、Lead 分数和上一版 Brain。
-- 不以本地关键词或规则替代 AI 采购概率。
+- 不以本地关键词或规则替代 AI 商机转化概率。
 - 失败运行可重试，不产生伪造的成功结果。
 - 新资料到达后，旧 Brain 标记为需要重新分析，但历史版本不删除。
 
@@ -125,8 +125,8 @@ Data Collection
 
 ### 5.2 扩展现有实体
 
-- `CustomerIntelligenceProfile`：采购概率、建议阶段、运行状态、最近 Brain Run。
-- `Lead`：AI 采购概率（仅结构化 AI 成功后写入）。
+- `CustomerIntelligenceProfile`：商机转化概率、建议阶段、运行状态、最近 Brain Run。
+- `Lead`：AI 商机转化概率（仅结构化 AI 成功后写入）。
 - `LeadStage`：新增 `RequirementConfirmed`、`Quotation`、`RepeatPurchase`。
 
 ### 5.3 SQLite 迁移
@@ -141,19 +141,19 @@ Data Collection
 ### Dashboard
 
 - 待跟进数量读取独立任务，不再只依赖客户字段。
-- 后续增加“今日行动”列表，按到期时间、AI 优先级和采购概率排序。
+- 后续增加“今日行动”列表，按到期时间、AI 优先级和商机转化概率排序。
 
 ### Lead Intelligence
 
 - 保留 AI Score、等级、六维证据。
-- 增加采购概率、Brain 新鲜度和建议生命周期。
-- 继续明确区分 AI 分数与采购概率。
+- 增加商机转化概率、Brain 新鲜度和建议生命周期。
+- 继续明确区分 AI 分数与商机转化概率。
 
 ### Customer 360
 
 在现有客户资料窗口中增加：
 
-- Customer Brain 摘要、数据覆盖、置信度、采购概率。
+- Customer Brain 摘要、数据覆盖、置信度、商机转化概率。
 - 事实 / AI 判断 / 建议 / 信息缺口。
 - 推荐历史、跟进任务、行为与客户事件时间线。
 - 手动运行或重试 Customer Brain。
@@ -176,7 +176,7 @@ Data Collection
 ### Phase 2 — Customer 360
 
 - 客户资料窗口接入 Brain、任务、推荐和时间线。
-- Lead Intelligence 增加采购概率和 Brain 状态。
+- Lead Intelligence 增加商机转化概率和 Brain 状态。
 - Dashboard 改用独立待办。
 - 状态：已由 v3.0.0 完成。
 

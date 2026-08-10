@@ -727,7 +727,7 @@ public sealed class CustomerBrainService
                 reusable?.Summary,
                 report?.ExecutiveSummary.OneLinePositioning,
                 lead.HasCurrentAiScore ? lead.ProfileSummary : null,
-                $"{lead.DisplayName} 已进入客户工作区；当前商业背景和采购条件仍需通过沟通核实。"),
+                $"{lead.DisplayName} 已进入客户工作区；当前商业背景和合作条件仍需通过沟通核实。"),
             CustomerType = FirstUseful(reusable?.CustomerType, report?.BasicProfile.CustomerType, lead.CustomerSegment, "客户类型待核实"),
             BusinessModels = Clean(reusable?.BusinessModels, report?.BasicProfile.BusinessModels),
             PurchaseMotivations = Clean(

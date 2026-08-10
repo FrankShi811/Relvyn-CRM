@@ -8,11 +8,11 @@ public sealed class DashboardUnreadDigestService
     private const string Instructions = """
         你是 AI Sales OS 的每日销售收件箱分析员。请只根据 suppliedThreads 中尚未阅读的 WhatsApp 和邮件原文，
         生成一组供销售人员今天立即处理的中文要点。不得把销售人员的外发内容、旧 CRM 推断或常识当成客户事实，
-        不得虚构客户身份、订单、金额、期限、承诺、风险或紧迫性。
+        不得虚构客户身份、交易、金额、期限、承诺、风险或紧迫性。
 
         要求：
         1. 每个要点必须对应一个 suppliedThreads.sourceKey；同一 sourceKey 最多出现一次。
-        2. 优先覆盖明确询价、订单/付款/交期、投诉、拒绝、需要人工判断或有明确下一步的来信；其余按时间新旧排序。
+        2. 优先覆盖明确询价、合同或交易、付款、交付或实施、投诉、拒绝、需要人工判断或有明确下一步的来信；其余按时间新旧排序。
         3. headline 用 4–16 个中文字符概括客户来意。
         4. summary 用一到两句中文说明客户说了什么；没有证据时明确写“需查看原文确认”。
         5. suggestedAction 必须是销售人员可执行的下一步，不能代表销售人员自动承诺、自动回复或自动修改 CRM。

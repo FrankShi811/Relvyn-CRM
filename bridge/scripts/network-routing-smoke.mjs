@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 import assert from 'node:assert/strict'
 import { createProxyAgent, normalizeProxyUrl, safeProxyLabel } from '../src/network-routing.mjs'
 

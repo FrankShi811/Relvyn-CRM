@@ -1,18 +1,16 @@
 # Relvyn Third-Party Notices
 
-Snapshot date: 2026-08-04. This file is generated from the resolved production dependency graphs and manually reviewed build contents. It is not legal advice. Third-party copyrights remain with their respective owners.
+Snapshot date: 2026-08-10. This file is generated from the resolved production dependency graphs and manually reviewed build contents. It is not legal advice. Third-party copyrights remain with their respective owners.
 
 The Relvyn proprietary `LICENSE` does not apply to the components listed here. When a package contains a more specific notice, that package notice controls. Complete unmodified license snapshots are under [`licenses/third-party/`](licenses/third-party/).
 
-## Release-blocking notice
+## WhatsApp Bridge GPL-3.0 distribution route
 
-`@whiskeysockets/baileys@7.0.0-rc13` imports `libsignal@6.0.0`, which declares **GPL-3.0**. The Windows Bridge build bundles JavaScript modules into a Node Single Executable Application. The current proprietary distribution plan must therefore **not publish the Bridge executable** until one of these paths is reviewed and completed:
+`@whiskeysockets/baileys@7.0.0-rc13` imports `libsignal@6.0.0`, which declares **GPL-3.0**. The complete Windows Bridge combination is therefore distributed as a separate GPL-3.0-only companion executable rather than as proprietary embedded code.
 
-1. replace/remove `libsignal` with a dependency having compatible licensing; or
-2. obtain a separate commercial license; or
-3. satisfy the GPL-3.0 source, notice, installation-information and corresponding-work obligations for the actual distributed combination after specialist legal review.
+Each Windows release must publish `AI-Sales-OS-WhatsApp-Bridge-VERSION-source.zip` beside the installer and update packages. That archive contains the exact Bridge source, build scripts, resolved dependency source trees, lockfile, GPL text, installation information and SHA-256 manifest. The desktop app accepts a user-built replacement through `AI_SALES_OS_WHATSAPP_BRIDGE_PATH`. See [`docs/BRIDGE_GPL_COMPLIANCE.md`](docs/BRIDGE_GPL_COMPLIANCE.md).
 
-Merely moving the Bridge from an embedded resource to a companion process does not by itself resolve the GPL analysis. The compliance CI intentionally blocks a release while this dependency remains.
+The release compliance gate fails if the Bridge is embedded into `AISalesOS.exe`, if the corresponding-source archive is absent, or if the replacement mechanism and license notices are removed. This is an engineering compliance route and is not specialist legal advice.
 
 ## License text index
 
@@ -86,7 +84,7 @@ Source: `bridge/pnpm-lock.yaml` resolved with pnpm 10.14.0 and `pnpm licenses li
 | ISC | `cliui@6.0.0`; `get-caller-file@2.0.5`; `require-main-filename@2.0.0`; `semver@7.8.5`; `set-blocking@2.0.0`; `split2@4.2.0`; `which-module@2.0.1`; `y18n@4.0.3`; `yargs-parser@18.1.3` | Retain copyright and ISC permission/disclaimer. |
 | Apache-2.0 | `detect-libc@2.1.2`; `long@5.3.2`; `sharp@0.35.3` | Retain license, copyright and NOTICE files where supplied; compatible by itself. |
 | Apache-2.0 AND LGPL-3.0-or-later | `@img/sharp-win32-x64@0.35.3` | Installed optional native package. No `.node`/DLL was detected in the inspected SEA output, but every release must verify actual files. If redistributed, preserve the exact license and satisfy LGPL relinking/source requirements. |
-| GPL-3.0 | `libsignal@6.0.0` | Imported by Baileys and present in the bundle. Strong-copyleft source obligations; **proprietary Bridge publication blocked** pending resolution. |
+| GPL-3.0 | `libsignal@6.0.0` | Imported by Baileys and present in the Bridge. The entire companion Bridge is distributed under GPL-3.0-only with complete corresponding source and installation information beside each binary release. |
 | BlueOak-1.0.0 | `lru-cache@11.5.2` | Retain BlueOak license notice; no source-disclosure condition identified. |
 | 0BSD | `tslib@2.8.1` | Retain exact 0BSD text. |
 | Node.js runtime | `node@22.23.1` | Node.js uses the MIT license plus many third-party notices. Distribute the exact Node license snapshot. |
@@ -113,10 +111,10 @@ The PWA is a separate browser deliverable. Only the production graph is listed h
 | Component | Version/source | License / rights status | Use and redistribution | Assessment |
 |---|---|---|---|---|
 | Noto Sans CJK SC Regular/Bold | Tracked OTF files | SIL Open Font License 1.1 | Embedded for PDF/report output and redistributed | Retain OFL text; fonts may not be sold alone under a reserved name |
-| Relvyn logo and Windows/macOS/PWA icons | Repository assets, exact external provenance not recorded | **UNRESOLVED** | Shipped in product, installer, shortcuts and PWA | Release blocker until Frank Shi confirms original creation or obtains transferable commercial rights; generated/stock provenance must be documented |
+| AI Sales OS logo and Windows/macOS/PWA icons | Original host-native image generation output dated 2026-08-10; no reference images supplied | Project-owner-authorized generated asset with prompt, untouched master, derivation script and SHA-256 manifest under `docs/brand/generation-records/` | Shipped in product, installer, shortcuts and PWA | Provenance is recorded and release hashes are gated; no representation is made that trademark clearance has been completed |
 | Sample XLSX files | `samples/Relvyn-*.xlsx` | Project sample data; exact original authorship not recorded | Repository examples, not required in installer | Confirm no real personal data or third-party copyrighted dataset is present |
 | README/release screenshots | None detected as tracked product screenshots in this snapshot | N/A | N/A | Re-audit when screenshots are added |
 
 ## Contribution and copied-code boundary
 
-Git history shows commits authored as `FrankShi811 <shixuanda0811@gmail.com>` and `Codex <codex@local>`. No submodules or separately vendored source trees were detected. The repository owner must confirm that all Codex-authored changes were produced under an account and terms that permit the intended proprietary distribution, and must separately confirm the provenance of brand assets. This notice does not assign those rights to Frank Shi.
+Git history shows commits authored as `FrankShi811 <shixuanda0811@gmail.com>` and `Codex <codex@local>`. No submodules or separately vendored source trees were detected. The repository owner must confirm that all Codex-authored changes were produced under an account and terms that permit the intended proprietary distribution. Brand-asset provenance for the replacement icon family is recorded under `docs/brand/generation-records/`. This notice does not assign rights to any person or entity.
