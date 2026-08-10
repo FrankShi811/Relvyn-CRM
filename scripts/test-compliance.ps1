@@ -13,6 +13,14 @@ function Require-File([string]$Path, [string]$Label) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Add-ComplianceError "Missing ${Label}: $Path" }
 }
 function Get-Sha([string]$Path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash }
+function Get-CanonicalTextSha([string]$Path) {
+  $text = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false))
+  $canonicalText = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($canonicalText)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') }
+  finally { $sha.Dispose() }
+}
 
 foreach ($file in @('LICENSE', 'EULA.md', 'PRIVACY.md', 'THIRD_PARTY_NOTICES.md')) {
   Require-File (Join-Path $root $file) $file
@@ -57,16 +65,22 @@ $brandManifestPath = Join-Path $root 'docs\brand\generation-records\brand-assets
 Require-File $brandManifestPath 'brand provenance manifest'
 if (Test-Path -LiteralPath $brandManifestPath) {
   $brand = Get-Content -Raw -Encoding utf8 -LiteralPath $brandManifestPath | ConvertFrom-Json
+  if ($brand.promptHashNormalization -ne 'UTF-8 without BOM; CRLF and CR line endings normalized to LF before SHA-256') {
+    Add-ComplianceError 'Brand prompt hash must declare cross-platform UTF-8/LF normalization.'
+  }
   foreach ($entry in @(
-    [pscustomobject]@{ path = $brand.prompt; sha256 = $brand.promptSha256 },
-    [pscustomobject]@{ path = $brand.originalMaster; sha256 = $brand.originalMasterSha256 }
+    [pscustomobject]@{ path = $brand.prompt; sha256 = $brand.promptSha256; canonicalText = $true },
+    [pscustomobject]@{ path = $brand.originalMaster; sha256 = $brand.originalMasterSha256; canonicalText = $false }
   ) + @($brand.assets)) {
     $assetPath = Join-Path $root ([string]$entry.path)
     if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
       Add-ComplianceError "Brand provenance file is missing: $($entry.path)"
     }
-    elseif ((Get-Sha $assetPath) -ne [string]$entry.sha256) {
-      Add-ComplianceError "Brand provenance hash mismatch: $($entry.path)"
+    else {
+      $actualHash = if ($entry.canonicalText) { Get-CanonicalTextSha $assetPath } else { Get-Sha $assetPath }
+      if ($actualHash -ne [string]$entry.sha256) {
+        Add-ComplianceError "Brand provenance hash mismatch: $($entry.path)"
+      }
     }
   }
 }

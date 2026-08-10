@@ -20,6 +20,15 @@ if (-not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) { throw "Brand pro
 
 Add-Type -AssemblyName System.Drawing
 
+function Get-CanonicalTextSha256([string]$Path) {
+  $text = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false))
+  $canonicalText = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+  $bytes = [Text.UTF8Encoding]::new($false).GetBytes($canonicalText)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') }
+  finally { $sha.Dispose() }
+}
+
 function New-RoundedMaster([Drawing.Image]$Source, [int]$Size) {
   $bitmap = [Drawing.Bitmap]::new($Size, $Size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $bitmap.SetResolution(96, 96)
@@ -147,7 +156,8 @@ $manifest = [ordered]@{
   sourceUsedReferenceImages = $false
   projectOwnerAuthorization = 'The project owner explicitly authorized replacement with newly generated assets on 2026-08-10.'
   prompt = Get-RelativeAssetPath $root $PromptPath
-  promptSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PromptPath).Hash
+  promptSha256 = Get-CanonicalTextSha256 $PromptPath
+  promptHashNormalization = 'UTF-8 without BOM; CRLF and CR line endings normalized to LF before SHA-256'
   originalMaster = Get-RelativeAssetPath $root $MasterPath
   originalMasterSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $MasterPath).Hash
   derivation = 'Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1; no third-party brand assets or reference images used.'
