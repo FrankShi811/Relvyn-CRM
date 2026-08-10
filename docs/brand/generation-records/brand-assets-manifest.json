@@ -5,7 +5,7 @@
     "sourceUsedReferenceImages":  false,
     "projectOwnerAuthorization":  "The project owner explicitly authorized replacement with newly generated assets on 2026-08-10.",
     "prompt":  "docs/brand/generation-records/ai-sales-os-brand-master-prompt-20260810-133512.md",
-    "promptSha256":  "73A6A24764BD0755D4AD4953C0D20417FF4584E872B8237134F67D07A00701CA",
+    "promptSha256":  "F505DA111C82B9E26937895EF9AD0DC12B8583A760189ECAD617541CAF95DDB2",
     "originalMaster":  "docs/brand/generation-records/ai-sales-os-brand-master-original-20260810-133512.png",
     "originalMasterSha256":  "F12BC1986CAEF9A1E297773428D294CA1086926EBE0E71FA8A279D09AA6254ED",
     "derivation":  "Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1; no third-party brand assets or reference images used.",

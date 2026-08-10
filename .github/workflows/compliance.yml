@@ -14,7 +14,7 @@ jobs:
   audit:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate legal files, Bridge separation and brand provenance
         shell: pwsh
         run: ./scripts/test-compliance.ps1
