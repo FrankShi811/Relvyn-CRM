@@ -70,6 +70,7 @@ $bridgeMessageSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $
 $bridgeOutboundRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\outbound-routing.mjs')
 $bridgeConversationRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\conversation-routing.mjs')
 $bridgeLabelRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\label-routing.mjs')
+$bridgeLabelSyncSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\label-sync.mjs')
 $bridgeNetworkRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\network-routing.mjs')
 $bridgeOfflineCatchupSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\offline-catchup.mjs')
 $whatsAppInboxSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\WhatsAppInboxView.xaml.cs')
@@ -160,7 +161,7 @@ finally {
 Write-Host "PASS  Windows application icon is WPF-decodable ($($iconDecoder.Frames.Count) frames)"
 if ($desktopProjectSource -notmatch [regex]::Escape('<ApplicationIcon>Assets\AI-Sales-OS.ico</ApplicationIcon>') -or
     $desktopProjectSource -notmatch [regex]::Escape('<Resource Include="Assets\AI-Sales-OS.ico" />') -or
-    $mainWindowXaml -notmatch [regex]::Escape('Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"') -or
+    $mainWindowXaml -match [regex]::Escape('Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"') -or
     $mainWindowSource -notmatch [regex]::Escape('WindowsTaskbarIdentity.ApplyWindowIcon(this);') -or
     $taskbarIdentitySource -notmatch [regex]::Escape('internal const string AppUserModelId = "AI.Sales.OS.Desktop";') -or
     $taskbarIdentitySource -notmatch [regex]::Escape('internal const string BrandIconFileName = "AI-Sales-OS-D945B52D252F.ico";') -or
@@ -169,7 +170,10 @@ if ($desktopProjectSource -notmatch [regex]::Escape('<ApplicationIcon>Assets\AI-
     $taskbarIdentitySource -notmatch [regex]::Escape('Environment.SpecialFolder.LocalApplicationData') -or
     $taskbarIdentitySource -notmatch [regex]::Escape('var iconPath = ResolveIconPath(executablePath);') -or
     $taskbarIdentitySource -notmatch [regex]::Escape('SetStringProperty(propertyStore, RelaunchIconResourceKey, $"{iconPath},0");') -or
-    $taskbarIdentitySource -notmatch [regex]::Escape('SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall2), _smallIcon);') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('GetSystemMetricsForDpi(SmCxIcon, dpi)') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('LoadFromFile') -or
+    $taskbarIdentitySource -notmatch [regex]::Escape('SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall), _smallIcon);') -or
+    $taskbarIdentitySource -match [regex]::Escape('SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall2), _smallIcon);') -or
     $desktopShortcutSource -notmatch [regex]::Escape('var iconPath = WindowsTaskbarIdentity.ResolveIconPath(targetPath);') -or
     $desktopShortcutSource -notmatch [regex]::Escape('SetShortcutProperty(shortcutType, shortcut, "IconLocation", $"{iconPath},0");') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('[WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)') -or
@@ -985,6 +989,9 @@ if ($networkProxyResolverSource -notmatch 'WAFLOW_PROXY_URL' -or
     $whatsAppBridgeClientSource -notmatch 'proxyUrl = networkRoute\.ProxyUrl' -or
     $bridgeNetworkRoutingSource -notmatch 'HttpsProxyAgent' -or
     $bridgeNetworkRoutingSource -notmatch 'SocksProxyAgent' -or
+    $bridgeNetworkRoutingSource -notmatch 'createFetchDispatcher' -or
+    $bridgeNetworkRoutingSource -notmatch 'UndiciProxyAgent' -or
+    $bridgeSource -notmatch 'options: fetchDispatcher \? \{ dispatcher: fetchDispatcher \}' -or
     $bridgeSource -notmatch 'proxy_route_timeout' -or
     $emailInboxXaml -notmatch 'x:Name="EmailSyncStatusText"' -or
     $emailInboxSource -match '"邮件暂时无法同步"') {
@@ -1027,8 +1034,9 @@ if ($labelManagerSource -notmatch 'UpdateCreateButtonState' -or
     $labelManagerSource -notmatch 'SetBusy' -or
     $labelManagerSource -notmatch 'SynchronizationChanged \+= WhatsAppSync_SynchronizationChanged' -or
     $labelManagerSource -notmatch 'EventReceived \+= WhatsApp_EventReceived' -or
-    $labelManagerSource -notmatch '请在手机端确认' -or
-    $labelManagerSource -match '已同步到手机') { $labelContractFailures += 'honest guarded label mutation state' }
+    $labelManagerSource -notmatch 'CreateLabelAsync' -or
+    $labelManagerSource -notmatch '服务端已确认' -or
+    $labelManagerXaml -notmatch '服务端快照确认') { $labelContractFailures += 'server-confirmed guarded label mutation state' }
 if ($customersXaml -notmatch 'Header="CRM 标签"' -or
     $customersXaml -notmatch 'Header="WhatsApp 标签"' -or
     $customersXaml -notmatch 'ItemsSource="{Binding VisibleWhatsAppLabels}"' -or
@@ -1049,12 +1057,23 @@ if ($bridgeSource -notmatch 'labelAssociationRouter\.route\(payload\)' -or
     $bridgeLabelRoutingSource -notmatch 'label_jid' -or
     $bridgeLabelRoutingSource -notmatch 'maxPending' -or
     $bridgeLabelRoutingSource -notmatch '@s\.whatsapp\.net') { $labelContractFailures += 'typed, buffered phone/LID association normalization' }
+if ($bridgeSource -notmatch 'case ''label_create''' -or
+    $bridgeSource -notmatch 'readRegularLabelSnapshot' -or
+    $bridgeSource -notmatch 'confirmLabelPatch' -or
+    $bridgeSource -notmatch 'confirmChatLabelPatch' -or
+    $bridgeSource -notmatch 'getLIDForPN' -or
+    $bridgeLabelSyncSource -notmatch 'CUSTOM_LABEL_TYPE = 5' -or
+    $bridgeLabelSyncSource -notmatch 'orderIndex' -or
+    $bridgeLabelSyncSource -notmatch 'isActive' -or
+    $bridgeLabelSyncSource -notmatch 'nextCustomLabelId') { $labelContractFailures += 'modern custom-list patch and authoritative snapshot confirmation' }
 if ($labelContractFailures.Count -gt 0) {
   throw "WhatsApp labels must remain source-safe, accessible, canonical and visible across Inbox/Customers. missing=$($labelContractFailures -join ', ')"
 }
 & $node (Join-Path $root 'bridge\scripts\label-routing-smoke.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'WhatsApp bridge label-routing smoke test failed.' }
-Write-Host 'PASS  WhatsApp label creation, LID routing, CRM preservation and shared-card projection contract'
+& $node (Join-Path $root 'bridge\scripts\label-sync-smoke.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'WhatsApp bridge label-sync smoke test failed.' }
+Write-Host 'PASS  WhatsApp custom-list creation, server confirmation, LID routing, CRM preservation and shared-card projection contract'
 
 $groupContractFailures = @()
 if ($bridgeConversationRoutingSource -notmatch 'normalizeGroupJid') { $groupContractFailures += 'group JID normalizer' }

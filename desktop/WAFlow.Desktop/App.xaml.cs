@@ -63,7 +63,8 @@ public partial class App : Application
                 MessageBoxImage.Warning);
             return;
         }
-        var singleInstance = DesktopSingleInstance.Acquire();
+        var singleInstance = DesktopSingleInstance.Acquire(
+            Environment.GetEnvironmentVariable("WAFLOW_SINGLE_INSTANCE_SCOPE"));
         if (!singleInstance.IsPrimary)
         {
             singleInstance.SignalPrimary();

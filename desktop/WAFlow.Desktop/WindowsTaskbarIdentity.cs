@@ -16,7 +16,13 @@ internal static class WindowsTaskbarIdentity
     private const uint WmSetIcon = 0x0080;
     private const int IconSmall = 0;
     private const int IconBig = 1;
-    private const int IconSmall2 = 2;
+    private const uint ImageIcon = 1;
+    private const uint LoadFromFile = 0x0010;
+    private const int SmCxIcon = 11;
+    private const int SmCyIcon = 12;
+    private const int SmCxSmallIcon = 49;
+    private const int SmCySmallIcon = 50;
+    private const uint DefaultDpi = 96;
     private const ushort VtLpwstr = 31;
 
     private static readonly PropertyKey AppUserModelIdKey = new(new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), 5);
@@ -45,12 +51,22 @@ internal static class WindowsTaskbarIdentity
         ApplyWindowIdentity(windowHandle, executablePath, iconPath);
         ReleaseWindowIcon();
 
-        var largeIcons = new IntPtr[1];
-        var smallIcons = new IntPtr[1];
-        if (ExtractIconEx(iconPath, 0, largeIcons, smallIcons, 1) == 0) return;
-
-        _largeIcon = largeIcons[0];
-        _smallIcon = smallIcons[0];
+        var dpi = GetDpiForWindow(windowHandle);
+        if (dpi == 0) dpi = DefaultDpi;
+        _largeIcon = LoadImage(
+            IntPtr.Zero,
+            iconPath,
+            ImageIcon,
+            GetSystemMetricsForDpi(SmCxIcon, dpi),
+            GetSystemMetricsForDpi(SmCyIcon, dpi),
+            LoadFromFile);
+        _smallIcon = LoadImage(
+            IntPtr.Zero,
+            iconPath,
+            ImageIcon,
+            GetSystemMetricsForDpi(SmCxSmallIcon, dpi),
+            GetSystemMetricsForDpi(SmCySmallIcon, dpi),
+            LoadFromFile);
 
         if (_largeIcon != IntPtr.Zero)
         {
@@ -60,7 +76,6 @@ internal static class WindowsTaskbarIdentity
         if (_smallIcon != IntPtr.Zero)
         {
             SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall), _smallIcon);
-            SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall2), _smallIcon);
         }
     }
 
@@ -170,14 +185,6 @@ internal static class WindowsTaskbarIdentity
     }
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint ExtractIconEx(
-        string fileName,
-        int iconIndex,
-        IntPtr[] largeIcons,
-        IntPtr[] smallIcons,
-        uint iconCount);
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     [DllImport("shell32.dll")]
@@ -191,6 +198,21 @@ internal static class WindowsTaskbarIdentity
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr windowHandle, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr LoadImage(
+        IntPtr instance,
+        string name,
+        uint type,
+        int desiredWidth,
+        int desiredHeight,
+        uint loadFlags);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetricsForDpi(int metric, uint dpi);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

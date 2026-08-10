@@ -23,9 +23,9 @@ internal sealed class DesktopSingleInstance : IDisposable
 
     public bool IsPrimary => _ownsMutex;
 
-    public static DesktopSingleInstance Acquire()
+    public static DesktopSingleInstance Acquire(string? isolationScope = null)
     {
-        var scope = BuildUserScope();
+        var scope = BuildUserScope(isolationScope);
         var mutex = new Mutex(false, $"Local\\AISalesOS.Desktop.{scope}");
         var activationEvent = new EventWaitHandle(
             false,
@@ -73,7 +73,7 @@ internal sealed class DesktopSingleInstance : IDisposable
         window.Focus();
     }
 
-    private static string BuildUserScope()
+    private static string BuildUserScope(string? isolationScope)
     {
         string identity;
         try
@@ -83,6 +83,10 @@ internal sealed class DesktopSingleInstance : IDisposable
         catch
         {
             identity = $"{Environment.UserDomainName}\\{Environment.UserName}";
+        }
+        if (!string.IsNullOrWhiteSpace(isolationScope))
+        {
+            identity += $"\nqa:{isolationScope.Trim()}";
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..24];
     }

@@ -11,9 +11,9 @@ using WAFlow.Core.Services;
 
 namespace WAFlow.Desktop.Windows;
 
-/// <summary>Edits WhatsApp labels for one conversation. Mutations are submitted through
-/// the bridge and persisted locally after the protocol call succeeds. WhatsApp controls
-/// linked-device propagation, so protocol acceptance is not presented as phone confirmation.</summary>
+/// <summary>Edits WhatsApp custom-list labels for one conversation. The bridge forces a
+/// fresh regular App State snapshot after every mutation, and local state is persisted only
+/// after WhatsApp confirms the label or association in that authoritative snapshot.</summary>
 public partial class LabelManagerWindow : Window
 {
     private readonly AppServices _services;
@@ -162,11 +162,11 @@ public partial class LabelManagerWindow : Window
                 if (existing is not null) _assigned.Remove(existing);
             }
             EmptyHint.Visibility = _assigned.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            StatusText.Text = $"已在 OS {(add ? "添加" : "移除")}「{item.Name}」并提交到 WhatsApp；请在手机端确认显示。";
+            StatusText.Text = $"WhatsApp 服务端已确认{(add ? "添加" : "移除")}「{item.Name}」；手机端会按多设备状态同步。";
         }
         catch (Exception error)
         {
-            StatusText.Text = $"同步失败：{error.Message}";
+            StatusText.Text = $"同步失败：{ReadableError(error)}";
         }
         finally { SetBusy(false); }
     }
@@ -196,17 +196,21 @@ public partial class LabelManagerWindow : Window
             }
             SetBusy(true);
             StatusText.Text = $"正在删除「{item.Name}」并提交到 WhatsApp…";
-            await _services.WhatsApp.UpsertLabelAsync(_accountId, new WhatsAppLabel { Id = item.Id, Name = item.Name, Color = item.Color, Deleted = true });
+            var result = await _services.WhatsApp.UpsertLabelAsync(_accountId, new WhatsAppLabel { Id = item.Id, Name = item.Name, Color = item.Color, Deleted = true });
             await _services.Repository.UpsertWhatsAppLabelAsync(new WhatsAppLabel { Id = item.Id, AccountId = _accountId, Name = item.Name, Color = item.Color, Deleted = true });
             _all.Remove(item);
             var assigned = _assigned.FirstOrDefault(candidate => candidate.Id == item.Id);
             if (assigned is not null) _assigned.Remove(assigned);
             EmptyHint.Visibility = _assigned.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            StatusText.Text = $"已在 OS 删除「{item.Name}」并提交到 WhatsApp；请在手机端确认结果。";
+            var confirmed = !result.TryGetProperty("confirmed", out var confirmedElement)
+                || confirmedElement.ValueKind != System.Text.Json.JsonValueKind.False;
+            StatusText.Text = confirmed
+                ? $"WhatsApp 服务端已确认删除「{item.Name}」。"
+                : $"已清理 OS 中的旧版标签「{item.Name}」；WhatsApp 未确认该旧版 ID，请在手机端核对。";
         }
         catch (Exception error)
         {
-            StatusText.Text = $"删除失败：{error.Message}";
+            StatusText.Text = $"删除失败：{ReadableError(error)}";
         }
         finally { SetBusy(false); }
     }
@@ -252,15 +256,18 @@ public partial class LabelManagerWindow : Window
             }
             SetBusy(true);
             StatusText.Text = $"正在创建「{name}」并提交到 WhatsApp…";
+            var result = await _services.WhatsApp.CreateLabelAsync(_accountId, name, _selectedColor);
+            var labelId = result.TryGetProperty("id", out var idElement) ? idElement.GetString() ?? "" : "";
+            if (string.IsNullOrWhiteSpace(labelId))
+                throw new WhatsAppBridgeException("label_create_missing_id", "WhatsApp 未返回自定义列表 ID。");
             var label = new WhatsAppLabel
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = labelId,
                 AccountId = _accountId,
                 Name = name,
                 Color = _selectedColor,
                 Deleted = false
             };
-            await _services.WhatsApp.UpsertLabelAsync(_accountId, label);
             await _services.Repository.UpsertWhatsAppLabelAsync(label);
             var item = new LabelItem(label, assigned: false);
             _all.Add(item);
@@ -271,17 +278,17 @@ public partial class LabelManagerWindow : Window
                 item.Assigned = true;
                 _assigned.Add(item);
                 EmptyHint.Visibility = Visibility.Collapsed;
-                StatusText.Text = $"已在 OS 创建并关联「{name}」，请求已提交到 WhatsApp；请在手机端确认显示。";
+                StatusText.Text = $"WhatsApp 服务端已确认创建并关联「{name}」；手机端会按多设备状态同步。";
             }
             catch (Exception assignmentError)
             {
-                StatusText.Text = $"「{name}」的创建请求已提交并保存在 OS，但关联当前客户失败：{assignmentError.Message}。可在上方点击“添加”重试。";
+                StatusText.Text = $"WhatsApp 已确认创建「{name}」，但当前客户归属未确认：{ReadableError(assignmentError)}。可在上方点击“添加”重试。";
             }
             NewLabelNameBox.Text = "";
         }
         catch (Exception error)
         {
-            StatusText.Text = $"创建未完成：{error.Message}。若 WhatsApp 已接收请求，请重新同步标签进行核对。";
+            StatusText.Text = $"创建未完成：{ReadableError(error)}";
             NewLabelNameBox.Focus();
         }
         finally { SetBusy(false); }
@@ -309,6 +316,17 @@ public partial class LabelManagerWindow : Window
         CreateLabelButton.IsEnabled = !_busy
             && length is >= 1 and <= 100
             && _services.WhatsApp.IsConnectedFor(_accountId);
+    }
+
+    private static string ReadableError(Exception error)
+    {
+        if (error is WhatsAppBridgeException bridgeError)
+        {
+            var prefix = $"{bridgeError.Code}:";
+            if (bridgeError.Message.StartsWith(prefix, StringComparison.Ordinal))
+                return bridgeError.Message[prefix.Length..];
+        }
+        return error.Message;
     }
 
     public sealed class LabelItem : INotifyPropertyChanged

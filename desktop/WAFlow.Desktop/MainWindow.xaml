@@ -4,7 +4,6 @@
         xmlns:controls="clr-namespace:WAFlow.Desktop.Controls"
         Title="AI Sales OS · WhatsApp 销售智能"
         Width="1440" Height="900" MinWidth="1120" MinHeight="700"
-        Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"
         WindowStartupLocation="CenterScreen" WindowState="Maximized"
         WindowStyle="SingleBorderWindow" ResizeMode="CanResize"
         Background="{DynamicResource Canvas}"

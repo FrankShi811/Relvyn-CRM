@@ -23,8 +23,16 @@ import { isDisplayableMessage, messageContent, messageKind, messageText } from '
 import { normalizeOutboundUserJid, summarizeOutboundDeviceFanout } from './outbound-routing.mjs'
 import { isGroupJid, isSupportedInboundJid, normalizeGroupJid } from './conversation-routing.mjs'
 import { resolveBaileysVersion } from './connection-bootstrap.mjs'
-import { createProxyAgent, normalizeProxyUrl, safeProxyLabel } from './network-routing.mjs'
+import { createFetchDispatcher, createProxyAgent, normalizeProxyUrl, safeProxyLabel } from './network-routing.mjs'
 import { ChatLabelAssociationRouter } from './label-routing.mjs'
+import {
+  associationEventMatches,
+  buildChatLabelPatch,
+  buildCustomLabelPatch,
+  labelEventMatches,
+  nextCustomLabelId,
+  normalizeLabelEvent
+} from './label-sync.mjs'
 import { OfflineCatchupCoordinator } from './offline-catchup.mjs'
 import { OutboundGovernor, OutboundBlockedError, suspensionForStatusCode } from './outbound-governor.mjs'
 import { IdempotencyStore, planOutboundSend, commitOutboundSend } from './outbound-idempotency.mjs'
@@ -57,6 +65,7 @@ const state = {
   manualDisconnect: false,
   proxyUrl: '',
   currentProxyUrl: '',
+  fetchDispatcher: null,
   proxySource: '',
   allowDirectFallback: false,
   directFallbackUsed: false,
@@ -73,6 +82,7 @@ const state = {
   contacts: new Map(),
   chats: new Map(),
   messages: new Map(),
+  labels: new Map(),
   outboundTargets: new Map(),
   mediaDownloads: new Map(),
   historyTotals: { contacts: 0, chats: 0, messages: 0 },
@@ -83,6 +93,7 @@ const state = {
     source: 'startup'
   },
   syncQueue: Promise.resolve(),
+  labelMutationQueue: Promise.resolve(),
   // Account-level send budget. Created on `initialize` so it can restore
   // persisted counters; until then every send is refused (fail closed).
   governor: null,
@@ -438,6 +449,104 @@ async function phoneJidFromAnyJid(jid) {
 }
 
 const labelAssociationRouter = new ChatLabelAssociationRouter(phoneJidFromAnyJid)
+
+function rememberLabel(label) {
+  const data = normalizeLabelEvent(label)
+  if (!data) return null
+  if (data.deleted) state.labels.delete(data.id)
+  else state.labels.set(data.id, data)
+  return data
+}
+
+function replaceLabelsFromSnapshot(labels) {
+  state.labels.clear()
+  for (const label of labels.values()) rememberLabel(label)
+}
+
+async function resolveLabelChatJid(phone, explicitJid = '') {
+  const phoneJid = await resolveOutboundJid(phone, explicitJid)
+  try {
+    const lid = normalizeOutboundUserJid(await state.socket?.signalRepository?.lidMapping?.getLIDForPN(phoneJid))
+    if (lid.endsWith('@lid')) return { jid: lid, phoneJid }
+  } catch {
+    // A stored LID is preferred for list membership, but a missing mapping must
+    // not make an otherwise valid phone JID unusable.
+  }
+  return { jid: phoneJid, phoneJid }
+}
+
+function enqueueLabelMutation(action) {
+  const operation = state.labelMutationQueue.then(action, action)
+  state.labelMutationQueue = operation.catch(() => {})
+  return operation
+}
+
+function assertCurrentSocket(socket, generation) {
+  if (state.connectionGeneration !== generation || state.socket !== socket || state.connection !== 'connected') {
+    throw new Error('whatsapp_session_changed')
+  }
+}
+
+async function applyLabelPatch(socket, generation, patch) {
+  assertCurrentSocket(socket, generation)
+  await socket.appPatch({
+    ...patch,
+    operation: proto.SyncdMutation.SyncdOperation.SET
+  })
+  assertCurrentSocket(socket, generation)
+}
+
+async function readRegularLabelSnapshot(socket, generation) {
+  const labels = new Map()
+  const associations = []
+  const onLabel = label => {
+    const normalized = normalizeLabelEvent(label)
+    if (normalized) labels.set(normalized.id, normalized)
+  }
+  const onAssociation = payload => associations.push(payload)
+  socket.ev.on('labels.edit', onLabel)
+  socket.ev.on('labels.association', onAssociation)
+  try {
+    if (state.connectionGeneration !== generation || state.socket !== socket) throw new Error('whatsapp_session_changed')
+    // A normal incremental sync can legitimately return no records. Clearing
+    // only the local regular-collection cursor asks WhatsApp for a fresh,
+    // authoritative snapshot without touching credentials or other collections.
+    await socket.appStatePatchMutex.mutex(async () => {
+      assertCurrentSocket(socket, generation)
+      await socket.authState.keys.set({ 'app-state-sync-version': { regular: null } })
+      await socket.resyncAppState(['regular'], false)
+    })
+    if (state.connectionGeneration !== generation || state.socket !== socket) throw new Error('whatsapp_session_changed')
+    return { labels, associations }
+  } finally {
+    socket.ev.off('labels.edit', onLabel)
+    socket.ev.off('labels.association', onAssociation)
+  }
+}
+
+async function confirmLabelPatch(socket, generation, expected) {
+  const snapshot = await readRegularLabelSnapshot(socket, generation)
+  replaceLabelsFromSnapshot(snapshot.labels)
+  if (expected.deleted) {
+    const current = snapshot.labels.get(expected.id)
+    if (!current || current.deleted) return snapshot
+  } else if ([...snapshot.labels.values()].some(label => labelEventMatches(label, expected))) {
+    return snapshot
+  }
+  throw new Error('whatsapp_label_server_not_confirmed:WhatsApp 未在服务端快照中确认该自定义列表，请确认账号支持 WhatsApp 列表后重试。')
+}
+
+async function confirmChatLabelPatch(socket, generation, expected) {
+  const snapshot = await readRegularLabelSnapshot(socket, generation)
+  replaceLabelsFromSnapshot(snapshot.labels)
+  const matching = snapshot.associations.filter(payload =>
+    associationEventMatches(payload, expected.jid, expected.labelId, payload?.type === 'add')
+    || associationEventMatches(payload, expected.phoneJid, expected.labelId, payload?.type === 'add'))
+  const latest = matching.at(-1)
+  const active = latest?.type === 'add'
+  if (active === expected.add || (!expected.add && !latest)) return snapshot
+  throw new Error('whatsapp_label_assignment_not_confirmed:WhatsApp 未在服务端快照中确认当前客户的列表归属，请重新同步后重试。')
+}
 
 async function verifiedPhoneJid(jid, expectedPhone) {
   const phoneJid = await phoneJidFromAnyJid(jid)
@@ -1290,11 +1399,17 @@ async function closeSocket() {
   if (socket) {
     try { socket.end(new Error('waflow_disconnect')) } catch { }
   }
+  const fetchDispatcher = state.fetchDispatcher
+  state.fetchDispatcher = null
+  if (fetchDispatcher) {
+    try { await fetchDispatcher.close() } catch { try { fetchDispatcher.destroy() } catch { } }
+  }
   state.connection = 'disconnected'
 }
 
 async function resetSessionForQr() {
   labelAssociationRouter.clear()
+  state.labels.clear()
   if (!state.sessionDir) return
   await fs.rm(state.sessionDir, { recursive: true, force: true })
   await fs.mkdir(state.sessionDir, { recursive: true })
@@ -1352,6 +1467,8 @@ async function connect(catchupSource = 'startup') {
     await cacheProtocolVersion(versionInfo.version, versionInfo.source).catch(() => {})
   }
   const networkAgent = createProxyAgent(state.currentProxyUrl)
+  const fetchDispatcher = createFetchDispatcher(state.currentProxyUrl)
+  state.fetchDispatcher = fetchDispatcher
   const routeLabel = safeProxyLabel(state.currentProxyUrl, state.proxySource)
   emit({
     type: 'event', event: 'connection_stage', accountId: state.accountId,
@@ -1399,6 +1516,7 @@ async function connect(catchupSource = 'startup') {
     defaultQueryTimeoutMs: 30000,
     qrTimeout: 60000,
     ...(networkAgent ? { agent: networkAgent, fetchAgent: networkAgent } : {}),
+    options: fetchDispatcher ? { dispatcher: fetchDispatcher } : {},
     shouldSyncHistoryMessage: () => true,
     generateHighQualityLinkPreview: false
   })
@@ -1492,15 +1610,8 @@ async function connect(catchupSource = 'startup') {
   })
   socket.ev.on('labels.edit', label => {
     if (state.connectionGeneration !== generation || state.socket !== socket) return
-    if (!label || typeof label !== 'object') return
-    const data = {
-      id: String(label.id ?? ''),
-      name: String(label.name ?? ''),
-      color: Number(label.color ?? 0),
-      deleted: Boolean(label.deleted),
-      predefinedId: label.predefinedId != null ? Number(label.predefinedId) : null
-    }
-    if (!data.id) return
+    const data = rememberLabel(label)
+    if (!data) return
     emit({ type: 'event', event: 'label_upsert', accountId: state.accountId, data })
   })
   socket.ev.on('labels.association', payload => {
@@ -1861,10 +1972,11 @@ async function handle(command) {
   try {
     switch (command.command) {
       case 'ping':
-        reply(requestId, true, { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.3', connection: state.connection })
+        reply(requestId, true, { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.4', connection: state.connection })
         return
       case 'initialize': {
         labelAssociationRouter.clear()
+        state.labels.clear()
         state.accountId = validateAccountId(command.accountId ?? 'default')
         state.authKey = parseEncryptionKey(command.encryptionKey)
         state.sessionDir = resolveSessionDir(state.accountId)
@@ -2069,33 +2181,75 @@ async function handle(command) {
       }
       case 'label_upsert': {
         if (!state.socket || state.connection !== 'connected') throw new Error('whatsapp_not_connected')
-        const id = String(command.id ?? '').trim()
-        if (!id) throw new Error('invalid_label_id')
-        await state.socket.addLabel('status@broadcast', {
-          id,
-          name: String(command.name ?? ''),
-          color: Number(command.color ?? 0),
-          deleted: Boolean(command.deleted)
+        const socket = state.socket
+        const generation = state.connectionGeneration
+        const result = await enqueueLabelMutation(async () => {
+          assertCurrentSocket(socket, generation)
+          const id = String(command.id ?? '').trim()
+          if (!id) throw new Error('invalid_label_id')
+          const name = String(command.name ?? '').trim()
+          const color = Number(command.color ?? 0)
+          const deleted = Boolean(command.deleted)
+          if (!/^\d+$/.test(id) && deleted) {
+            // Early desktop builds generated GUID ids before WhatsApp custom lists
+            // standardized on int32 identifiers. Allow those local-only remnants
+            // to be retired without creating another unusable list.
+            await socket.addLabel('status@broadcast', { id, name, color, deleted: true })
+            state.labels.delete(id)
+            return { id, deleted: true, confirmed: false, legacy: true }
+          }
+          const orderIndex = state.labels.get(id)?.orderIndex ?? Number(id)
+          await applyLabelPatch(socket, generation, buildCustomLabelPatch({ id, name, color, deleted, orderIndex }))
+          await confirmLabelPatch(socket, generation, { id, name, deleted })
+          return { id, name, color, deleted, confirmed: true, type: 'custom' }
         })
-        reply(requestId, true, { id })
+        reply(requestId, true, result)
+        return
+      }
+      case 'label_create': {
+        if (!state.socket || state.connection !== 'connected') throw new Error('whatsapp_not_connected')
+        const socket = state.socket
+        const generation = state.connectionGeneration
+        const result = await enqueueLabelMutation(async () => {
+          assertCurrentSocket(socket, generation)
+          const name = String(command.name ?? '').trim()
+          const color = Number(command.color ?? 0)
+          if (!name || name.length > 100) throw new Error('invalid_label_name')
+          const snapshot = await readRegularLabelSnapshot(socket, generation)
+          replaceLabelsFromSnapshot(snapshot.labels)
+          if ([...state.labels.values()].some(label => !label.deleted && label.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+            throw new Error('duplicate_label_name:WhatsApp 已有同名自定义列表，请直接添加现有列表。')
+          }
+          const id = nextCustomLabelId(state.labels.values())
+          await applyLabelPatch(socket, generation, buildCustomLabelPatch({ id, name, color, orderIndex: Number(id) }))
+          await confirmLabelPatch(socket, generation, { id, name, deleted: false })
+          return { id, name, color, deleted: false, confirmed: true, type: 'custom' }
+        })
+        reply(requestId, true, result)
         return
       }
       case 'chat_label_set': {
         if (!state.socket || state.connection !== 'connected') throw new Error('whatsapp_not_connected')
-        const jid = await resolveOutboundJid(command.phone, command.jid)
-        const labelId = String(command.labelId ?? '').trim()
-        if (!labelId) throw new Error('invalid_label_id')
-        const add = Boolean(command.add)
-        if (add) await state.socket.addChatLabel(jid, labelId)
-        else await state.socket.removeChatLabel(jid, labelId)
-        const chat = state.chats.get(phoneFromJid(jid))
-        if (chat) {
-          const labels = new Set(chat.labels ?? [])
-          if (add) labels.add(labelId)
-          else labels.delete(labelId)
-          rememberChat({ ...chat, labels: [...labels], source: 'live_update' })
-        }
-        reply(requestId, true, { jid, labelId, add })
+        const socket = state.socket
+        const generation = state.connectionGeneration
+        const result = await enqueueLabelMutation(async () => {
+          assertCurrentSocket(socket, generation)
+          const { jid, phoneJid } = await resolveLabelChatJid(command.phone, command.jid)
+          const labelId = String(command.labelId ?? '').trim()
+          if (!labelId) throw new Error('invalid_label_id')
+          const add = Boolean(command.add)
+          await applyLabelPatch(socket, generation, buildChatLabelPatch(jid, labelId, add))
+          await confirmChatLabelPatch(socket, generation, { jid, phoneJid, labelId, add })
+          const chat = state.chats.get(phoneFromJid(phoneJid))
+          if (chat) {
+            const labels = new Set(chat.labels ?? [])
+            if (add) labels.add(labelId)
+            else labels.delete(labelId)
+            rememberChat({ ...chat, labels: [...labels], source: 'live_update' })
+          }
+          return { jid, phoneJid, labelId, add, confirmed: true }
+        })
+        reply(requestId, true, result)
         return
       }
       case 'catch_up_history': {
@@ -2140,4 +2294,4 @@ lines.on('close', async () => {
   process.exit(0)
 })
 
-emit({ type: 'event', event: 'ready', data: { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.3' } })
+emit({ type: 'event', event: 'ready', data: { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.4' } })

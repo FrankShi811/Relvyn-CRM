@@ -156,6 +156,7 @@ public sealed class WhatsAppConnectionManager :
     public Task<JsonElement> SetChatPinnedAsync(string phone, bool pinned, CancellationToken cancellationToken = default) => SetChatPinnedAsync(ActiveAccountId, phone, pinned, cancellationToken);
     public Task<JsonElement> SetChatPinnedAsync(string accountId, string phone, bool pinned, CancellationToken cancellationToken = default) => GetClient(accountId).SetChatPinnedAsync(phone, pinned, cancellationToken);
     public Task<JsonElement> UpsertLabelAsync(string accountId, WhatsAppLabel label, CancellationToken cancellationToken = default) => GetClient(accountId).UpsertLabelAsync(label, cancellationToken);
+    public Task<JsonElement> CreateLabelAsync(string accountId, string name, int color, CancellationToken cancellationToken = default) => GetClient(accountId).CreateLabelAsync(name, color, cancellationToken);
     public Task<JsonElement> SetChatLabelAsync(string accountId, string phone, string labelId, bool add, CancellationToken cancellationToken = default) => GetClient(accountId).SetChatLabelAsync(phone, labelId, add, cancellationToken);
     public async Task<WhatsAppGroupCreateResult> CreateGroupAsync(string accountId, WhatsAppGroupCreateRequest request, CancellationToken cancellationToken = default)
     {
