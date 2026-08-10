@@ -83,14 +83,20 @@ try {
   try {
     $env:WAFLOW_DATABASE_PATH = $qaDatabase
     $app = Start-Process -FilePath $appPath -PassThru
-    Start-Sleep -Seconds 8
-    $app.Refresh()
-    $observedMainWindowTitle = $app.MainWindowTitle
-    $processAlive = -not $app.HasExited
-    # Keep this check ASCII-only so Windows PowerShell 5.1 and PowerShell 7
-    # parse the installer smoke contract identically on every release runner.
-    $mainWindowMatched = $observedMainWindowTitle.StartsWith('AI Sales OS ', [StringComparison]::Ordinal) -and
-      $observedMainWindowTitle.IndexOf('WhatsApp', [StringComparison]::Ordinal) -ge 0
+    $observedMainWindowTitle = ''
+    $processAlive = $true
+    $mainWindowMatched = $false
+    $startupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+    do {
+      Start-Sleep -Milliseconds 500
+      $app.Refresh()
+      $processAlive = -not $app.HasExited
+      $observedMainWindowTitle = [string]$app.MainWindowTitle
+      # Keep this check ASCII-only so Windows PowerShell 5.1 and PowerShell 7
+      # parse the installer smoke contract identically on every release runner.
+      $mainWindowMatched = $observedMainWindowTitle.StartsWith('AI Sales OS ', [StringComparison]::Ordinal) -and
+        $observedMainWindowTitle.IndexOf('WhatsApp', [StringComparison]::Ordinal) -ge 0
+    } while ($processAlive -and -not $mainWindowMatched -and [DateTimeOffset]::UtcNow -lt $startupDeadline)
     $applicationStarted = $processAlive -and $mainWindowMatched
     if (-not $applicationStarted) {
       $observedState = if ($app.HasExited) {
