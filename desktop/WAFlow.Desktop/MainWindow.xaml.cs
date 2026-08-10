@@ -51,9 +51,12 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _navigationMotionCancellation;
     private long _commandMotionVersion;
     private IInputElement? _focusBeforeCommandOverlay;
+    private bool _initializationCompleted;
 
     public MainWindow(AppServices services, IApplicationUpdateService updates, int uiScalePercentage = 100)
     {
+        _services = services;
+        _updates = updates;
         InitializeComponent();
         if (string.Equals(Environment.GetEnvironmentVariable("WAFLOW_UI_REVIEW"), "1", StringComparison.Ordinal))
             Title += " · UI 沙盒";
@@ -61,8 +64,6 @@ public partial class MainWindow : Window
         ApplyUiScale(uiScalePercentage);
         GuideCatalog.ValidateCoverage();
         SidebarVersionText.Text = $"当前版本  v{ReleaseCatalog.CurrentVersion}";
-        _services = services;
-        _updates = updates;
         _dashboard = new DashboardView(services);
         _intelligence = new LeadIntelligenceView(services);
         _customers = new CustomersView(services);
@@ -99,6 +100,7 @@ public partial class MainWindow : Window
         OnboardingGuide.SettingsRequested += OnboardingGuide_SettingsRequested;
         OnboardingGuide.GlobalRequested += OnboardingGuide_GlobalRequested;
         Loaded += MainWindow_Loaded;
+        _initializationCompleted = true;
     }
 
     private void InitializeSidebarMotionState()
@@ -365,6 +367,11 @@ public partial class MainWindow : Window
         _sidebarMotionVersion++;
         _commandMotionVersion++;
         WindowsTaskbarIdentity.ReleaseWindowIcon();
+        if (!_initializationCompleted)
+        {
+            base.OnClosed(e);
+            return;
+        }
         _services.Campaigns.SafetyStopped -= Campaigns_SafetyStopped;
         _services.LeadAutomation.AnalysisChanged -= LeadAutomation_AnalysisChanged;
         _services.WhatsAppSync.MessageSynchronized -= MessagingUnreadChanged;

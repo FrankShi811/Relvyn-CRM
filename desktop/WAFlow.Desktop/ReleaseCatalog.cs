@@ -9,10 +9,17 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.19.0";
+            : "5.19.1";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.19.1", "2026-08-10", "修复 Windows 5.19.0 更新后的启动错误",
+        [
+            "修复 Windows 5.19.0 启动时提示 TypeConverterMarkupExtension、主窗口无法打开的问题：重新生成符合 WPF 与 Windows Imaging Component 解码规范的多尺寸应用图标，保留 5.19.0 已确认的原创品牌母版与外观。",
+            "修复主窗口在初始化中断后关闭时再次弹出 Object reference not set 错误的问题；半初始化窗口现在会安全退出，不再产生第二个误导性错误对话框。",
+            "Windows 发布门禁新增 WPF 图标解码验证；安装包冒烟测试必须确认真正进入 AI Sales OS 主窗口，错误对话框或提前退出都会直接阻止发布。",
+            "本补丁仅更新 Windows 桌面版与 Windows 自动更新资产；macOS 与 PWA 的代码、版本、构建和发布均保持冻结，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.19.0", "2026-08-10", "行业中立角色上下文与合规发布链",
         [
             "设置新增公司业务与使用角色：可直接选择通用角色模板，也可填写自定义角色；保存后自动应用于 Customer Brain、客户外部调查、商机智能、WhatsApp、邮件箱、自动化、报告与其他结构化 AI 分析，无需在每个模块重复配置。",
@@ -21,7 +28,7 @@ public static class ReleaseCatalog
             "WhatsApp Bridge 改为独立 GPL-3.0-only 伴随组件，不再嵌入 AISalesOS.exe；每个 Windows Release 同步提供完整对应源码、依赖源码、构建脚本、锁文件、GPL 文本与安装说明。",
             "用户可通过 AI_SALES_OS_WHATSAPP_BRIDGE_PATH 运行自行编译或修改的 Bridge；发布门禁会验证独立组件、对应源码压缩包、许可证文件、品牌来源记录和最终安装目录。",
             "本版本仅发布 Windows x64 简体中文安装包、Velopack 自动更新资产与 Bridge 对应源码，不关闭、重启、安装或覆盖本机正式程序；macOS 构建继续暂停。"
-        ], true),
+        ]),
         new("5.18.15", "2026-08-06", "修复群聊新消息与历史不同步",
         [
             "修复 WhatsApp 群聊消息不同步的问题：网页模式连接的账号此前会跳过群聊发现、离线消息补拉与历史请求，导致手机上有新消息的群聊在 OS 上完全看不到；本版恢复群聊清单同步、按需历史请求与离线补拉。",

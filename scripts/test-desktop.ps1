@@ -131,6 +131,27 @@ $allDesktopXaml = (Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.D
 $desktopVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $desktopProject)).Project.PropertyGroup.Version | Select-Object -First 1
 $coreVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $coreProject)).Project.PropertyGroup.Version | Select-Object -First 1
 $macVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $macProject)).Project.PropertyGroup.Version | Select-Object -First 1
+$windowsIcon = Join-Path $root 'desktop\WAFlow.Desktop\Assets\AI-Sales-OS.ico'
+Add-Type -AssemblyName PresentationCore
+$iconStream = [IO.File]::OpenRead($windowsIcon)
+try {
+  try {
+    $iconDecoder = [Windows.Media.Imaging.BitmapDecoder]::Create(
+      $iconStream,
+      [Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat,
+      [Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+  }
+  catch {
+    throw "Windows application icon must be decodable by WPF: $($_.Exception.GetBaseException().Message)"
+  }
+  if ($iconDecoder.Frames.Count -lt 1) {
+    throw 'Windows application icon must contain at least one WPF-decodable frame.'
+  }
+}
+finally {
+  $iconStream.Dispose()
+}
+Write-Host "PASS  Windows application icon is WPF-decodable ($($iconDecoder.Frames.Count) frames)"
 if ($desktopVersion -notmatch '^\d+\.\d+\.\d+$' -or $desktopVersion -ne $coreVersion) {
   throw "Desktop/Core versions must be the same semantic version. desktop=$desktopVersion core=$coreVersion"
 }

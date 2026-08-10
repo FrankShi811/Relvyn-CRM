@@ -69,18 +69,69 @@ function Get-RelativeAssetPath([string]$BasePath, [string]$Path) {
   return [Uri]::UnescapeDataString($baseUri.MakeRelativeUri($pathUri).ToString()).Replace('\', '/')
 }
 
-function Get-PngBytes([Drawing.Bitmap]$Bitmap) {
-  $stream = [IO.MemoryStream]::new()
+function Get-BitmapIconBytes([Drawing.Bitmap]$Bitmap) {
+  $width = $Bitmap.Width
+  $height = $Bitmap.Height
+  $pixelStride = $width * 4
+  $maskStride = [int]([Math]::Ceiling($width / 32.0) * 4)
+  $pixelBytes = [byte[]]::new($pixelStride * $height)
+  $maskBytes = [byte[]]::new($maskStride * $height)
+  $bounds = [Drawing.Rectangle]::new(0, 0, $width, $height)
+  $data = $Bitmap.LockBits(
+    $bounds,
+    [Drawing.Imaging.ImageLockMode]::ReadOnly,
+    [Drawing.Imaging.PixelFormat]::Format32bppArgb)
   try {
-    $Bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+    for ($targetRow = 0; $targetRow -lt $height; $targetRow++) {
+      # ICO DIB frames store rows bottom-up. System.Drawing exposes the
+      # bitmap in top-down display order, so reverse rows while copying.
+      $sourceRow = $height - 1 - $targetRow
+      $sourceAddress = [IntPtr]::Add($data.Scan0, $sourceRow * $data.Stride)
+      $targetOffset = $targetRow * $pixelStride
+      [Runtime.InteropServices.Marshal]::Copy($sourceAddress, $pixelBytes, $targetOffset, $pixelStride)
+      for ($x = 0; $x -lt $width; $x++) {
+        if ($pixelBytes[$targetOffset + ($x * 4) + 3] -ne 0) { continue }
+        $maskOffset = ($targetRow * $maskStride) + ($x -shr 3)
+        $maskBytes[$maskOffset] = $maskBytes[$maskOffset] -bor [byte](0x80 -shr ($x % 8))
+      }
+    }
+  }
+  finally { $Bitmap.UnlockBits($data) }
+
+  $stream = [IO.MemoryStream]::new()
+  $writer = [IO.BinaryWriter]::new($stream)
+  try {
+    $writer.Write([uint32]40)                # BITMAPINFOHEADER size
+    $writer.Write([int32]$width)
+    $writer.Write([int32]($height * 2))      # XOR bitmap + AND mask
+    $writer.Write([uint16]1)
+    $writer.Write([uint16]32)
+    $writer.Write([uint32]0)                 # BI_RGB
+    $writer.Write([uint32]$pixelBytes.Length)
+    $writer.Write([int32]0)
+    $writer.Write([int32]0)
+    $writer.Write([uint32]0)
+    $writer.Write([uint32]0)
+    $writer.Write($pixelBytes)
+    $writer.Write($maskBytes)
+    $writer.Flush()
     return $stream.ToArray()
   }
-  finally { $stream.Dispose() }
+  finally {
+    $writer.Dispose()
+    $stream.Dispose()
+  }
 }
 
-function Write-PngIcon([string]$Path, [hashtable]$Images) {
+function Write-BitmapIcon([string]$Path, [hashtable]$Images) {
   $orderedSizes = @($Images.Keys | ForEach-Object { [int]$_ } | Sort-Object)
-  $payloads = foreach ($size in $orderedSizes) { Get-PngBytes $Images[$size] }
+  # Keep each frame as one byte array. PowerShell otherwise enumerates byte[]
+  # results into individual bytes and writes corrupt one-byte ICO entries.
+  $payloads = [Collections.Generic.List[byte[]]]::new()
+  foreach ($size in $orderedSizes) {
+    [byte[]]$payload = Get-BitmapIconBytes $Images[$size]
+    $payloads.Add($payload)
+  }
   $headerLength = 6 + (16 * $orderedSizes.Count)
   $offset = $headerLength
   $stream = [IO.File]::Open($Path, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -133,7 +184,7 @@ try {
   Save-Png $bitmaps[512] (Join-Path $pwaAssets 'pwa-512.png')
   $icoImages = @{}
   foreach ($size in @(16, 20, 24, 32, 40, 48, 64, 128, 256)) { $icoImages[$size] = $bitmaps[$size] }
-  Write-PngIcon (Join-Path $desktopAssets 'AI-Sales-OS.ico') $icoImages
+  Write-BitmapIcon (Join-Path $desktopAssets 'AI-Sales-OS.ico') $icoImages
 }
 finally {
   foreach ($bitmap in $bitmaps.Values) { $bitmap.Dispose() }
