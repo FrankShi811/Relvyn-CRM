@@ -4001,11 +4001,13 @@ var customerSuccessRepository = new LocalRepository(Path.Combine(customerSuccess
 await customerSuccessRepository.InitializeAsync();
 var customerIdentity = new CustomerIdentityService(customerSuccessRepository);
 var sourcingRequests = new SourcingRequestService(customerSuccessRepository);
+var hostingReadiness = new FakeCustomerSuccessHostingReadiness();
 var customerSuccessAgent = new CustomerSuccessAgentService(
     customerSuccessRepository,
     new FakeCustomerSuccessAgentProvider(),
     customerIdentity,
-    sourcingRequests);
+    sourcingRequests,
+    hostingReadiness: hostingReadiness);
 
 var alice = new Lead { Id="cs-alice", Name="Alice Buyer", PhoneE164="+14155550101", PhoneValid=true, Country="美国" };
 var bob = new Lead { Id="cs-bob", Name="Bob Buyer", PhoneE164="+442071234567", PhoneValid=true, Country="英国" };
@@ -4134,21 +4136,37 @@ Check(normalizedLegacyContext?.Persona is { } normalizedLegacyPersona
       && persistedLegacyPersona?.RoleName == "DHgate Customer Success",
     "legacy built-in persona wording is neutralized in memory without rewriting stored user data");
 var ambiguousState = await customerSuccessRepository.GetConversationAgentStateAsync("account-ambiguous", "conversation-ambiguous");
-Check(ambiguousState is { Mode: ConversationAgentMode.IdentityResolutionRequired, ExplicitResumeRequired: true },
+Check(ambiguousState is
+    {
+        Mode: ConversationAgentMode.SuggestOnly,
+        RunState: ConversationAgentRunState.WaitingHuman,
+        ExplicitResumeRequired: true
+    },
     "ambiguous identity moves the conversation into explicit identity resolution");
 
 await customerSuccessAgent.SetModeAsync(alice.Id, "account-a", "conversation-a", ConversationAgentMode.AutoActive);
 var aliceLock = await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(alice.Id);
-Check(aliceLock is { ActiveAccountId: "account-a", ActiveConversationId: "conversation-a" },
-    "automatic mode acquires one global per-customer account lock");
+Check(aliceLock is null &&
+      (await customerSuccessRepository.GetConversationAgentStateAsync("account-a", "conversation-a")) is
+      { Mode: ConversationAgentMode.AutoActive, RunState: ConversationAgentRunState.Off },
+    "selecting automatic mode does not acquire a customer lock or start hosting");
+await customerSuccessAgent.StartHostingAsync(alice.Id, "account-a", "conversation-a", "smoke-user");
+aliceLock = await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(alice.Id);
+Check(aliceLock is { ActiveAccountId: "account-a", ActiveConversationId: "conversation-a" } &&
+      (await customerSuccessRepository.GetConversationAgentStateAsync("account-a", "conversation-a"))?.RunState ==
+      ConversationAgentRunState.AutoArmed,
+    "explicit start hosting acquires one global per-customer account lock");
 try
 {
     await customerSuccessAgent.SetModeAsync(alice.Id, "account-b", "conversation-b", ConversationAgentMode.AutoActive);
-    Check(false, "a second WhatsApp account cannot activate automation for the same customer");
+    Check(await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(alice.Id) is { ActiveAccountId: "account-a" },
+        "a second WhatsApp account may configure auto mode without stealing the active customer lock");
+    await customerSuccessAgent.StartHostingAsync(alice.Id, "account-b", "conversation-b", "smoke-user");
+    Check(false, "a second WhatsApp account cannot start hosting for the same customer");
 }
 catch (InvalidOperationException)
 {
-    Check(true, "a second WhatsApp account cannot activate automation for the same customer");
+    Check(true, "a second WhatsApp account cannot start hosting for the same customer");
 }
 await customerSuccessAgent.SetModeAsync(alice.Id, "account-a", "conversation-a", ConversationAgentMode.SuggestOnly);
 Check(await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(alice.Id) is null,
@@ -4244,7 +4262,8 @@ var fallbackAgent = new CustomerSuccessAgentService(
     customerSuccessRepository,
     new AlwaysInvalidStructuredReportProvider(),
     customerIdentity,
-    sourcingRequests);
+    sourcingRequests,
+    hostingReadiness: hostingReadiness);
 var fallbackSuggestion = await fallbackAgent.AnalyzeAsync(
     "account-a",
     "conversation-a",
@@ -4269,6 +4288,24 @@ Check(
     WAFlow.Core.Infrastructure.Json.Serialize(await customerSuccessRepository.GetRelationshipMemoryAsync(alice.Id)) ==
     aliceMemoryBeforeFallback,
     "manual safe fallback never writes AI-derived relationship facts");
+await fallbackAgent.SetModeAsync(
+    alice.Id, "account-a", "conversation-a", ConversationAgentMode.AutoActive);
+await fallbackAgent.StartHostingAsync(
+    alice.Id, "account-a", "conversation-a", "smoke-user");
+var invalidAutomaticMessage = new WhatsAppMessage
+{
+    Id = "account-a:alice-invalid-automatic",
+    ProviderMessageId = "alice-invalid-automatic",
+    AccountId = "account-a",
+    ConversationId = "conversation-a",
+    LeadId = alice.Id,
+    Phone = alice.PhoneE164,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = "Please help me confirm 800 pcs for a new sourcing request.",
+    Timestamp = DateTimeOffset.Now.AddSeconds(10)
+};
+await customerSuccessRepository.UpsertWhatsAppMessageAsync(invalidAutomaticMessage);
 try
 {
     await fallbackAgent.AnalyzeAsync(
@@ -4276,13 +4313,16 @@ try
         "conversation-a",
         alice.PhoneE164,
         alice.Name,
-        sourceMessageId: "account-a:alice-global-a",
+        sourceMessageId: invalidAutomaticMessage.Id,
         trigger: CustomerSuccessRunTrigger.IncomingAutomation);
     Check(false, "automatic customer-success processing fails closed when structured output remains invalid");
 }
 catch (DeepSeekException error)
 {
-    Check(error.Code == "invalid_structured_output",
+    Check(error.Code == "invalid_structured_output" &&
+          (await customerSuccessRepository.GetConversationAgentStateAsync("account-a", "conversation-a")) is
+          { RunState: ConversationAgentRunState.PausedError, ExplicitResumeRequired: true } &&
+          await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(alice.Id) is null,
         "automatic customer-success processing fails closed when structured output remains invalid");
 }
 
@@ -4300,6 +4340,15 @@ var eveConversation = new WhatsAppConversation
     LastMessageAt=DateTimeOffset.Now
 };
 await customerSuccessRepository.UpsertWhatsAppConversationAsync(eveConversation);
+await customerSuccessRepository.UpsertWhatsAppConversationAsync(new WhatsAppConversation
+{
+    Id = "conversation-e2",
+    AccountId = "account-e2",
+    Phone = PhoneIdentity.Digits(eve.PhoneE164),
+    LeadId = eve.Id,
+    DisplayName = eve.Name,
+    LastMessageAt = DateTimeOffset.Now
+});
 const string completeSourcingMessage =
     "I need 500 pcs at USD 2.50 to Los Angeles 90001 by sea freight. https://example.com/item.jpg";
 var eveMessage = new WhatsAppMessage
@@ -4335,9 +4384,25 @@ Check((await customerSuccessRepository.GetLeadAsync(eve.Id))?.Company == eve.Com
     "AI analysis does not overwrite CRM fields without human confirmation");
 
 await customerSuccessAgent.SetModeAsync(eve.Id, "account-e", eveConversation.Id, ConversationAgentMode.CopilotActive);
+await customerSuccessAgent.StartCollaborationAsync(
+    eve.Id, "account-e", eveConversation.Id, "smoke-user");
+var copilotMessage = new WhatsAppMessage
+{
+    Id = "account-e:cs-eve-copilot",
+    ProviderMessageId = "cs-eve-copilot",
+    AccountId = "account-e",
+    ConversationId = eveConversation.Id,
+    LeadId = eve.Id,
+    Phone = eveConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = completeSourcingMessage,
+    Timestamp = DateTimeOffset.Now.AddSeconds(1)
+};
+await customerSuccessRepository.UpsertWhatsAppMessageAsync(copilotMessage);
 var copilotRun = await customerSuccessAgent.AnalyzeAsync(
     "account-e", eveConversation.Id, eve.PhoneE164, eve.Name,
-    sourceMessageId: eveMessage.Id,
+    sourceMessageId: copilotMessage.Id,
     trigger: CustomerSuccessRunTrigger.IncomingAutomation);
 Check(copilotRun.Decision is not null && !copilotRun.AutoReplyAllowed
     && copilotRun.AgentState is
@@ -4351,6 +4416,8 @@ Check(CustomerSuccessAgentLabels.ModeTrigger(ConversationAgentMode.CopilotActive
     "agent mode labels explain trigger, output location and send authority");
 
 await customerSuccessAgent.SetModeAsync(eve.Id, "account-e", eveConversation.Id, ConversationAgentMode.AutoActive);
+await customerSuccessAgent.StartHostingAsync(
+    eve.Id, "account-e", eveConversation.Id, "smoke-user");
 var autoMessage = new WhatsAppMessage
 {
     Id="account-e:cs-eve-source-2",
@@ -4362,7 +4429,7 @@ var autoMessage = new WhatsAppMessage
     Direction=WhatsAppMessageDirection.Incoming,
     Status=WhatsAppMessageStatus.Received,
     Body=completeSourcingMessage,
-    Timestamp=DateTimeOffset.Now.AddSeconds(1)
+    Timestamp=DateTimeOffset.Now.AddSeconds(2)
 };
 await customerSuccessRepository.UpsertWhatsAppMessageAsync(autoMessage);
 var autoRun = await customerSuccessAgent.AnalyzeAsync(
@@ -4373,6 +4440,28 @@ Check(autoRun.AutoReplyAllowed && autoRun.AgentState?.Mode == ConversationAgentM
     "auto reply is allowed only when the selected conversation owns the global customer lock");
 Check(autoRun.AgentState?.LastRunStatus == CustomerSuccessRunStatus.AutoReplyPending,
     "auto mode exposes the generated reply while waiting for WhatsApp send confirmation");
+var autoSendOptions = OutboundSendOptions.ForAgent(
+    eveConversation.Id,
+    autoRun.ContextToken!.RunToken);
+await customerSuccessAgent.BeginSendAsync(
+    autoRun.ContextToken,
+    autoRun.Decision!,
+    autoSendOptions.IdempotencyKey);
+var autoSendCommitted = await customerSuccessRepository.TryUpdateConversationAgentRunOutcomeAsync(
+    eveConversation.AccountId,
+    eveConversation.Id,
+    eve.Id,
+    autoRun.ContextToken.RunToken,
+    CustomerSuccessRunStatus.AutoReplySent,
+    "smoke server acknowledgement",
+    "provider-eve-auto");
+Check(autoSendCommitted is
+    {
+        RunState: ConversationAgentRunState.WaitingCustomer,
+        AutomaticTurnCount: 1,
+        LastIdempotencyKey.Length: > 0
+    },
+    "sending requires an explicit context-checked transition and waits for the customer after one acknowledged send");
 
 var riskMessage = new WhatsAppMessage
 {
@@ -4385,19 +4474,41 @@ var riskMessage = new WhatsAppMessage
     Direction=WhatsAppMessageDirection.Incoming,
     Status=WhatsAppMessageStatus.Received,
     Body="Can you approve my refund?",
-    Timestamp=DateTimeOffset.Now.AddSeconds(2)
+    Timestamp=DateTimeOffset.Now.AddSeconds(3)
 };
 await customerSuccessRepository.UpsertWhatsAppMessageAsync(riskMessage);
 var riskRun = await customerSuccessAgent.AnalyzeAsync(
-    "account-e", eveConversation.Id, eve.PhoneE164, eve.Name, sourceMessageId: riskMessage.Id);
+    "account-e", eveConversation.Id, eve.PhoneE164, eve.Name,
+    sourceMessageId: riskMessage.Id,
+    trigger: CustomerSuccessRunTrigger.IncomingAutomation);
 var eveStates = await customerSuccessRepository.GetCustomerAgentStatesAsync(eve.Id);
-Check(riskRun.Handoff is { Status: HandoffStatus.Open, HoldingReply: "Let me check this with my colleague." }
+Check(riskRun.Handoff is { Status: HandoffStatus.Open }
+    && riskRun.Handoff.HoldingReply.Contains("record the dispute", StringComparison.OrdinalIgnoreCase)
+    && riskRun.Decision is { IsRiskInformationCollection: true }
     && !riskRun.AutoReplyAllowed
     && eveStates.Count == 2
-    && eveStates.All(item => item is { Mode: ConversationAgentMode.HumanRequired, ExplicitResumeRequired: true }),
-    "immediate-risk message creates one holding reply and freezes every linked WhatsApp account");
+    && eveStates.Single(item => item.AccountId == "account-e").RunState == ConversationAgentRunState.RiskInfoCollectionSent
+    && eveStates.Single(item => item.AccountId == "account-e2").RunState == ConversationAgentRunState.WaitingHuman
+    && eveStates.All(item => item.ExplicitResumeRequired),
+    "immediate-risk message creates one bounded information-collection reply and freezes every linked WhatsApp account");
 Check(await customerSuccessRepository.GetGlobalCustomerAgentLockAsync(eve.Id) is null,
     "global handoff releases the automatic account lock");
+var riskSendCommitted = await customerSuccessRepository.TryUpdateConversationAgentRunOutcomeAsync(
+    eveConversation.AccountId,
+    eveConversation.Id,
+    eve.Id,
+    riskRun.ContextToken!.RunToken,
+    CustomerSuccessRunStatus.HumanRequired,
+    "risk collection sent once",
+    "provider-eve-risk",
+    holdingReplyMessageId: "provider-eve-risk",
+    riskInformationCollection: true);
+Check(riskSendCommitted is
+    {
+        RunState: ConversationAgentRunState.WaitingHuman,
+        RiskState: ConversationRiskVerificationState.WaitingHuman
+    },
+    "risk information collection transitions to waiting human and cannot re-arm itself");
 
 var pausedMessage = new WhatsAppMessage
 {
@@ -4410,7 +4521,7 @@ var pausedMessage = new WhatsAppMessage
     Direction=WhatsAppMessageDirection.Incoming,
     Status=WhatsAppMessageStatus.Received,
     Body="Are you there?",
-    Timestamp=DateTimeOffset.Now.AddSeconds(3)
+    Timestamp=DateTimeOffset.Now.AddSeconds(4)
 };
 await customerSuccessRepository.UpsertWhatsAppMessageAsync(pausedMessage);
 var pausedRun = await customerSuccessAgent.AnalyzeAsync(
@@ -4440,12 +4551,14 @@ Check(specialBriefItems.Count > 0
 var takenOver = await customerSuccessAgent.TakeOverAsync(eve.Id, "smoke-user");
 Check(takenOver.Status == HandoffStatus.TakenOver
     && (await customerSuccessRepository.GetCustomerAgentStatesAsync(eve.Id))
-        .All(item => item.Mode == ConversationAgentMode.HumanActive),
+        .All(item => item.RunState == ConversationAgentRunState.HumanTakeover)
+    && (await customerSuccessRepository.GetCustomerAgentStatesAsync(eve.Id))
+        .Any(item => item.Mode == ConversationAgentMode.AutoActive),
     "human takeover is global across all linked accounts");
 var resolvedHandoff = await customerSuccessAgent.ResolveHandoffAsync(eve.Id, "退款事项已由人工处理");
 Check(resolvedHandoff.Status == HandoffStatus.Resolved
     && (await customerSuccessRepository.GetCustomerAgentStatesAsync(eve.Id))
-        .All(item => item is { Mode: ConversationAgentMode.ResumeReview, ExplicitResumeRequired: true }),
+        .All(item => item is { RunState: ConversationAgentRunState.WaitingHuman, ExplicitResumeRequired: true }),
     "resolved handoff enters explicit resume review on every linked account");
 var resumed = await customerSuccessAgent.ResumeAsync(
     eve.Id, "account-e", eveConversation.Id, ConversationAgentMode.SuggestOnly);
@@ -4635,17 +4748,30 @@ Check(
 
 var persistedCustomerSuccessRepository = new LocalRepository(Path.Combine(customerSuccessRoot, "customer-success.db"));
 await persistedCustomerSuccessRepository.InitializeAsync();
+var persistedCustomerSuccessAgent = new CustomerSuccessAgentService(
+    persistedCustomerSuccessRepository,
+    new FakeCustomerSuccessAgentProvider(),
+    new CustomerIdentityService(persistedCustomerSuccessRepository),
+    new SourcingRequestService(persistedCustomerSuccessRepository),
+    hostingReadiness: hostingReadiness);
+await persistedCustomerSuccessAgent.RecoverAfterRestartAsync();
 var persistedIdentity = await persistedCustomerSuccessRepository.GetGlobalCustomerIdentityAsync(eve.Id);
 var persistedSourcing = await persistedCustomerSuccessRepository.GetLatestSourcingRequestAsync(eve.Id);
 var persistedHandoff = await persistedCustomerSuccessRepository.GetLatestHumanHandoffAsync(eve.Id);
 var persistedTurnLogs = await persistedCustomerSuccessRepository.GetAgentTurnLogsAsync(eve.Id);
 var persistedAgentOutput = await persistedCustomerSuccessRepository.GetConversationAgentStateAsync("account-e", eveConversation.Id);
+var persistedHostingState = await persistedCustomerSuccessRepository.GetConversationAgentStateAsync("account-e2", "conversation-e2");
+var persistedRestartAudits = await persistedCustomerSuccessRepository.GetConversationAgentAuditEventsAsync("account-e2", "conversation-e2");
 Check(persistedIdentity?.LinkedAccountIds.Count == 2
     && persistedSourcing?.Completeness == 100
     && persistedHandoff?.Status == HandoffStatus.Resumed
-    && persistedAgentOutput is { LastRunAt: not null, LastGeneratedReply.Length: > 0 }
+    && persistedAgentOutput is { LastRunAt: not null, PendingRunContextToken.Length: 0, HostingSessionToken.Length: 0 }
+    && persistedHostingState is { RunState: ConversationAgentRunState.Ended, ExplicitResumeRequired: true,
+        PendingRunContextToken.Length: 0, HostingSessionToken.Length: 0 }
+    && persistedRestartAudits.Any(item => item.Action == ConversationAgentAuditAction.RestartRecovered)
+    && await persistedCustomerSuccessRepository.GetGlobalCustomerAgentLockAsync(eve.Id) is null
     && persistedTurnLogs.Count >= 3,
-    $"customer-success identity, sourcing, visible output, handoff and agent audit state persist across restart " +
+    $"customer-success identity, sourcing, handoff and audit persist while restart recovery discards active hosting " +
     $"[accounts={persistedIdentity?.LinkedAccountIds.Count ?? -1}, sourcing={persistedSourcing?.Completeness ?? -1}, " +
     $"handoff={persistedHandoff?.Status.ToString() ?? "null"}, logs={persistedTurnLogs.Count}]");
 
@@ -4706,12 +4832,18 @@ var blockingCustomerSuccessAgent = new CustomerSuccessAgentService(
     customerSuccessRaceRepository,
     blockingCustomerSuccessProvider,
     customerSuccessRaceIdentity,
-    customerSuccessRaceSourcing);
+    customerSuccessRaceSourcing,
+    hostingReadiness: hostingReadiness);
 await blockingCustomerSuccessAgent.SetModeAsync(
     raceSourceCustomer.Id,
     raceConversation.AccountId,
     raceConversation.Id,
     ConversationAgentMode.AutoActive);
+await blockingCustomerSuccessAgent.StartHostingAsync(
+    raceSourceCustomer.Id,
+    raceConversation.AccountId,
+    raceConversation.Id,
+    "smoke-user");
 await using var customerSuccessRaceBridge = new WhatsAppConnectionManager(customerSuccessRaceRoot);
 var customerSuccessRaceSync = new WhatsAppSyncService(customerSuccessRaceRepository, customerSuccessRaceBridge);
 var preSendRaceSender = new BlockingCustomerSuccessMessageSender(block: false);
@@ -4795,12 +4927,18 @@ var postSendAgent = new CustomerSuccessAgentService(
     customerSuccessRaceRepository,
     new FakeCustomerSuccessAgentProvider(),
     customerSuccessRaceIdentity,
-    customerSuccessRaceSourcing);
+    customerSuccessRaceSourcing,
+    hostingReadiness: hostingReadiness);
 await postSendAgent.SetModeAsync(
     postSendSourceCustomer.Id,
     postSendConversation.AccountId,
     postSendConversation.Id,
     ConversationAgentMode.AutoActive);
+await postSendAgent.StartHostingAsync(
+    postSendSourceCustomer.Id,
+    postSendConversation.AccountId,
+    postSendConversation.Id,
+    "smoke-user");
 var postSendRaceSender = new BlockingCustomerSuccessMessageSender(block: true);
 using var postSendRaceCoordinator = new CustomerSuccessAgentCoordinator(
     customerSuccessRaceRepository,
@@ -4836,6 +4974,317 @@ Check(postSendRaceSender.SendCount == 1
         && string.IsNullOrWhiteSpace(item.LastProviderMessageId))
     && await customerSuccessRaceRepository.GetRelationshipMemoryAsync(postSendTargetCustomer.Id) is null,
     "Customer Success post-send race finalizes the ACK unbound without feeding either customer");
+
+// PRD v0.3 mandatory conversation-hosting cases: natural topic close, burst
+// coalescing, a mobile human reply during generation, and one same-key retry.
+var agentSafetyRoot = Path.Combine(root, "conversation-agent-v03-safety");
+var agentSafetyRepository = new LocalRepository(Path.Combine(agentSafetyRoot, "conversation-agent-v03.db"));
+await agentSafetyRepository.InitializeAsync();
+var agentSafetyIdentity = new CustomerIdentityService(agentSafetyRepository);
+var agentSafetySourcing = new SourcingRequestService(agentSafetyRepository);
+await using var agentSafetyBridge = new WhatsAppConnectionManager(agentSafetyRoot);
+var agentSafetySync = new WhatsAppSyncService(agentSafetyRepository, agentSafetyBridge);
+
+var closeLead = new Lead
+{
+    Id = "agent-topic-close",
+    Name = "Topic Close Buyer",
+    PhoneE164 = "+14155550901",
+    PhoneValid = true
+};
+var closeConversation = new WhatsAppConversation
+{
+    Id = "agent-topic-close-conversation",
+    AccountId = "agent-topic-close-account",
+    Phone = PhoneIdentity.Digits(closeLead.PhoneE164),
+    LeadId = closeLead.Id,
+    DisplayName = closeLead.Name,
+    LastMessage = "Thanks",
+    LastMessageAt = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertLeadAsync(closeLead);
+await agentSafetyRepository.UpsertWhatsAppConversationAsync(closeConversation);
+await agentSafetyIdentity.ConfirmBindingAsync(
+    closeLead.Id, closeConversation.AccountId, closeConversation.Id, closeConversation.Phone, "topic-close@c.us");
+var closeMessage = new WhatsAppMessage
+{
+    Id = "agent-topic-close-account:thanks",
+    ProviderMessageId = "thanks",
+    AccountId = closeConversation.AccountId,
+    ConversationId = closeConversation.Id,
+    LeadId = closeLead.Id,
+    Phone = closeConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = "Thanks",
+    Timestamp = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertWhatsAppMessageAsync(closeMessage);
+var closeProvider = new FakeCustomerSuccessAgentProvider();
+var closeAgent = new CustomerSuccessAgentService(
+    agentSafetyRepository,
+    closeProvider,
+    agentSafetyIdentity,
+    agentSafetySourcing,
+    hostingReadiness: hostingReadiness,
+    whatsAppSync: agentSafetySync);
+await closeAgent.SetModeAsync(
+    closeLead.Id, closeConversation.AccountId, closeConversation.Id, ConversationAgentMode.AutoActive);
+await closeAgent.StartHostingAsync(
+    closeLead.Id, closeConversation.AccountId, closeConversation.Id, "smoke-user");
+var closeRun = await closeAgent.AnalyzeAsync(
+    closeConversation.AccountId,
+    closeConversation.Id,
+    closeConversation.Phone,
+    closeConversation.DisplayName,
+    sourceMessageId: closeMessage.Id,
+    trigger: CustomerSuccessRunTrigger.IncomingAutomation);
+Check(closeProvider.CallCount == 0
+      && closeRun.Decision is { ShouldReply: false, TopicState: ConversationTopicState.Resolved }
+      && closeRun.AgentState is { RunState: ConversationAgentRunState.Ended, TopicState: ConversationTopicState.Resolved }
+      && await agentSafetyRepository.GetGlobalCustomerAgentLockAsync(closeLead.Id) is null,
+    "a bare Thanks with no open work ends the topic without calling the generation model or sending");
+
+var burstLead = new Lead
+{
+    Id = "agent-burst",
+    Name = "Burst Buyer",
+    PhoneE164 = "+14155550902",
+    PhoneValid = true
+};
+var burstConversation = new WhatsAppConversation
+{
+    Id = "agent-burst-conversation",
+    AccountId = "agent-burst-account",
+    Phone = PhoneIdentity.Digits(burstLead.PhoneE164),
+    LeadId = burstLead.Id,
+    DisplayName = burstLead.Name,
+    LastMessageAt = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertLeadAsync(burstLead);
+await agentSafetyRepository.UpsertWhatsAppConversationAsync(burstConversation);
+await agentSafetyIdentity.ConfirmBindingAsync(
+    burstLead.Id, burstConversation.AccountId, burstConversation.Id, burstConversation.Phone, "burst@c.us");
+var burstOne = new WhatsAppMessage
+{
+    Id = "agent-burst-account:one",
+    ProviderMessageId = "one",
+    AccountId = burstConversation.AccountId,
+    ConversationId = burstConversation.Id,
+    LeadId = burstLead.Id,
+    Phone = burstConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = "I need 500 pcs at USD 2.50",
+    Timestamp = DateTimeOffset.Now
+};
+var burstTwo = new WhatsAppMessage
+{
+    Id = "agent-burst-account:two",
+    ProviderMessageId = "two",
+    AccountId = burstConversation.AccountId,
+    ConversationId = burstConversation.Id,
+    LeadId = burstLead.Id,
+    Phone = burstConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = "to Los Angeles 90001 by sea freight. https://example.com/item.jpg",
+    Timestamp = DateTimeOffset.Now.AddMilliseconds(5)
+};
+await agentSafetyRepository.UpsertWhatsAppMessageAsync(burstOne);
+await agentSafetyRepository.UpsertWhatsAppMessageAsync(burstTwo);
+var burstProvider = new FakeCustomerSuccessAgentProvider();
+var burstAgent = new CustomerSuccessAgentService(
+    agentSafetyRepository,
+    burstProvider,
+    agentSafetyIdentity,
+    agentSafetySourcing,
+    hostingReadiness: hostingReadiness,
+    whatsAppSync: agentSafetySync);
+await burstAgent.SetModeAsync(
+    burstLead.Id, burstConversation.AccountId, burstConversation.Id, ConversationAgentMode.CopilotActive);
+await burstAgent.StartCollaborationAsync(
+    burstLead.Id, burstConversation.AccountId, burstConversation.Id, "smoke-user");
+var burstSender = new BlockingCustomerSuccessMessageSender(block: false);
+using (var burstCoordinator = new CustomerSuccessAgentCoordinator(
+           agentSafetyRepository,
+           agentSafetySync,
+           burstSender,
+           burstAgent,
+           _ => TimeSpan.FromMilliseconds(75)))
+{
+    var burstCompleted = new TaskCompletionSource<CustomerSuccessAgentRunCompletedEvent>(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    burstCoordinator.RunCompleted += (_, e) =>
+    {
+        if (e.ConversationId == burstConversation.Id) burstCompleted.TrySetResult(e);
+    };
+    var queueIncomingMethod = typeof(CustomerSuccessAgentCoordinator).GetMethod(
+        "QueueIncoming",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Customer Success coordinator queue method missing.");
+    queueIncomingMethod.Invoke(burstCoordinator, [burstOne, MessageArrival.Live]);
+    await Task.Delay(10);
+    queueIncomingMethod.Invoke(burstCoordinator, [burstTwo, MessageArrival.Live]);
+    await burstCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+}
+var burstState = await agentSafetyRepository.GetConversationAgentStateAsync(
+    burstConversation.AccountId, burstConversation.Id);
+var burstAudits = await agentSafetyRepository.GetConversationAgentAuditEventsAsync(
+    burstConversation.AccountId, burstConversation.Id);
+Check(burstProvider.CallCount == 1
+      && burstSender.SendCount == 0
+      && burstState?.LastSourceMessageIds.Count == 2
+      && burstAudits.Any(item => item.Action == ConversationAgentAuditAction.MessageCoalesced),
+    "two short customer messages are coalesced into one isolated model run and one unsent collaboration draft");
+
+var mobileLead = new Lead
+{
+    Id = "agent-mobile-human",
+    Name = "Mobile Human Buyer",
+    PhoneE164 = "+14155550903",
+    PhoneValid = true
+};
+var mobileConversation = new WhatsAppConversation
+{
+    Id = "agent-mobile-human-conversation",
+    AccountId = "agent-mobile-human-account",
+    Phone = PhoneIdentity.Digits(mobileLead.PhoneE164),
+    LeadId = mobileLead.Id,
+    DisplayName = mobileLead.Name,
+    LastMessageAt = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertLeadAsync(mobileLead);
+await agentSafetyRepository.UpsertWhatsAppConversationAsync(mobileConversation);
+await agentSafetyIdentity.ConfirmBindingAsync(
+    mobileLead.Id, mobileConversation.AccountId, mobileConversation.Id, mobileConversation.Phone, "mobile-human@c.us");
+var mobileIncoming = new WhatsAppMessage
+{
+    Id = "agent-mobile-human-account:incoming",
+    ProviderMessageId = "incoming",
+    AccountId = mobileConversation.AccountId,
+    ConversationId = mobileConversation.Id,
+    LeadId = mobileLead.Id,
+    Phone = mobileConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = completeSourcingMessage,
+    Timestamp = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertWhatsAppMessageAsync(mobileIncoming);
+var mobileProvider = new BlockingCustomerSuccessAgentProvider();
+var mobileAgent = new CustomerSuccessAgentService(
+    agentSafetyRepository,
+    mobileProvider,
+    agentSafetyIdentity,
+    agentSafetySourcing,
+    hostingReadiness: hostingReadiness,
+    whatsAppSync: agentSafetySync);
+await mobileAgent.SetModeAsync(
+    mobileLead.Id, mobileConversation.AccountId, mobileConversation.Id, ConversationAgentMode.AutoActive);
+await mobileAgent.StartHostingAsync(
+    mobileLead.Id, mobileConversation.AccountId, mobileConversation.Id, "smoke-user");
+var mobileSender = new BlockingCustomerSuccessMessageSender(block: false);
+using (var mobileCoordinator = new CustomerSuccessAgentCoordinator(
+           agentSafetyRepository, agentSafetySync, mobileSender, mobileAgent))
+{
+    var mobileRunTask = (Task)(coordinatorHandleMethod.Invoke(
+        mobileCoordinator,
+        [mobileIncoming, MessageArrival.Live, CancellationToken.None])
+        ?? throw new InvalidOperationException("Customer Success coordinator did not return a task."));
+    await mobileProvider.GenerationStarted.WaitAsync(TimeSpan.FromSeconds(10));
+    var mobileOutgoing = new WhatsAppMessage
+    {
+        Id = "agent-mobile-human-account:outgoing",
+        ProviderMessageId = "outgoing",
+        AccountId = mobileConversation.AccountId,
+        ConversationId = mobileConversation.Id,
+        LeadId = mobileLead.Id,
+        Phone = mobileConversation.Phone,
+        Direction = WhatsAppMessageDirection.Outgoing,
+        Status = WhatsAppMessageStatus.Sent,
+        Body = "Frank replied from his phone.",
+        Timestamp = DateTimeOffset.Now.AddSeconds(1)
+    };
+    await agentSafetyRepository.UpsertWhatsAppMessageAsync(mobileOutgoing);
+    var handleOutgoingMethod = typeof(CustomerSuccessAgentCoordinator).GetMethod(
+        "HandleOutgoingAsync",
+        BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("Customer Success outgoing takeover method missing.");
+    await (Task)(handleOutgoingMethod.Invoke(
+        mobileCoordinator,
+        [mobileOutgoing, MessageArrival.Live, CancellationToken.None])
+        ?? throw new InvalidOperationException("Customer Success outgoing takeover did not return a task."));
+    mobileProvider.ReleaseGeneration();
+    await mobileRunTask;
+}
+var mobileState = await agentSafetyRepository.GetConversationAgentStateAsync(
+    mobileConversation.AccountId, mobileConversation.Id);
+Check(mobileSender.SendCount == 0
+      && mobileState is { RunState: ConversationAgentRunState.HumanTakeover, ExplicitResumeRequired: true }
+      && await agentSafetyRepository.GetGlobalCustomerAgentLockAsync(mobileLead.Id) is null,
+    "a live mobile human reply during generation cancels the draft and enters HUMAN_TAKEOVER without an AI send");
+
+var retryLead = new Lead
+{
+    Id = "agent-timeout-retry",
+    Name = "Retry Buyer",
+    PhoneE164 = "+14155550904",
+    PhoneValid = true
+};
+var retryConversation = new WhatsAppConversation
+{
+    Id = "agent-timeout-retry-conversation",
+    AccountId = "agent-timeout-retry-account",
+    Phone = PhoneIdentity.Digits(retryLead.PhoneE164),
+    LeadId = retryLead.Id,
+    DisplayName = retryLead.Name,
+    LastMessageAt = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertLeadAsync(retryLead);
+await agentSafetyRepository.UpsertWhatsAppConversationAsync(retryConversation);
+await agentSafetyIdentity.ConfirmBindingAsync(
+    retryLead.Id, retryConversation.AccountId, retryConversation.Id, retryConversation.Phone, "retry@c.us");
+var retryIncoming = new WhatsAppMessage
+{
+    Id = "agent-timeout-retry-account:incoming",
+    ProviderMessageId = "incoming",
+    AccountId = retryConversation.AccountId,
+    ConversationId = retryConversation.Id,
+    LeadId = retryLead.Id,
+    Phone = retryConversation.Phone,
+    Direction = WhatsAppMessageDirection.Incoming,
+    Status = WhatsAppMessageStatus.Received,
+    Body = completeSourcingMessage,
+    Timestamp = DateTimeOffset.Now
+};
+await agentSafetyRepository.UpsertWhatsAppMessageAsync(retryIncoming);
+var retryAgent = new CustomerSuccessAgentService(
+    agentSafetyRepository,
+    new FakeCustomerSuccessAgentProvider(),
+    agentSafetyIdentity,
+    agentSafetySourcing,
+    hostingReadiness: hostingReadiness,
+    whatsAppSync: agentSafetySync);
+await retryAgent.SetModeAsync(
+    retryLead.Id, retryConversation.AccountId, retryConversation.Id, ConversationAgentMode.AutoActive);
+await retryAgent.StartHostingAsync(
+    retryLead.Id, retryConversation.AccountId, retryConversation.Id, "smoke-user");
+var retrySender = new TimeoutOnceCustomerSuccessMessageSender();
+using (var retryCoordinator = new CustomerSuccessAgentCoordinator(
+           agentSafetyRepository, agentSafetySync, retrySender, retryAgent))
+{
+    await (Task)(coordinatorHandleMethod.Invoke(
+        retryCoordinator,
+        [retryIncoming, MessageArrival.Live, CancellationToken.None])
+        ?? throw new InvalidOperationException("Customer Success coordinator did not return a task."));
+}
+Check(retrySender.IdempotencyKeys.Count == 2
+      && retrySender.IdempotencyKeys.Distinct(StringComparer.Ordinal).Count() == 1
+      && (await agentSafetyRepository.GetConversationAgentStateAsync(
+          retryConversation.AccountId, retryConversation.Id)) is
+          { RunState: ConversationAgentRunState.WaitingCustomer, LastRunStatus: CustomerSuccessRunStatus.AutoReplySent },
+    "one transient send timeout retries once with the same idempotency key and commits only one acknowledged reply");
 
 // Knowledge Base / RAG: real parsers, immutable sources, activation, strict scopes,
 // feedback exclusion, conflicts, audit and restart persistence.
@@ -8294,8 +8743,32 @@ sealed class BlockingCustomerBrainProvider : IStructuredAiProvider
     }
 }
 
+sealed class FakeCustomerSuccessHostingReadiness : ICustomerSuccessHostingReadiness
+{
+    public bool IsConnectedFor(string accountId) => true;
+    public string ConnectionStateFor(string accountId) => "connected";
+    public Task<OutboundGovernorStatus> OutboundStatusAsync(
+        string accountId,
+        CancellationToken cancellationToken = default) => Task.FromResult(new OutboundGovernorStatus(
+            Enabled: true,
+            DailyTotal: 0,
+            DailyCap: 500,
+            AiDailyCount: 0,
+            AiDailyCap: 100,
+            HourlyCount: 0,
+            HourlyCap: 50,
+            QueueDepth: 0,
+            Suspended: false,
+            SuspendReason: "",
+            SuspendIndefinite: false,
+            WarmupActive: false));
+}
+
 sealed class FakeCustomerSuccessAgentProvider : IStructuredAiProvider
 {
+    private int _callCount;
+    public int CallCount => Volatile.Read(ref _callCount);
+
     public bool HasApiKey() => true;
 
     public Task<string> GetSelectedModelAsync(CancellationToken cancellationToken = default) =>
@@ -8309,6 +8782,7 @@ sealed class FakeCustomerSuccessAgentProvider : IStructuredAiProvider
     {
         if (typeof(T) != typeof(CustomerSuccessAgentDecision))
             throw new InvalidOperationException($"Unsupported customer-success type: {typeof(T).Name}");
+        Interlocked.Increment(ref _callCount);
         var decision = CreateDecision(
             "I need 500 pcs at USD 2.50 to Los Angeles 90001 by sea freight. https://example.com/item.jpg");
         var typed = (T)(object)decision;
@@ -8374,6 +8848,27 @@ sealed class FakeCustomerSuccessAgentProvider : IStructuredAiProvider
         ],
         Confidence = .94
     };
+}
+
+sealed class TimeoutOnceCustomerSuccessMessageSender : ICustomerSuccessMessageSender
+{
+    private readonly List<string> _idempotencyKeys = [];
+    public IReadOnlyList<string> IdempotencyKeys => _idempotencyKeys;
+
+    public Task<JsonElement> SendTextAsync(
+        string accountId,
+        string phone,
+        string text,
+        OutboundSendOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        _idempotencyKeys.Add(options.IdempotencyKey);
+        if (_idempotencyKeys.Count == 1)
+            throw new TimeoutException("simulated transient bridge timeout");
+        using var document = JsonDocument.Parse(
+            "{\"messageId\":\"timeout-retry-provider-id\",\"targetVerified\":true,\"status\":3}");
+        return Task.FromResult(document.RootElement.Clone());
+    }
 }
 
 sealed class BlockingCustomerSuccessAgentProvider : IStructuredAiProvider

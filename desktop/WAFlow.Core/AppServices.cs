@@ -96,7 +96,9 @@ public sealed class AppServices
             CustomerIdentity,
             SourcingRequests,
             KnowledgeRetrieval,
-            CustomerBrain);
+            CustomerBrain,
+            WhatsApp,
+            WhatsAppSync);
         CustomerSuccessCoordinator = new CustomerSuccessAgentCoordinator(Repository, WhatsAppSync, WhatsApp, CustomerSuccessAgent);
         TodayBrief = new TodayBriefService(Repository, SalesLearning, CustomerBrain);
         DashboardUnreadDigest = new DashboardUnreadDigestService(Repository, DeepSeek);
@@ -110,6 +112,10 @@ public sealed class AppServices
         // the first sends of the session running on bridge defaults.
         WhatsApp.OutboundSettings = (await Repository.GetAppSettingsAsync(cancellationToken)).Outbound
                                     ?? new OutboundGovernorSettings();
+        // Runtime ownership is process-local. Persisted drafts, locks and active
+        // hosting states from the previous process must never resume or send on
+        // startup; the user explicitly re-arms after reviewing the latest chat.
+        await CustomerSuccessAgent.RecoverAfterRestartAsync(cancellationToken);
         await CustomerIdentity.RepairOwnedAccountBindingsAsync(cancellationToken);
     }
 }

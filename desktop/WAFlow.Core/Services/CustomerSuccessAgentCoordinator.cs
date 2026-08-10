@@ -52,6 +52,9 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
     private readonly ICustomerSuccessMessageSender _connections;
     private readonly CustomerSuccessAgentService _agent;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly Func<AgentAutomationSettings, TimeSpan>? _coalescingDelayOverride;
+    private readonly ConcurrentDictionary<string, ConversationWork> _conversationWork =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Conversations already drafted in the current offline catch-up window, per
@@ -71,12 +74,14 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         LocalRepository repository,
         WhatsAppSyncService sync,
         ICustomerSuccessMessageSender connections,
-        CustomerSuccessAgentService agent)
+        CustomerSuccessAgentService agent,
+        Func<AgentAutomationSettings, TimeSpan>? coalescingDelayOverride = null)
     {
         _repository = repository;
         _sync = sync;
         _connections = connections;
         _agent = agent;
+        _coalescingDelayOverride = coalescingDelayOverride;
         _sync.MessageSynchronized += OnMessageSynchronized;
         _sync.OfflineCatchupChanged += OnOfflineCatchupChanged;
     }
@@ -94,16 +99,214 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
 
     private void OnMessageSynchronized(object? sender, WhatsAppMessageSyncedEvent e)
     {
+        if (_shutdown.IsCancellationRequested) return;
         var message = e.Message;
         if (message.IsGroup) return;
         if (message.Direction == WhatsAppMessageDirection.Outgoing && !message.IsRevoked)
         {
-            _ = ReconcileOutgoingStatusAsync(message, _shutdown.Token);
+            _ = HandleOutgoingAsync(message, e.Arrival, _shutdown.Token);
             return;
         }
         if (message.Direction != WhatsAppMessageDirection.Incoming || message.IsStatusUpdate ||
-            message.IsRevoked || string.IsNullOrWhiteSpace(message.Body)) return;
-        _ = HandleAsync(message, e.Arrival, _shutdown.Token);
+            message.IsRevoked || !HasAnalyzableContent(message)) return;
+        QueueIncoming(message, e.Arrival);
+    }
+
+    private void QueueIncoming(WhatsAppMessage message, MessageArrival arrival)
+    {
+        if (_shutdown.IsCancellationRequested) return;
+        CancellationTokenSource current;
+        try
+        {
+            current = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+        var key = ConversationWorkKey(message.AccountId, message.ConversationId);
+        var work = _conversationWork.GetOrAdd(key, _ => new ConversationWork());
+        CancellationTokenSource? previous;
+        long generation;
+        lock (work.SyncRoot)
+        {
+            work.Pending[message.Id] = new QueuedIncoming(message, arrival);
+            previous = work.ActiveCancellation;
+            work.ActiveCancellation = current;
+            generation = ++work.Generation;
+        }
+
+        try { previous?.Cancel(); }
+        catch (ObjectDisposedException) { }
+
+        _ = ProcessConversationWorkAsync(work, generation, message, current);
+    }
+
+    private async Task ProcessConversationWorkAsync(
+        ConversationWork work,
+        long generation,
+        WhatsAppMessage newestMessage,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            var state = await _repository.GetConversationAgentStateAsync(
+                newestMessage.AccountId,
+                newestMessage.ConversationId,
+                cancellation.Token);
+            var alreadyProcessed = state is not null &&
+                                   state.LastProcessedMessageId.Equals(
+                                       newestMessage.Id,
+                                       StringComparison.OrdinalIgnoreCase);
+            if (!alreadyProcessed)
+            {
+                await _agent.InvalidateDraftAsync(
+                    newestMessage.AccountId,
+                    newestMessage.ConversationId,
+                    "收到新的客户消息，旧草稿和旧运行已失效。",
+                    newestMessage.Id,
+                    cancellation.Token);
+            }
+
+            var delay = await ResolveCoalescingDelayAsync(cancellation.Token);
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, cancellation.Token);
+
+            List<QueuedIncoming> batch;
+            lock (work.SyncRoot)
+            {
+                if (work.Generation != generation ||
+                    !ReferenceEquals(work.ActiveCancellation, cancellation) ||
+                    cancellation.IsCancellationRequested)
+                    return;
+                batch = work.Pending.Values
+                    .OrderBy(item => item.Message.Timestamp)
+                    .ThenBy(item => item.Message.Id, StringComparer.Ordinal)
+                    .ToList();
+            }
+            if (batch.Count == 0) return;
+
+            var sourceMessageIds = batch.Select(item => item.Message.Id).ToList();
+            var representative = batch[^1].Message;
+            var batchArrival = batch.Any(item => item.Arrival == MessageArrival.OfflineBacklog)
+                ? MessageArrival.OfflineBacklog
+                : batch.Any(item => item.Arrival == MessageArrival.HistorySync)
+                    ? MessageArrival.HistorySync
+                    : MessageArrival.Live;
+            await HandleBatchAsync(
+                representative,
+                batchArrival,
+                sourceMessageIds,
+                cancellation.Token);
+
+            lock (work.SyncRoot)
+            {
+                if (work.Generation != generation ||
+                    !ReferenceEquals(work.ActiveCancellation, cancellation))
+                    return;
+                foreach (var sourceMessageId in sourceMessageIds)
+                    work.Pending.Remove(sourceMessageId);
+            }
+        }
+        catch (OperationCanceledException) when (
+            cancellation.IsCancellationRequested || _shutdown.IsCancellationRequested)
+        {
+            // A newer message, a human send or shutdown owns the conversation now.
+            // Cancellation is expected invalidation, never a failed Agent run.
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                await _repository.LogEventAsync(
+                    "customer_success_coalescing_failed",
+                    null,
+                    null,
+                    Json.Serialize(new
+                    {
+                        newestMessage.AccountId,
+                        newestMessage.ConversationId,
+                        sourceMessageId = newestMessage.Id,
+                        error = error.Message
+                    }),
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Diagnostics must not surface as an unobserved background task.
+            }
+        }
+        finally
+        {
+            lock (work.SyncRoot)
+            {
+                if (work.Generation == generation && ReferenceEquals(work.ActiveCancellation, cancellation))
+                {
+                    work.ActiveCancellation = null;
+                }
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task<TimeSpan> ResolveCoalescingDelayAsync(CancellationToken cancellationToken)
+    {
+        AgentAutomationSettings automation;
+        try
+        {
+            automation = (await _repository.GetAppSettingsAsync(cancellationToken)).AgentAutomation
+                         ?? new AgentAutomationSettings();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            automation = new AgentAutomationSettings();
+        }
+
+        return _coalescingDelayOverride?.Invoke(automation)
+               ?? TimeSpan.FromSeconds(automation.NormalizedCoalescingSeconds());
+    }
+
+    private async Task HandleOutgoingAsync(
+        WhatsAppMessage message,
+        MessageArrival arrival,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var state = await _repository.GetConversationAgentStateAsync(
+                message.AccountId,
+                message.ConversationId,
+                cancellationToken);
+            if (state is null) return;
+            if (!string.IsNullOrWhiteSpace(state.LastProviderMessageId) &&
+                state.LastProviderMessageId.Equals(message.ProviderMessageId, StringComparison.OrdinalIgnoreCase))
+            {
+                await ReconcileOutgoingStatusAsync(message, cancellationToken);
+                return;
+            }
+            if (arrival != MessageArrival.Live || string.IsNullOrWhiteSpace(state.CustomerId)) return;
+
+            CancelConversationWork(message.AccountId, message.ConversationId, clearPending: true);
+            await _agent.HumanTakeoverAsync(
+                state.CustomerId,
+                message.AccountId,
+                message.ConversationId,
+                "mobile_or_external",
+                message.Id,
+                "检测到人工外发消息。",
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            // An outgoing synchronization event must never interrupt WhatsApp sync.
+        }
     }
 
     /// <summary>
@@ -141,7 +344,10 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         return OfflineBacklogDisposition.DraftOnly;
     }
 
-    private async Task RecordBacklogSummaryAsync(WhatsAppMessage message, CancellationToken cancellationToken)
+    private async Task RecordBacklogSummaryAsync(
+        WhatsAppMessage message,
+        IReadOnlyList<string> sourceMessageIds,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -154,6 +360,7 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                     message.AccountId,
                     message.ConversationId,
                     sourceMessageId = message.Id,
+                    sourceMessageIds,
                     message.Timestamp,
                     notSentReason = "offline_backlog_draft_limit"
                 }),
@@ -222,7 +429,14 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
     // Single overload on purpose: a convenience wrapper defaulting to
     // MessageArrival.Live would be the fail-open direction, and the smoke tests
     // reach this by name through reflection.
-    private async Task HandleAsync(WhatsAppMessage message, MessageArrival arrival, CancellationToken cancellationToken)
+    private Task HandleAsync(WhatsAppMessage message, MessageArrival arrival, CancellationToken cancellationToken) =>
+        HandleBatchAsync(message, arrival, [message.Id], cancellationToken);
+
+    private async Task HandleBatchAsync(
+        WhatsAppMessage message,
+        MessageArrival arrival,
+        IReadOnlyList<string> sourceMessageIds,
+        CancellationToken cancellationToken)
     {
         CustomerSuccessAgentRunResult? result = null;
         var expectedCustomerId = "";
@@ -234,18 +448,22 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 .FirstOrDefault(item => item.Id == message.ConversationId);
             if (conversation is null) return;
             var state = await _repository.GetConversationAgentStateAsync(message.AccountId, message.ConversationId, cancellationToken);
-            if (state?.Mode is not ConversationAgentMode.CopilotActive and not ConversationAgentMode.AutoActive &&
-                state?.Mode is not ConversationAgentMode.HumanRequired and not ConversationAgentMode.HumanActive and not ConversationAgentMode.ResumeReview)
-                return;
+            if (state is null) return;
+            if (state.LastProcessedMessageId.Equals(message.Id, StringComparison.OrdinalIgnoreCase)) return;
+            var collaborationAllowed = ConversationAgentStateMachine.AllowsCollaboration(state);
+            var autoProcessingAllowed = ConversationAgentStateMachine.AllowsAutoProcessing(state);
+            if (!collaborationAllowed && !autoProcessingAllowed) return;
             expectedCustomerId = state.CustomerId;
-            var requestedMode = state.Mode;
+            var requestedMode = autoProcessingAllowed
+                ? ConversationAgentMode.AutoActive
+                : ConversationAgentMode.CopilotActive;
             var backlogGated = false;
             if (arrival == MessageArrival.OfflineBacklog)
             {
                 var disposition = await ResolveBacklogDispositionAsync(message, cancellationToken);
                 if (disposition == OfflineBacklogDisposition.SummaryOnly)
                 {
-                    await RecordBacklogSummaryAsync(message, cancellationToken);
+                    await RecordBacklogSummaryAsync(message, sourceMessageIds, cancellationToken);
                     await TryUpdateRunOutcomeAsync(
                         null,
                         expectedCustomerId,
@@ -270,13 +488,12 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             result = await _agent.AnalyzeAsync(
                 message.AccountId, message.ConversationId, conversation.Phone, conversation.DisplayName,
                 sourceMessageId: message.Id,
+                sourceMessageIds: sourceMessageIds,
                 trigger: CustomerSuccessRunTrigger.IncomingAutomation,
                 cancellationToken: cancellationToken);
             if (result.Decision is null)
             {
-                var status = requestedMode is ConversationAgentMode.HumanRequired or ConversationAgentMode.HumanActive or ConversationAgentMode.ResumeReview
-                    ? CustomerSuccessRunStatus.HumanRequired
-                    : CustomerSuccessRunStatus.Blocked;
+                const CustomerSuccessRunStatus status = CustomerSuccessRunStatus.Blocked;
                 await TryUpdateRunOutcomeAsync(
                     result,
                     expectedCustomerId,
@@ -350,11 +567,20 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             if (capturedIdentityLink is null || !capturedIdentityLink.IsActive)
                 throw new InvalidOperationException(ContextChangedMessage);
             var acknowledgedSendBindingToken = BuildAcknowledgedSendBindingToken(capturedIdentityLink);
-            var verifiedConversation = await _agent.EnsureRunContextCurrentAsync(
-                result.ContextToken,
-                requireAutoLock: !shouldSendHolding,
-                requireProcessedState: true,
-                cancellationToken);
+            var sendOptions = OutboundSendOptions.ForAgent(
+                message.ConversationId,
+                result.ContextToken.RunToken);
+            var verifiedConversation = shouldSendHolding
+                ? await _agent.EnsureRunContextCurrentAsync(
+                    result.ContextToken,
+                    requireAutoLock: false,
+                    requireProcessedState: true,
+                    cancellationToken)
+                : await _agent.BeginSendAsync(
+                    result.ContextToken,
+                    result.Decision,
+                    sendOptions.IdempotencyKey,
+                    cancellationToken);
             // Last line of defence for the offline gate. The mode downgrade above
             // is what normally stops a backlog reply, but that decision lives in a
             // local read taken before the analysis; this one is local to the send
@@ -362,12 +588,35 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             if (backlogGated) throw new InvalidOperationException(ContextChangedMessage);
             // The run token makes the key stable across an RPC timeout retry for
             // the same generated reply, and different for a regenerated one.
-            var response = await _connections.SendTextAsync(
-                message.AccountId,
-                verifiedConversation.Phone,
-                result.Decision.ReplyText,
-                OutboundSendOptions.ForAgent(message.ConversationId, result.ContextToken.RunToken),
-                cancellationToken);
+            JsonElement response;
+            try
+            {
+                response = await _connections.SendTextAsync(
+                    message.AccountId,
+                    verifiedConversation.Phone,
+                    result.Decision.ReplyText,
+                    sendOptions,
+                    cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                // One bounded retry only. The same stable key is reused so an
+                // acknowledgement that raced the 45s RPC timeout cannot create
+                // a second WhatsApp message in the same bridge session.
+                if (shouldSendHolding)
+                    await EnsureHoldingContextCurrentAsync(result, message, cancellationToken);
+                await _agent.EnsureRunContextCurrentAsync(
+                    result.ContextToken,
+                    requireAutoLock: !shouldSendHolding,
+                    requireProcessedState: true,
+                    cancellationToken);
+                response = await _connections.SendTextAsync(
+                    message.AccountId,
+                    verifiedConversation.Phone,
+                    result.Decision.ReplyText,
+                    sendOptions,
+                    cancellationToken);
+            }
             var providerMessageId = ReadProviderId(response);
             var targetVerified = ReadBool(response, "targetVerified");
             var providerStatus = ReadNumericStatus(response);
@@ -386,7 +635,8 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                     result.ContextToken,
                     requireAutoLock: !shouldSendHolding,
                     requireProcessedState: true,
-                    CancellationToken.None);
+                    CancellationToken.None,
+                    acknowledgedProviderMessageId: providerMessageId);
             }
             catch (InvalidOperationException error) when (error.Message == ContextChangedMessage)
             {
@@ -491,6 +741,7 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 runDetail,
                 providerMessageId,
                 holdingReplyMessageId: shouldSendHolding ? providerMessageId : "",
+                riskInformationCollection: result.Decision.IsRiskInformationCollection,
                 cancellationToken: CancellationToken.None);
             if (updatedState is null)
             {
@@ -532,6 +783,13 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
                 Json.Serialize(new { message.AccountId, message.ConversationId, sourceMessageId = message.Id, providerMessageId, providerStatus, targetVerified = true }),
                 CancellationToken.None);
             RaiseRunCompleted(message, runStatus);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested || _shutdown.IsCancellationRequested)
+        {
+            // A newer conversation generation owns the work. Do not overwrite it
+            // with a Failed outcome and do not surface expected cancellation.
+            return;
         }
         catch (Exception ex)
         {
@@ -676,7 +934,13 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
             message.ConversationId,
             cancellationToken);
         var currentHandoff = await _repository.GetOpenHumanHandoffAsync(customerId, cancellationToken);
-        if (currentState?.Mode != ConversationAgentMode.HumanRequired ||
+        var validRiskCollection = result.Decision?.IsRiskInformationCollection == true &&
+                                  currentState?.RunState == ConversationAgentRunState.RiskInfoCollectionSent &&
+                                  currentState.RiskState == ConversationRiskVerificationState.InformationCollectionSent;
+        var validGenericHandoff = result.Decision?.IsRiskInformationCollection != true &&
+                                  currentState?.RunState == ConversationAgentRunState.WaitingHuman;
+        if (currentState?.Mode != ConversationAgentMode.AutoActive ||
+            (!validRiskCollection && !validGenericHandoff) ||
             currentHandoff is null || result.Handoff is null ||
             !currentHandoff.Id.Equals(result.Handoff.Id, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(ContextChangedMessage);
@@ -831,11 +1095,54 @@ public sealed class CustomerSuccessAgentCoordinator : IDisposable
         link.ManuallyConfirmed,
         link.UpdatedAt.ToUniversalTime().ToString("O"));
 
+    private static bool HasAnalyzableContent(WhatsAppMessage message) =>
+        !string.IsNullOrWhiteSpace(message.Body) ||
+        !string.IsNullOrWhiteSpace(message.FileName) ||
+        !string.IsNullOrWhiteSpace(message.MediaPath) ||
+        message.Kind is "image" or "video" or "audio" or "document" or "sticker";
+
+    private static string ConversationWorkKey(string accountId, string conversationId) =>
+        $"{accountId}\u001f{conversationId}";
+
+    private void CancelConversationWork(string accountId, string conversationId, bool clearPending)
+    {
+        if (!_conversationWork.TryGetValue(ConversationWorkKey(accountId, conversationId), out var work)) return;
+        CancelConversationWork(work, clearPending);
+    }
+
+    private static void CancelConversationWork(ConversationWork work, bool clearPending)
+    {
+        CancellationTokenSource? cancellation;
+        lock (work.SyncRoot)
+        {
+            cancellation = work.ActiveCancellation;
+            work.ActiveCancellation = null;
+            work.Generation++;
+            if (clearPending) work.Pending.Clear();
+        }
+        try { cancellation?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
     public void Dispose()
     {
         _sync.MessageSynchronized -= OnMessageSynchronized;
         _sync.OfflineCatchupChanged -= OnOfflineCatchupChanged;
         _shutdown.Cancel();
+        foreach (var work in _conversationWork.Values)
+            CancelConversationWork(work, clearPending: true);
+        _conversationWork.Clear();
+        _backlogDraftedConversations.Clear();
         _shutdown.Dispose();
     }
+
+    private sealed class ConversationWork
+    {
+        public object SyncRoot { get; } = new();
+        public Dictionary<string, QueuedIncoming> Pending { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public CancellationTokenSource? ActiveCancellation { get; set; }
+        public long Generation { get; set; }
+    }
+
+    private sealed record QueuedIncoming(WhatsAppMessage Message, MessageArrival Arrival);
 }

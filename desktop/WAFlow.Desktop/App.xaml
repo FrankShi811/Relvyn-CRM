@@ -25,6 +25,7 @@
         <SolidColorBrush x:Key="Surface" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="SurfaceElevated" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="SurfaceMuted" Color="#F4F7F5"/>
+        <SolidColorBrush x:Key="SurfaceAlt" Color="#F4F7F5"/>
         <SolidColorBrush x:Key="SurfaceInput" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="Canvas" Color="#F4F7F5"/>
         <SolidColorBrush x:Key="CanvasDeep" Color="#E8EEEB"/>
@@ -40,7 +41,7 @@
         <SolidColorBrush x:Key="LogoBorder" Color="#D6DEDA"/>
         <SolidColorBrush x:Key="UnreadBadgeBackground" Color="#C43131"/>
         <SolidColorBrush x:Key="UnreadBadgeText" Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="Success" Color="#16B889"/>
+        <SolidColorBrush x:Key="Success" Color="#066A4D"/>
         <SolidColorBrush x:Key="SuccessSoft" Color="#E0F7EF"/>
         <SolidColorBrush x:Key="Warning" Color="#E0A12B"/>
         <SolidColorBrush x:Key="WarningSoft" Color="#FFF2D6"/>
@@ -328,10 +329,14 @@
                         <Grid>
                             <ToggleButton x:Name="DropDownToggle" Focusable="False" ClickMode="Press"
                                           BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="ComboBorder" Background="{DynamicResource SurfaceInput}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="10,0">
+                                        <Border x:Name="ComboBorder" Background="{DynamicResource SurfaceInput}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="10" Padding="10,0">
                                             <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/></Grid.ColumnDefinitions>
                                                 <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" VerticalAlignment="Center" HorizontalAlignment="Left" RecognizesAccessKey="True"/>
                                                 <Path Grid.Column="1" Data="M 0 0 L 4 4 L 8 0 Z" Fill="{DynamicResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -370,7 +375,7 @@
                                 <Setter TargetName="SelectionText" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
                             </Trigger>
-                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource Primary}"/></Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource Primary}"/><Setter TargetName="DropDownToggle" Property="BorderThickness" Value="2"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>

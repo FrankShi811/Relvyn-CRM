@@ -1269,8 +1269,10 @@ if ($whatsAppInboxSource -notmatch [regex]::Escape('_conversationSelectionGenera
     $whatsAppInboxSource -notmatch [regex]::Escape('PersistAcknowledgedOutgoingWhatsAppAsync') -or
     $whatsAppInboxSource -notmatch [regex]::Escape('_pendingAgentDraftContextToken') -or
     $whatsAppInboxSource -match [regex]::Escape('string.Equals(ComposerBox.Text.Trim(), _pendingKnowledgeDecision.ReplyText.Trim()') -or
-    $whatsAppInboxSource -notmatch [regex]::Escape('expectedCustomerIdentityHash: draftContextToken?.CustomerIdentityHash') -or
-    $whatsAppInboxSource -notmatch [regex]::Escape('expectedSourceMessageToken: draftContextToken?.SourceMessageToken') -or
+    $whatsAppInboxSource -notmatch 'expectedCustomerIdentityHash:\s*(?:draftContextToken|persistenceContextToken)\?\.CustomerIdentityHash' -or
+    $whatsAppInboxSource -notmatch 'expectedSourceMessageToken:\s*(?:draftContextToken|persistenceContextToken)\?\.SourceMessageToken' -or
+    $whatsAppInboxSource -notmatch [regex]::Escape('CustomerSuccessAgent.HumanTakeoverAsync') -or
+    $whatsAppInboxSource -notmatch [regex]::Escape('persistenceContextToken = null;') -or
     $whatsAppInboxSource -notmatch [regex]::Escape('accepted = true;') -or
     $emailInboxSource -notmatch [regex]::Escape('IsCurrentEmailTarget') -or
     $emailInboxSource -notmatch [regex]::Escape('IsCurrentEmailDraftTarget') -or

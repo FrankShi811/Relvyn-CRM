@@ -13,7 +13,7 @@
     <Product>AI Sales OS</Product>
     <Company>AI Sales OS</Company>
     <Description>AI-driven WhatsApp sales intelligence and campaign automation</Description>
-    <ApplicationIcon>Assets\AI-Sales-OS.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\Relvyn.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -27,8 +27,8 @@
     <ProjectReference Include="..\WAFlow.Core\WAFlow.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="Assets\AI-Sales-OS.ico" />
-    <Resource Include="Assets\AI-Sales-OS.png" />
+    <Resource Include="Assets\Relvyn.ico" />
+    <Resource Include="Assets\Relvyn.png" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using WAFlow.Core.Domain;
@@ -40,6 +41,8 @@ public sealed class WhatsAppSyncService
 
     private readonly LocalRepository _repository;
     private readonly Channel<WhatsAppBridgeEvent> _events = Channel.CreateUnbounded<WhatsAppBridgeEvent>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly ConcurrentDictionary<string, byte> _offlineCatchupAccounts =
+        new(StringComparer.OrdinalIgnoreCase);
     private AgentAutomationSettings _automation = new();
     private DateTimeOffset _automationLoadedAt = DateTimeOffset.MinValue;
 
@@ -57,6 +60,9 @@ public sealed class WhatsAppSyncService
         bridge.EventReceived += (_, e) => _events.Writer.TryWrite(e);
         _ = Task.Run(ProcessEventsAsync);
     }
+
+    public bool IsOfflineCatchupActive(string accountId) =>
+        !string.IsNullOrWhiteSpace(accountId) && _offlineCatchupAccounts.ContainsKey(accountId);
 
     private async Task<AgentAutomationSettings> GetAutomationSettingsAsync()
     {
@@ -415,6 +421,11 @@ public sealed class WhatsAppSyncService
         var contentRecovered = existingMessage is not null
                                && !HasUsableContent(existingMessage)
                                && HasUsableContent(message);
+        // The message table references the owning conversation. A first-ever
+        // live message can arrive before any contact/chat snapshot, so persist
+        // the conversation shell first and then apply the final unread/preview
+        // update below after the message insert succeeds.
+        await _repository.UpsertWhatsAppConversationAsync(conversation, allowUnreadIncrease: false);
         var inserted = await _repository.UpsertWhatsAppMessageAsync(message);
         message = await _repository.GetWhatsAppMessageByProviderIdAsync(accountId, providerId) ?? message;
         var usableContent = HasUsableContent(message);
@@ -605,10 +616,16 @@ public sealed class WhatsAppSyncService
     {
         if (!progress.Phase.StartsWith("offline_messages", StringComparison.OrdinalIgnoreCase)) return;
         if (progress.State.Equals("syncing", StringComparison.OrdinalIgnoreCase))
+        {
+            _offlineCatchupAccounts[progress.AccountId] = 0;
             OfflineCatchupChanged?.Invoke(this, new WhatsAppOfflineCatchupEvent(progress.AccountId, true));
+        }
         else if (progress.State.Equals("complete", StringComparison.OrdinalIgnoreCase)
                  || progress.State.Equals("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            _offlineCatchupAccounts.TryRemove(progress.AccountId, out _);
             OfflineCatchupChanged?.Invoke(this, new WhatsAppOfflineCatchupEvent(progress.AccountId, false));
+        }
     }
 
     private void RaiseDataChanged(string accountId, string phase) =>

@@ -536,6 +536,25 @@ public sealed partial class LocalRepository
               data_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_agent_turn_logs_customer ON agent_turn_logs(customer_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS conversation_agent_audit_events (
+              id TEXT PRIMARY KEY,
+              tenant_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              customer_id TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              conversation_id TEXT NOT NULL,
+              opportunity_id TEXT NOT NULL DEFAULT '',
+              source_message_id TEXT NOT NULL DEFAULT '',
+              context_version TEXT NOT NULL DEFAULT '',
+              idempotency_key TEXT NOT NULL DEFAULT '',
+              action TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_conversation_agent_audit_conversation
+              ON conversation_agent_audit_events(account_id, conversation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS ix_conversation_agent_audit_customer
+              ON conversation_agent_audit_events(customer_id, created_at DESC);
             CREATE TABLE IF NOT EXISTS knowledge_documents (
               id TEXT PRIMARY KEY,
               title TEXT NOT NULL,
@@ -675,11 +694,20 @@ public sealed partial class LocalRepository
         await EnsureColumnAsync(db, "global_customer_agent_locks", "active_account_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await EnsureColumnAsync(db, "global_customer_agent_locks", "account_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await EnsureColumnAsync(db, "global_customer_agent_locks", "conversation_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(db, "conversation_agent_audit_events", "opportunity_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(db, "conversation_agent_audit_events", "source_message_id", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(db, "conversation_agent_audit_events", "context_version", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnAsync(db, "conversation_agent_audit_events", "idempotency_key", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await using (var identityIndexes = db.CreateCommand())
         {
             identityIndexes.CommandText = """
                 CREATE INDEX IF NOT EXISTS ix_leads_buyer_id ON leads(buyer_id COLLATE NOCASE) WHERE buyer_id <> '';
                 CREATE INDEX IF NOT EXISTS ix_global_customer_identity_buyer_id ON global_customer_identities(buyer_id COLLATE NOCASE) WHERE buyer_id <> '';
+                CREATE INDEX IF NOT EXISTS ix_conversation_agent_audit_source
+                  ON conversation_agent_audit_events(tenant_id,user_id,customer_id,account_id,conversation_id,source_message_id,created_at DESC);
+                CREATE INDEX IF NOT EXISTS ix_conversation_agent_audit_idempotency
+                  ON conversation_agent_audit_events(tenant_id,user_id,idempotency_key,created_at DESC)
+                  WHERE idempotency_key <> '';
                 """;
             await identityIndexes.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -981,6 +1009,7 @@ public sealed partial class LocalRepository
                 StateReason = "由已有 CRM 与 WhatsApp 明确关联无损回填。",
                 UpdatedAt = now
             };
+            state = ConversationAgentStateMachine.NormalizeLegacyState(state);
             await using (var insert = db.CreateCommand())
             {
                 insert.Transaction = transaction;
@@ -2196,7 +2225,7 @@ public sealed partial class LocalRepository
                     readState.CommandText = "SELECT data_json FROM conversation_agent_states WHERE account_id=$account AND conversation_id=$conversation";
                     readState.Parameters.AddWithValue("$account", proposedConversation.AccountId);
                     readState.Parameters.AddWithValue("$conversation", proposedConversation.Id);
-                    state = Json.Deserialize<ConversationAgentState>(
+                    state = DeserializeConversationAgentState(
                         await readState.ExecuteScalarAsync(cancellationToken) as string);
                 }
                 var incoming = new List<WhatsAppMessage>();
@@ -4343,7 +4372,7 @@ public sealed partial class LocalRepository
         command.CommandText = "SELECT data_json FROM conversation_agent_states WHERE account_id=$account AND conversation_id=$conversation";
         command.Parameters.AddWithValue("$account", accountId);
         command.Parameters.AddWithValue("$conversation", conversationId);
-        return Json.Deserialize<ConversationAgentState>(await command.ExecuteScalarAsync(cancellationToken) as string);
+        return DeserializeConversationAgentState(await command.ExecuteScalarAsync(cancellationToken) as string);
     }
 
     public async Task<List<ConversationAgentState>> GetCustomerAgentStatesAsync(string customerId, CancellationToken cancellationToken = default)
@@ -4355,7 +4384,7 @@ public sealed partial class LocalRepository
         command.Parameters.AddWithValue("$customer", customerId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            if (Json.Deserialize<ConversationAgentState>(reader.GetString(0)) is { } item) items.Add(item);
+            if (DeserializeConversationAgentState(reader.GetString(0)) is { } item) items.Add(item);
         return items;
     }
 
@@ -4371,12 +4400,14 @@ public sealed partial class LocalRepository
         if (mode is not null) command.Parameters.AddWithValue("$mode", mode.Value.ToString());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            if (Json.Deserialize<ConversationAgentState>(reader.GetString(0)) is { } item) items.Add(item);
+            if (DeserializeConversationAgentState(reader.GetString(0)) is { } item) items.Add(item);
         return items;
     }
 
     public async Task UpsertConversationAgentStateAsync(ConversationAgentState state, CancellationToken cancellationToken = default)
     {
+        state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        state.StateSchemaVersion = ConversationAgentStateMachine.CurrentSchemaVersion;
         state.UpdatedAt = DateTimeOffset.Now;
         await using var db = Open(); await db.OpenAsync(cancellationToken);
         await using var command = db.CreateCommand();
@@ -4406,6 +4437,7 @@ public sealed partial class LocalRepository
         string providerMessageId = "",
         string error = "",
         string holdingReplyMessageId = "",
+        bool riskInformationCollection = false,
         CancellationToken cancellationToken = default)
     {
         await using var db = Open();
@@ -4431,7 +4463,7 @@ public sealed partial class LocalRepository
             readCommand.CommandText = "SELECT data_json FROM conversation_agent_states WHERE account_id=$account AND conversation_id=$conversation";
             readCommand.Parameters.AddWithValue("$account", accountId);
             readCommand.Parameters.AddWithValue("$conversation", conversationId);
-            state = Json.Deserialize<ConversationAgentState>(await readCommand.ExecuteScalarAsync(cancellationToken) as string);
+            state = DeserializeConversationAgentState(await readCommand.ExecuteScalarAsync(cancellationToken) as string);
         }
         if (state is null ||
             !state.CustomerId.Equals(expectedCustomerId, StringComparison.OrdinalIgnoreCase) ||
@@ -4439,6 +4471,8 @@ public sealed partial class LocalRepository
              !state.PendingRunContextToken.Equals(expectedRunContextToken, StringComparison.Ordinal)))
             return null;
 
+        state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        var stateBeforeOutcome = state.RunState;
         state.LastRunStatus = status;
         state.LastRunDetail = detail.Trim();
         state.LastProviderMessageId = providerMessageId.Trim();
@@ -4446,7 +4480,45 @@ public sealed partial class LocalRepository
         state.LastRunAt = DateTimeOffset.Now;
         state.UpdatedAt = DateTimeOffset.Now;
         if (!string.IsNullOrWhiteSpace(holdingReplyMessageId))
+        {
             state.LastHoldingReplyMessageId = holdingReplyMessageId.Trim();
+            if (riskInformationCollection)
+            {
+                ConversationAgentStateMachine.MarkRiskInformationCollectionSent(
+                    state,
+                    holdingReplyMessageId.Trim(),
+                    string.IsNullOrWhiteSpace(detail)
+                        ? "风险信息收集消息已提交；等待人工处理。"
+                        : detail.Trim());
+                ConversationAgentStateMachine.WaitForHuman(
+                    state,
+                    "风险事项已完成唯一一次信息收集；AI 保持静默，等待人工处理。" );
+                state.RiskState = ConversationRiskVerificationState.WaitingHuman;
+            }
+            else
+            {
+                ConversationAgentStateMachine.WaitForHuman(
+                    state,
+                    string.IsNullOrWhiteSpace(detail)
+                        ? "已发送一次转人工说明；AI 保持静默，等待人工处理。"
+                        : detail.Trim());
+            }
+        }
+        else if (status is CustomerSuccessRunStatus.AutoReplyPending or CustomerSuccessRunStatus.AutoReplySent &&
+                 state.RunState == ConversationAgentRunState.AutoSending)
+        {
+            ConversationAgentStateMachine.WaitForCustomer(
+                state,
+                providerMessageId.Trim(),
+                string.IsNullOrWhiteSpace(detail) ? "回复已提交，等待客户新消息。" : detail.Trim());
+        }
+        else if (status == CustomerSuccessRunStatus.Failed &&
+                 state.RunState == ConversationAgentRunState.AutoSending)
+        {
+            ConversationAgentStateMachine.PauseError(
+                state,
+                string.IsNullOrWhiteSpace(error) ? "自动发送未获确认，需要人工复核。" : error.Trim());
+        }
 
         await using var updateCommand = db.CreateCommand();
         updateCommand.Transaction = transaction;
@@ -4463,6 +4535,69 @@ public sealed partial class LocalRepository
         updateCommand.Parameters.AddWithValue("$customer", expectedCustomerId);
         if (await updateCommand.ExecuteNonQueryAsync(cancellationToken) != 1)
             return null;
+
+        var shouldAuditOutcome = stateBeforeOutcome == ConversationAgentRunState.AutoSending ||
+                                 !string.IsNullOrWhiteSpace(holdingReplyMessageId);
+        if (shouldAuditOutcome)
+        {
+            var auditAction = status == CustomerSuccessRunStatus.Failed
+                ? ConversationAgentAuditAction.SendFailed
+                : riskInformationCollection
+                    ? ConversationAgentAuditAction.RiskInformationCollectionSent
+                    : ConversationAgentAuditAction.SendCompleted;
+            var auditEvent = new ConversationAgentAuditEvent
+            {
+                TenantId = state.TenantId,
+                UserId = state.UserId,
+                CustomerId = state.CustomerId,
+                AccountId = state.AccountId,
+                ConversationId = state.ConversationId,
+                OpportunityId = state.OpportunityId,
+                SourceMessageId = state.LastProcessedMessageId,
+                ContextVersion = state.ContextVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IdempotencyKey = state.LastIdempotencyKey,
+                Action = auditAction,
+                Mode = state.Mode,
+                StateBefore = stateBeforeOutcome,
+                StateAfter = state.RunState,
+                Decision = auditAction == ConversationAgentAuditAction.SendFailed
+                    ? "send_failed"
+                    : auditAction == ConversationAgentAuditAction.RiskInformationCollectionSent
+                        ? "risk_information_collection_sent_once"
+                        : "send_acknowledged",
+                Detail = state.LastRunDetail,
+                PromptVersion = "conversation-agent-v0.3",
+                FinalResult = status.ToString(),
+                RetrievedCustomerIds = [state.CustomerId],
+                CustomerBrainReferences = state.LastCustomerBrainReferences,
+                KnowledgeReferences = state.LastKnowledgeReferences,
+                ContextSafetyPassed = status != CustomerSuccessRunStatus.Failed
+            };
+            await using var auditCommand = db.CreateCommand();
+            auditCommand.Transaction = transaction;
+            auditCommand.CommandText = """
+                INSERT INTO conversation_agent_audit_events(
+                  id,tenant_id,user_id,customer_id,account_id,conversation_id,opportunity_id,
+                  source_message_id,context_version,idempotency_key,action,created_at,data_json)
+                VALUES($id,$tenant,$user,$customer,$account,$conversation,$opportunity,
+                  $source,$contextVersion,$idempotency,$action,$created,$json)
+                ON CONFLICT(id) DO NOTHING
+                """;
+            auditCommand.Parameters.AddWithValue("$id", auditEvent.Id);
+            auditCommand.Parameters.AddWithValue("$tenant", auditEvent.TenantId);
+            auditCommand.Parameters.AddWithValue("$user", auditEvent.UserId);
+            auditCommand.Parameters.AddWithValue("$customer", auditEvent.CustomerId);
+            auditCommand.Parameters.AddWithValue("$account", auditEvent.AccountId);
+            auditCommand.Parameters.AddWithValue("$conversation", auditEvent.ConversationId);
+            auditCommand.Parameters.AddWithValue("$opportunity", auditEvent.OpportunityId);
+            auditCommand.Parameters.AddWithValue("$source", auditEvent.SourceMessageId);
+            auditCommand.Parameters.AddWithValue("$contextVersion", auditEvent.ContextVersion);
+            auditCommand.Parameters.AddWithValue("$idempotency", auditEvent.IdempotencyKey);
+            auditCommand.Parameters.AddWithValue("$action", auditEvent.Action.ToString());
+            auditCommand.Parameters.AddWithValue("$created", auditEvent.CreatedAt.ToString("O"));
+            auditCommand.Parameters.AddWithValue("$json", Json.Serialize(auditEvent));
+            await auditCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
 
         await transaction.CommitAsync(cancellationToken);
         return state;
@@ -4524,6 +4659,15 @@ public sealed partial class LocalRepository
         await using var command = db.CreateCommand();
         command.CommandText = "DELETE FROM global_customer_agent_locks WHERE customer_id=$customer";
         command.Parameters.AddWithValue("$customer", customerId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task ClearGlobalCustomerAgentLocksAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        command.CommandText = "DELETE FROM global_customer_agent_locks";
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -4731,6 +4875,71 @@ public sealed partial class LocalRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             if (Json.Deserialize<AgentTurnLog>(reader.GetString(0)) is { } item) items.Add(item);
+        return items;
+    }
+
+    public async Task SaveConversationAgentAuditEventAsync(
+        ConversationAgentAuditEvent auditEvent,
+        CancellationToken cancellationToken = default)
+    {
+        auditEvent.TenantId = string.IsNullOrWhiteSpace(auditEvent.TenantId) ? "local" : auditEvent.TenantId.Trim();
+        auditEvent.UserId = string.IsNullOrWhiteSpace(auditEvent.UserId) ? "local" : auditEvent.UserId.Trim();
+        auditEvent.CreatedAt = auditEvent.CreatedAt == default ? DateTimeOffset.Now : auditEvent.CreatedAt;
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        command.CommandText = """
+            INSERT INTO conversation_agent_audit_events(
+              id,tenant_id,user_id,customer_id,account_id,conversation_id,opportunity_id,
+              source_message_id,context_version,idempotency_key,action,created_at,data_json)
+            VALUES($id,$tenant,$user,$customer,$account,$conversation,$opportunity,
+              $source,$contextVersion,$idempotency,$action,$created,$json)
+            ON CONFLICT(id) DO NOTHING
+            """;
+        command.Parameters.AddWithValue("$id", auditEvent.Id);
+        command.Parameters.AddWithValue("$tenant", auditEvent.TenantId);
+        command.Parameters.AddWithValue("$user", auditEvent.UserId);
+        command.Parameters.AddWithValue("$customer", auditEvent.CustomerId);
+        command.Parameters.AddWithValue("$account", auditEvent.AccountId);
+        command.Parameters.AddWithValue("$conversation", auditEvent.ConversationId);
+        command.Parameters.AddWithValue("$opportunity", auditEvent.OpportunityId);
+        command.Parameters.AddWithValue("$source", auditEvent.SourceMessageId);
+        command.Parameters.AddWithValue("$contextVersion", auditEvent.ContextVersion);
+        command.Parameters.AddWithValue("$idempotency", auditEvent.IdempotencyKey);
+        command.Parameters.AddWithValue("$action", auditEvent.Action.ToString());
+        command.Parameters.AddWithValue("$created", auditEvent.CreatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$json", Json.Serialize(auditEvent));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<List<ConversationAgentAuditEvent>> GetConversationAgentAuditEventsAsync(
+        string accountId,
+        string conversationId,
+        int limit = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var items = new List<ConversationAgentAuditEvent>();
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        command.CommandText = """
+            SELECT data_json
+            FROM conversation_agent_audit_events
+            WHERE account_id=$account AND conversation_id=$conversation
+            ORDER BY created_at DESC LIMIT $limit
+            """;
+        command.Parameters.AddWithValue("$account", accountId);
+        command.Parameters.AddWithValue("$conversation", conversationId);
+        command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 2_000));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (Json.Deserialize<ConversationAgentAuditEvent>(reader.GetString(0)) is { } item)
+            {
+                items.Add(item);
+            }
+        }
+
         return items;
     }
 
@@ -5728,5 +5937,13 @@ public sealed partial class LocalRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) ids.Add(reader.GetString(0));
         return ids;
+    }
+
+    private static ConversationAgentState? DeserializeConversationAgentState(string? json)
+    {
+        var state = Json.Deserialize<ConversationAgentState>(json);
+        return state is null
+            ? null
+            : ConversationAgentStateMachine.NormalizeLegacyState(state);
     }
 }

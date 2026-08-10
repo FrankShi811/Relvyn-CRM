@@ -243,6 +243,12 @@ public sealed class OutboundGovernorSettings
 /// <summary>Desktop-side automation guardrails (PRD v0.4 §5).</summary>
 public sealed class AgentAutomationSettings
 {
+    /// <summary>Short customer-message merge window before an Agent run starts.</summary>
+    public int MessageCoalescingSeconds { get; set; } = 10;
+
+    /// <summary>Maximum customer turns an unattended hosting session may answer.</summary>
+    public int MaxAutomaticTurns { get; set; } = 8;
+
     /// <summary>
     /// When on, messages classified as <see cref="MessageArrival.OfflineBacklog"/>
     /// never auto-send: they are downgraded to a draft the user confirms.
@@ -266,6 +272,10 @@ public sealed class AgentAutomationSettings
         WhatsAppMessageArrivalClassifier.NormalizeGraceMinutes(OfflineGraceMinutes);
 
     public int NormalizedDraftLimit() => Math.Clamp(OfflineBacklogDraftLimit, 0, 1000);
+
+    public int NormalizedCoalescingSeconds() => Math.Clamp(MessageCoalescingSeconds, 8, 15);
+
+    public int NormalizedMaxAutomaticTurns() => Math.Clamp(MaxAutomaticTurns, 1, 32);
 }
 
 /// <summary>Read model over the bridge's <c>outbound_status</c> snapshot.</summary>
