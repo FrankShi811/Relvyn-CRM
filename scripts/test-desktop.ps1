@@ -57,6 +57,9 @@ $opportunityImportServiceSource = Get-Content -Raw -Encoding utf8 -LiteralPath (
 $opportunityImportXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\OpportunitySupplementImportWindow.xaml')
 $opportunityImportSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\OpportunitySupplementImportWindow.xaml.cs')
 $whatsAppInboxXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\WhatsAppInboxView.xaml')
+$labelManagerXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\LabelManagerWindow.xaml')
+$labelManagerSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\LabelManagerWindow.xaml.cs')
+$whatsAppLabelChipSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\WhatsAppLabelChip.cs')
 $whatsAppTranslationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppTranslationService.cs')
 $whatsAppTranslationModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\WhatsAppTranslationModels.cs')
 $emailInboxXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\EmailInboxView.xaml')
@@ -65,6 +68,7 @@ $bridgeConnectionBootstrapSource = Get-Content -Raw -Encoding utf8 -LiteralPath 
 $bridgeMessageSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\message-content.mjs')
 $bridgeOutboundRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\outbound-routing.mjs')
 $bridgeConversationRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\conversation-routing.mjs')
+$bridgeLabelRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\label-routing.mjs')
 $bridgeNetworkRoutingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\network-routing.mjs')
 $bridgeOfflineCatchupSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\offline-catchup.mjs')
 $whatsAppInboxSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\WhatsAppInboxView.xaml.cs')
@@ -987,6 +991,48 @@ if ($bridgeOutboundRoutingSource -notmatch 'jidNormalizedUser' -or
 & $node (Join-Path $root 'bridge\scripts\outbound-routing-smoke.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'WhatsApp bridge outbound-routing smoke test failed.' }
 Write-Host 'PASS  WhatsApp sender multi-device synchronization contract'
+
+$labelContractFailures = @()
+if ($whatsAppInboxXaml -match 'x:Name="TagsBox"|标签（逗号分隔）') { $labelContractFailures += 'duplicate CRM tag editor remains in WhatsApp sidebar' }
+if ($whatsAppInboxSource -match 'TagsBox|lead\.Tags\s*=') { $labelContractFailures += 'WhatsApp save path can overwrite legacy CRM tags' }
+if ($labelManagerXaml -notmatch 'x:Name="CreateLabelButton"' -or
+    $labelManagerXaml -notmatch 'TextChanged="NewLabelName_TextChanged"' -or
+    $labelManagerXaml -notmatch 'KeyDown="NewLabelName_KeyDown"' -or
+    $labelManagerXaml -notmatch 'AutomationProperties\.Name="新标签颜色"' -or
+    $labelManagerXaml -notmatch 'AutomationProperties\.LiveSetting="Polite"') { $labelContractFailures += 'accessible create/status controls' }
+if ($labelManagerXaml -notmatch '(?s)<Button[^>]+Click="RemoveLabel_Click"') { $labelContractFailures += 'keyboard-operable label removal' }
+if ($labelManagerSource -notmatch 'UpdateCreateButtonState' -or
+    $labelManagerSource -notmatch 'SetBusy' -or
+    $labelManagerSource -notmatch 'SynchronizationChanged \+= WhatsAppSync_SynchronizationChanged' -or
+    $labelManagerSource -notmatch 'EventReceived \+= WhatsApp_EventReceived' -or
+    $labelManagerSource -notmatch '请在手机端确认' -or
+    $labelManagerSource -match '已同步到手机') { $labelContractFailures += 'honest guarded label mutation state' }
+if ($customersXaml -notmatch 'Header="CRM 标签"' -or
+    $customersXaml -notmatch 'Header="WhatsApp 标签"' -or
+    $customersXaml -notmatch 'ItemsSource="{Binding VisibleWhatsAppLabels}"' -or
+    $customersXaml -notmatch 'CompactWhatsAppLabelChipTemplate' -or
+    $customersSource -notmatch 'GetWhatsAppLabelsByLeadIdsAsync' -or
+    $customersSource -notmatch 'label\.AccountId.*label\.Id') { $labelContractFailures += 'source-preserving customer label columns' }
+if ($whatsAppInboxXaml -notmatch 'WhatsAppLabelChipTemplate' -or
+    $whatsAppInboxXaml -notmatch 'AutomationProperties\.Name="按 WhatsApp 标签筛选会话"' -or
+    $whatsAppInboxSource -notmatch 'GetWhatsAppLabelsByChatIdsAsync' -or
+    $whatsAppInboxSource -notmatch 'LabelFilterOption') { $labelContractFailures += 'conversation label cards and id-based filtering' }
+if ($appXaml -notmatch 'x:Key="WhatsAppLabelChipTemplate"' -or
+    $whatsAppLabelChipSource -notmatch 'AccessibleName' -or
+    $localRepositorySource -notmatch 'GetWhatsAppLabelsByChatIdsAsync' -or
+    $localRepositorySource -notmatch 'GetWhatsAppLabelsByLeadIdsAsync') { $labelContractFailures += 'shared accessible chip and bulk projection' }
+if ($bridgeSource -notmatch 'labelAssociationRouter\.route\(payload\)' -or
+    $bridgeSource -notmatch 'labelAssociationRouter\.replay\(lid, jid\)' -or
+    $bridgeLabelRoutingSource -notmatch 'sourceChatId' -or
+    $bridgeLabelRoutingSource -notmatch 'label_jid' -or
+    $bridgeLabelRoutingSource -notmatch 'maxPending' -or
+    $bridgeLabelRoutingSource -notmatch '@s\.whatsapp\.net') { $labelContractFailures += 'typed, buffered phone/LID association normalization' }
+if ($labelContractFailures.Count -gt 0) {
+  throw "WhatsApp labels must remain source-safe, accessible, canonical and visible across Inbox/Customers. missing=$($labelContractFailures -join ', ')"
+}
+& $node (Join-Path $root 'bridge\scripts\label-routing-smoke.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'WhatsApp bridge label-routing smoke test failed.' }
+Write-Host 'PASS  WhatsApp label creation, LID routing, CRM preservation and shared-card projection contract'
 
 $groupContractFailures = @()
 if ($bridgeConversationRoutingSource -notmatch 'normalizeGroupJid') { $groupContractFailures += 'group JID normalizer' }

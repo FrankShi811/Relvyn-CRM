@@ -2,7 +2,9 @@
 param(
   [string]$MasterPath = '',
   [string]$PromptPath = '',
-  [string]$GeneratedAtUtc = '2026-08-10T05:35:12Z'
+  [string]$GeneratedAtUtc = '2026-08-10T05:35:12Z',
+  [string]$ReferencePath = '',
+  [switch]$DesktopOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +19,10 @@ $MasterPath = [IO.Path]::GetFullPath($MasterPath)
 $PromptPath = [IO.Path]::GetFullPath($PromptPath)
 if (-not (Test-Path -LiteralPath $MasterPath -PathType Leaf)) { throw "Brand master is missing: $MasterPath" }
 if (-not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) { throw "Brand prompt is missing: $PromptPath" }
+if ($ReferencePath) {
+  $ReferencePath = [IO.Path]::GetFullPath($ReferencePath)
+  if (-not (Test-Path -LiteralPath $ReferencePath -PathType Leaf)) { throw "Brand reference is missing: $ReferencePath" }
+}
 
 Add-Type -AssemblyName System.Drawing
 
@@ -167,7 +173,7 @@ $iconDirectory = Join-Path $desktopAssets 'Icons'
 $pwaAssets = Join-Path $root 'pwa\public'
 $recordDirectory = Join-Path $root 'docs\brand\generation-records'
 [IO.Directory]::CreateDirectory($iconDirectory) | Out-Null
-[IO.Directory]::CreateDirectory($pwaAssets) | Out-Null
+if (-not $DesktopOnly) { [IO.Directory]::CreateDirectory($pwaAssets) | Out-Null }
 [IO.Directory]::CreateDirectory($recordDirectory) | Out-Null
 
 $source = [Drawing.Image]::FromFile($MasterPath)
@@ -180,8 +186,10 @@ try {
   foreach ($size in @(16, 20, 24, 32, 40, 48, 64, 128, 256)) {
     Save-Png $bitmaps[$size] (Join-Path $iconDirectory "AI-Sales-OS-$size.png")
   }
-  Save-Png $bitmaps[192] (Join-Path $pwaAssets 'pwa-192.png')
-  Save-Png $bitmaps[512] (Join-Path $pwaAssets 'pwa-512.png')
+  if (-not $DesktopOnly) {
+    Save-Png $bitmaps[192] (Join-Path $pwaAssets 'pwa-192.png')
+    Save-Png $bitmaps[512] (Join-Path $pwaAssets 'pwa-512.png')
+  }
   $icoImages = @{}
   foreach ($size in @(16, 20, 24, 32, 40, 48, 64, 128, 256)) { $icoImages[$size] = $bitmaps[$size] }
   Write-BitmapIcon (Join-Path $desktopAssets 'AI-Sales-OS.ico') $icoImages
@@ -193,25 +201,37 @@ finally {
 
 $assetPaths = @(
   'desktop/WAFlow.Desktop/Assets/AI-Sales-OS.png',
-  'desktop/WAFlow.Desktop/Assets/AI-Sales-OS.ico',
-  'pwa/public/pwa-192.png',
-  'pwa/public/pwa-512.png'
+  'desktop/WAFlow.Desktop/Assets/AI-Sales-OS.ico'
 ) + (@(16, 20, 24, 32, 40, 48, 64, 128, 256) | ForEach-Object {
   "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-$_.png"
 })
+if (-not $DesktopOnly) {
+  $assetPaths += @('pwa/public/pwa-192.png', 'pwa/public/pwa-512.png')
+}
+
+$usedReference = -not [string]::IsNullOrWhiteSpace($ReferencePath)
+$platformScope = if ($DesktopOnly) {
+  'Windows desktop executable, taskbar, shortcut and installer assets only; macOS and PWA assets are unchanged.'
+}
+else {
+  'Windows desktop and PWA application assets.'
+}
 
 $manifest = [ordered]@{
   schemaVersion = 1
   generatedAtUtc = $GeneratedAtUtc
   sourceTool = 'OpenAI host-native image generation tool; model selected by host runtime'
-  sourceUsedReferenceImages = $false
-  projectOwnerAuthorization = 'The project owner explicitly authorized replacement with newly generated assets on 2026-08-10.'
+  sourceUsedReferenceImages = $usedReference
+  projectOwnerAuthorization = 'The project owner explicitly authorized updating the program icon to this generated version on 2026-08-10.'
+  platformScope = $platformScope
   prompt = Get-RelativeAssetPath $root $PromptPath
   promptSha256 = Get-CanonicalTextSha256 $PromptPath
   promptHashNormalization = 'UTF-8 without BOM; CRLF and CR line endings normalized to LF before SHA-256'
+  referenceImage = if ($usedReference) { Get-RelativeAssetPath $root $ReferencePath } else { $null }
+  referenceImageSha256 = if ($usedReference) { (Get-FileHash -Algorithm SHA256 -LiteralPath $ReferencePath).Hash } else { $null }
   originalMaster = Get-RelativeAssetPath $root $MasterPath
   originalMasterSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $MasterPath).Hash
-  derivation = 'Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1; no third-party brand assets or reference images used.'
+  derivation = "Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1. Scope: $platformScope"
   assets = @($assetPaths | ForEach-Object {
     $absolute = Join-Path $root $_
     [ordered]@{
@@ -227,5 +247,5 @@ $manifestPath = Join-Path $recordDirectory 'brand-assets-manifest.json'
   ($manifest | ConvertTo-Json -Depth 6),
   [Text.UTF8Encoding]::new($false))
 
-Write-Host "PASS generated original AI Sales OS brand assets from $MasterPath"
+Write-Host "PASS generated AI Sales OS brand assets from $MasterPath"
 Write-Host "Manifest: $manifestPath"

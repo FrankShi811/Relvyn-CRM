@@ -129,7 +129,21 @@
                         <DataGridTextColumn Header="国家" Binding="{Binding Country}" SortMemberPath="Country" Width="125" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="WhatsApp" Binding="{Binding PhoneE164}" SortMemberPath="PhoneE164" Width="150" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="WhatsApp 状态" Binding="{Binding PhoneState}" SortMemberPath="PhoneState" Width="128" ElementStyle="{StaticResource CustomerCellText}"/>
-                        <DataGridTextColumn Header="标签" Binding="{Binding TagsLabel}" SortMemberPath="TagsLabel" Width="190" ElementStyle="{StaticResource CustomerCellText}"/>
+                        <DataGridTextColumn Header="CRM 标签" Binding="{Binding TagsLabel}" SortMemberPath="TagsLabel" Width="130" ElementStyle="{StaticResource CustomerCellText}"/>
+                        <DataGridTemplateColumn Header="WhatsApp 标签" SortMemberPath="WhatsAppLabelsLabel" Width="190">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding WhatsAppLabelsToolTip}">
+                                        <ItemsControl ItemsSource="{Binding VisibleWhatsAppLabels}" ItemTemplate="{StaticResource CompactWhatsAppLabelChipTemplate}">
+                                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        </ItemsControl>
+                                        <Border Background="{DynamicResource SurfaceMuted}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="5" Padding="5,2" Margin="0,1,0,1" Visibility="{Binding AdditionalWhatsAppLabelsVisibility}">
+                                            <TextBlock Text="{Binding AdditionalWhatsAppLabelsText}" Foreground="{DynamicResource Muted}" FontSize="9.5" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="负责人" Binding="{Binding Owner}" SortMemberPath="Owner" Width="120" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="等级" Binding="{Binding Grade}" SortMemberPath="Grade" Width="64" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="阶段" Binding="{Binding StageLabel}" SortMemberPath="Stage" Width="92" ElementStyle="{StaticResource CustomerCellText}"/>

@@ -74,7 +74,12 @@ public partial class CustomersView : UserControl, IRefreshableView
             ? dimensions
             : dimensions.Where(dimension => dimension.Key.Equals(selectedDimension, StringComparison.CurrentCultureIgnoreCase)));
         _dimensionCount = dimensions.Count;
-        _filteredRows = leads.Select(lead => new CustomerRow(lead, _checkedLeadIds.Contains(lead.Id), RowSelectionChanged)).ToList();
+        var whatsappLabelsByLead = await _services.Repository.GetWhatsAppLabelsByLeadIdsAsync(leads.Select(lead => lead.Id));
+        _filteredRows = leads.Select(lead => new CustomerRow(
+            lead,
+            whatsappLabelsByLead.TryGetValue(lead.Id, out var labels) ? labels : [],
+            _checkedLeadIds.Contains(lead.Id),
+            RowSelectionChanged)).ToList();
         ApplyCurrentSort();
         ApplyPagination();
         EditButton.IsEnabled = CustomerGrid.SelectedItem is CustomerRow;
@@ -218,6 +223,7 @@ public partial class CustomersView : UserControl, IRefreshableView
             nameof(CustomerRow.PhoneE164) => row.PhoneE164,
             nameof(CustomerRow.PhoneState) => row.PhoneState,
             nameof(CustomerRow.TagsLabel) => row.TagsLabel,
+            nameof(CustomerRow.WhatsAppLabelsLabel) => row.WhatsAppLabelsLabel,
             nameof(CustomerRow.Owner) => row.Owner,
             nameof(CustomerRow.Grade) => row.Grade,
             "Stage" => ((int)row.Lead.Stage).ToString("D2", CultureInfo.InvariantCulture),
@@ -394,9 +400,16 @@ public partial class CustomersView : UserControl, IRefreshableView
         private readonly Action<CustomerRow, bool> _selectionChanged;
         private bool _isSelected;
 
-        public CustomerRow(Lead lead, bool isSelected, Action<CustomerRow, bool> selectionChanged)
+        public CustomerRow(Lead lead, IEnumerable<WhatsAppLabel> whatsappLabels, bool isSelected, Action<CustomerRow, bool> selectionChanged)
         {
             Lead = lead;
+            WhatsAppLabels = whatsappLabels
+                .Where(label => !label.Deleted && !string.IsNullOrWhiteSpace(label.Name))
+                .GroupBy(label => $"{label.AccountId}\u001f{label.Id}", StringComparer.OrdinalIgnoreCase)
+                .Select(group => WhatsAppLabelChip.From(group.OrderByDescending(label => label.UpdatedAt).First()))
+                .OrderBy(label => label.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(label => label.AccountId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             _isSelected = isSelected;
             _selectionChanged = selectionChanged;
         }
@@ -411,6 +424,12 @@ public partial class CustomersView : UserControl, IRefreshableView
         public string PhoneE164 => Lead.PhoneE164;
         public string PhoneState => Lead.PhoneState;
         public string TagsLabel => Lead.TagsLabel;
+        public IReadOnlyList<WhatsAppLabelChip> WhatsAppLabels { get; }
+        public IReadOnlyList<WhatsAppLabelChip> VisibleWhatsAppLabels => WhatsAppLabels.Take(2).ToList();
+        public Visibility AdditionalWhatsAppLabelsVisibility => WhatsAppLabels.Count > 2 ? Visibility.Visible : Visibility.Collapsed;
+        public string AdditionalWhatsAppLabelsText => WhatsAppLabels.Count > 2 ? $"+{WhatsAppLabels.Count - 2}" : "";
+        public string WhatsAppLabelsLabel => string.Join(", ", WhatsAppLabels.Select(label => label.Name));
+        public string WhatsAppLabelsToolTip => WhatsAppLabels.Count == 0 ? "尚未同步 WhatsApp 标签" : string.Join("、", WhatsAppLabels.Select(label => label.Name));
         public string Owner => Lead.Owner;
         public string Grade => Lead.Grade;
         public string StageLabel => Lead.StageLabel;

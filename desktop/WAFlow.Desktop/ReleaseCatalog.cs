@@ -9,17 +9,25 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.19.1";
+            : "5.19.2";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.19.2", "2026-08-10", "修复 WhatsApp 标签展示与回传链路",
+        [
+            "修复 WhatsApp 标签窗口中“创建”按钮始终不可点击的问题：输入有效名称且账号已连接后即可创建，支持 Enter、重复名称提示与操作中防重复点击；添加、移除、创建和删除均先提交 WhatsApp，再更新 OS。",
+            "WhatsApp 标签以彩色小卡片同步展示在左侧会话列表和客户列表；按标签筛选改用稳定的标签 ID，客户页通过批量联表投影标签，避免逐客户查询。",
+            "移除 WhatsApp 右侧客户资料栏中视觉重复的 CRM 标签输入框；已有 CRM 标签数据继续保留并在客户列表的“CRM 标签”列显示，不会被保存客户资料时清空，也不会与 WhatsApp 原生标签混写。",
+            "修复 WhatsApp 以 LID 标识联系人时标签关联无法落到手机号会话的问题：号码映射稍后到达时会有界排队并按序回放，消息级标签不会误写成客户标签；界面状态改为“已提交、请在手机端确认”，避免把协议接受误报为手机已显示。",
+            "Windows 应用图标更新为新的深海军蓝 R/回路箭头标志，并保留生成母版、提示词、参考资产与派生文件哈希；本版本只发布 Windows x64 安装包与自动更新资产，macOS 和 PWA 版本、图标与部署均保持不变。"
+        ], true),
         new("5.19.1", "2026-08-10", "修复 Windows 5.19.0 更新后的启动错误",
         [
             "修复 Windows 5.19.0 启动时提示 TypeConverterMarkupExtension、主窗口无法打开的问题：重新生成符合 WPF 与 Windows Imaging Component 解码规范的多尺寸应用图标，保留 5.19.0 已确认的原创品牌母版与外观。",
             "修复主窗口在初始化中断后关闭时再次弹出 Object reference not set 错误的问题；半初始化窗口现在会安全退出，不再产生第二个误导性错误对话框。",
             "Windows 发布门禁新增 WPF 图标解码验证；安装包冒烟测试必须确认真正进入 AI Sales OS 主窗口，错误对话框或提前退出都会直接阻止发布。",
             "本补丁仅更新 Windows 桌面版与 Windows 自动更新资产；macOS 与 PWA 的代码、版本、构建和发布均保持冻结，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.19.0", "2026-08-10", "行业中立角色上下文与合规发布链",
         [
             "设置新增公司业务与使用角色：可直接选择通用角色模板，也可填写自定义角色；保存后自动应用于 Customer Brain、客户外部调查、商机智能、WhatsApp、邮件箱、自动化、报告与其他结构化 AI 分析，无需在每个模块重复配置。",

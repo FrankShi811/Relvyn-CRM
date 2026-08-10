@@ -24,6 +24,7 @@ import { normalizeOutboundUserJid, summarizeOutboundDeviceFanout } from './outbo
 import { isGroupJid, isSupportedInboundJid, normalizeGroupJid } from './conversation-routing.mjs'
 import { resolveBaileysVersion } from './connection-bootstrap.mjs'
 import { createProxyAgent, normalizeProxyUrl, safeProxyLabel } from './network-routing.mjs'
+import { ChatLabelAssociationRouter } from './label-routing.mjs'
 import { OfflineCatchupCoordinator } from './offline-catchup.mjs'
 import {
   anchorTimestamp,
@@ -378,6 +379,8 @@ async function phoneJidFromAnyJid(jid) {
     return ''
   }
 }
+
+const labelAssociationRouter = new ChatLabelAssociationRouter(phoneJidFromAnyJid)
 
 async function verifiedPhoneJid(jid, expectedPhone) {
   const phoneJid = await phoneJidFromAnyJid(jid)
@@ -1234,6 +1237,7 @@ async function closeSocket() {
 }
 
 async function resetSessionForQr() {
+  labelAssociationRouter.clear()
   if (!state.sessionDir) return
   await fs.rm(state.sessionDir, { recursive: true, force: true })
   await fs.mkdir(state.sessionDir, { recursive: true })
@@ -1430,6 +1434,7 @@ async function connect(catchupSource = 'startup') {
     enqueueSync(() => processChats(chats, 'live_update'), 'chats')
   })
   socket.ev.on('labels.edit', label => {
+    if (state.connectionGeneration !== generation || state.socket !== socket) return
     if (!label || typeof label !== 'object') return
     const data = {
       id: String(label.id ?? ''),
@@ -1442,25 +1447,33 @@ async function connect(catchupSource = 'startup') {
     emit({ type: 'event', event: 'label_upsert', accountId: state.accountId, data })
   })
   socket.ev.on('labels.association', payload => {
-    const association = payload?.association
-    if (!association) return
-    const chatId = String(association.chatId ?? association.jid ?? '')
-    const labelId = String(association.labelId ?? '')
-    const type = payload.type === 'remove' ? 'remove' : 'add'
-    if (!chatId || !labelId) return
-    emit({
-      type: 'event', event: 'chat_label_upsert', accountId: state.accountId,
-      data: { chatId, labelId, type, phone: phoneFromJid(chatId) }
-    })
+    enqueueSync(async () => {
+      if (state.connectionGeneration !== generation || state.socket !== socket) return
+      // WhatsApp increasingly sends label associations with an @lid chat id.
+      // Persisting that opaque id makes the desktop lookup miss because
+      // conversations are keyed by the bare phone number. Resolve it through the
+      // linked-device mapping before crossing the Bridge boundary.
+      const associations = await labelAssociationRouter.route(payload)
+      if (state.connectionGeneration !== generation || state.socket !== socket) return
+      for (const data of associations) emit({
+        type: 'event', event: 'chat_label_upsert', accountId: state.accountId, data
+      })
+    }, 'labels')
   })
   socket.ev.on('lid-mapping.update', mapping => {
     enqueueSync(async () => {
+      if (state.connectionGeneration !== generation || state.socket !== socket) return
       const lid = String(mapping?.lid ?? '')
       const jid = String(mapping?.pn ?? '')
       const phone = phoneFromJid(jid)
       if (!lid || !phone) return
+      const labelAssociations = await labelAssociationRouter.replay(lid, jid)
+      if (state.connectionGeneration !== generation || state.socket !== socket) return
       const contacts = [...state.contacts.values()].filter(item => item.jid === lid || item.sourceJid === lid)
       for (const item of contacts) rememberContact({ ...item, jid, phone, source: 'lid_mapping' })
+      for (const data of labelAssociations) emit({
+        type: 'event', event: 'chat_label_upsert', accountId: state.accountId, data
+      })
       const chats = [...state.chats.values()].filter(item => item.jid === lid || item.sourceJid === lid)
       for (const item of chats) rememberChat({ ...item, jid, phone, source: 'lid_mapping' })
       emitItems('contacts_upsert', contacts.map(item => ({ ...item, jid, phone, source: 'lid_mapping' })), 'lid_mapping')
@@ -1752,6 +1765,7 @@ async function handle(command) {
         reply(requestId, true, { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.3', connection: state.connection })
         return
       case 'initialize': {
+        labelAssociationRouter.clear()
         state.accountId = validateAccountId(command.accountId ?? 'default')
         state.authKey = parseEncryptionKey(command.encryptionKey)
         state.sessionDir = resolveSessionDir(state.accountId)

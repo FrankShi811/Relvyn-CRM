@@ -5619,6 +5619,91 @@ public sealed partial class LocalRepository
         return ids;
     }
 
+    public async Task<Dictionary<string, List<WhatsAppLabel>>> GetWhatsAppLabelsByChatIdsAsync(
+        string accountId,
+        IEnumerable<string> chatIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = chatIds.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var result = new Dictionary<string, List<WhatsAppLabel>>(StringComparer.OrdinalIgnoreCase);
+        if (ids.Length == 0) return result;
+
+        await using var db = Open(); await db.OpenAsync(cancellationToken);
+        foreach (var chunk in ids.Chunk(400))
+        {
+            await using var command = db.CreateCommand();
+            var parameters = chunk.Select((_, index) => $"$chat{index}").ToArray();
+            command.CommandText = $"""
+                SELECT cl.chat_id,l.id,l.account_id,l.name,l.color,l.deleted,l.predefined_id,l.updated_at
+                FROM whatsapp_chat_labels cl
+                JOIN whatsapp_labels l ON l.account_id=cl.account_id AND l.id=cl.label_id
+                WHERE cl.account_id=$account AND l.deleted=0 AND cl.chat_id IN ({string.Join(',', parameters)})
+                ORDER BY cl.chat_id,l.name COLLATE NOCASE
+                """;
+            command.Parameters.AddWithValue("$account", accountId);
+            for (var index = 0; index < chunk.Length; index++)
+                command.Parameters.AddWithValue(parameters[index], chunk[index]);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var chatId = reader.GetString(0);
+                if (!result.TryGetValue(chatId, out var labels)) result[chatId] = labels = [];
+                labels.Add(new WhatsAppLabel
+                {
+                    Id = reader.GetString(1), AccountId = reader.GetString(2), Name = reader.GetString(3),
+                    Color = reader.GetInt32(4), Deleted = reader.GetInt32(5) != 0,
+                    PredefinedId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                    UpdatedAt = DateTimeOffset.Parse(reader.GetString(7))
+                });
+            }
+        }
+        return result;
+    }
+
+    public async Task<Dictionary<string, List<WhatsAppLabel>>> GetWhatsAppLabelsByLeadIdsAsync(
+        IEnumerable<string> leadIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = leadIds.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var result = new Dictionary<string, List<WhatsAppLabel>>(StringComparer.OrdinalIgnoreCase);
+        if (ids.Length == 0) return result;
+
+        await using var db = Open(); await db.OpenAsync(cancellationToken);
+        foreach (var chunk in ids.Chunk(400))
+        {
+            await using var command = db.CreateCommand();
+            var parameters = chunk.Select((_, index) => $"$lead{index}").ToArray();
+            command.CommandText = $"""
+                SELECT DISTINCT c.lead_id,l.id,l.account_id,l.name,l.color,l.deleted,l.predefined_id,l.updated_at
+                FROM whatsapp_conversations c
+                JOIN whatsapp_chat_labels cl ON cl.account_id=c.account_id AND cl.chat_id=c.phone
+                JOIN whatsapp_labels l ON l.account_id=cl.account_id AND l.id=cl.label_id
+                WHERE l.deleted=0 AND c.lead_id IN ({string.Join(',', parameters)})
+                ORDER BY c.lead_id,l.name COLLATE NOCASE
+                """;
+            for (var index = 0; index < chunk.Length; index++)
+                command.Parameters.AddWithValue(parameters[index], chunk[index]);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var leadId = reader.GetString(0);
+                if (!result.TryGetValue(leadId, out var labels)) result[leadId] = labels = [];
+                labels.Add(new WhatsAppLabel
+                {
+                    Id = reader.GetString(1), AccountId = reader.GetString(2), Name = reader.GetString(3),
+                    Color = reader.GetInt32(4), Deleted = reader.GetInt32(5) != 0,
+                    PredefinedId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                    UpdatedAt = DateTimeOffset.Parse(reader.GetString(7))
+                });
+            }
+        }
+        return result;
+    }
+
     public async Task SetWhatsAppChatLabelAsync(string accountId, string chatId, string labelId, bool add, CancellationToken cancellationToken = default)
     {
         await using var db = Open(); await db.OpenAsync(cancellationToken);

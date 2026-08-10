@@ -17,6 +17,7 @@
     "smoke:message-content": "node scripts/message-content-smoke.mjs",
     "smoke:outbound-routing": "node scripts/outbound-routing-smoke.mjs",
     "smoke:conversation-routing": "node scripts/conversation-routing-smoke.mjs",
+    "smoke:label-routing": "node scripts/label-routing-smoke.mjs",
     "smoke:connection-bootstrap": "node scripts/connection-bootstrap-smoke.mjs",
     "smoke:network-routing": "node scripts/network-routing-smoke.mjs",
     "smoke:offline-catchup": "node scripts/offline-catchup-smoke.mjs",

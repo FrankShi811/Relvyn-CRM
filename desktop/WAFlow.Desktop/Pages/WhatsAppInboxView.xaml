@@ -50,7 +50,7 @@
                             <Grid Margin="0,9,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                 <Button x:Name="SyncButton" Content="同步联系人与历史" Style="{StaticResource SecondaryButton}" Click="Sync_Click" Padding="10,6" IsEnabled="False"/>
-                                <ComboBox x:Name="LabelFilterCombo" Grid.Column="1" Width="104" FontSize="11" Margin="8,0,0,0" SelectionChanged="LabelFilter_SelectionChanged" ToolTip="按 WhatsApp 标签筛选会话"/>
+                                <ComboBox x:Name="LabelFilterCombo" Grid.Column="1" Width="104" FontSize="11" Margin="8,0,0,0" DisplayMemberPath="Name" SelectionChanged="LabelFilter_SelectionChanged" ToolTip="按 WhatsApp 标签筛选会话" AutomationProperties.Name="按 WhatsApp 标签筛选会话"/>
                                 <TextBlock x:Name="SyncStatusText" Grid.Column="2" Text="连接后自动同步" Foreground="{DynamicResource Muted}" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
                             </Grid>
                         </StackPanel>
@@ -74,14 +74,14 @@
                                     <TextBlock Grid.Column="1" Text="{Binding LastTimeLabel}" Foreground="{DynamicResource Muted}" FontSize="10"/>
                                     <TextBlock Grid.Row="1" Text="{Binding LastMessage}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,8,0"/>
                                     <Border Grid.Row="1" Grid.Column="1" Background="{DynamicResource Primary}" CornerRadius="9" MinWidth="18" Height="18" Visibility="{Binding UnreadVisibility}"><TextBlock Text="{Binding Unread}" Foreground="{DynamicResource SidebarText}" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-                                    <ItemsControl Grid.Row="2" Grid.ColumnSpan="2" ItemsSource="{Binding Labels}" Margin="0,5,0,0" Visibility="{Binding LabelsVisibility}">
-                                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate><DataTemplate>
-                                            <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="5" Padding="5,1.5" Margin="0,1,4,1">
-                                                <TextBlock Text="{Binding}" FontSize="9" Foreground="{DynamicResource Muted}"/>
-                                            </Border>
-                                        </DataTemplate></ItemsControl.ItemTemplate>
-                                    </ItemsControl>
+                                    <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,5,0,0" Visibility="{Binding LabelsVisibility}">
+                                        <ItemsControl ItemsSource="{Binding VisibleLabels}" ItemTemplate="{StaticResource WhatsAppLabelChipTemplate}">
+                                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        </ItemsControl>
+                                        <Border Background="{DynamicResource SurfaceMuted}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="5" Padding="5,2" Margin="0,1,0,1" Visibility="{Binding AdditionalLabelsVisibility}" ToolTip="{Binding LabelsToolTip}">
+                                            <TextBlock Text="{Binding AdditionalLabelsText}" Foreground="{DynamicResource Muted}" FontSize="9.5" FontWeight="SemiBold"/>
+                                        </Border>
+                                    </StackPanel>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -92,7 +92,7 @@
             <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <Border Padding="18,14" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
-                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="ChatTitleText" Text="选择会话" FontWeight="SemiBold" FontSize="17"/><TextBlock x:Name="ChatNumberText" Text="连接后会同步个人与群聊会话" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,3,0,0"/></StackPanel><Button Grid.Column="1" x:Name="ChatLabelButton" Content="🏷 标签" Style="{StaticResource SecondaryButton}" FontSize="10.5" Padding="9,4" Margin="0,0,8,0" VerticalAlignment="Center" Click="ChatLabelButton_Click" Visibility="Collapsed" ToolTip="管理该客户的 WhatsApp 标签（与手机同步）"/><Border Grid.Column="2" Background="{DynamicResource PrimarySoft}" CornerRadius="10" Padding="9,5" VerticalAlignment="Center"><TextBlock x:Name="ChatModeBadgeText" Text="CRM LIVE SYNC" Foreground="{DynamicResource Primary}" FontSize="9" FontWeight="Bold"/></Border></Grid>
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock x:Name="ChatTitleText" Text="选择会话" FontWeight="SemiBold" FontSize="17"/><TextBlock x:Name="ChatNumberText" Text="连接后会同步个人与群聊会话" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,3,0,0"/></StackPanel><Button Grid.Column="1" x:Name="ChatLabelButton" Content="标签" Style="{StaticResource SecondaryButton}" FontSize="10.5" Padding="11,4" Margin="0,0,8,0" VerticalAlignment="Center" Click="ChatLabelButton_Click" Visibility="Collapsed" ToolTip="管理该客户的 WhatsApp 标签" AutomationProperties.Name="管理当前会话的 WhatsApp 标签"/><Border Grid.Column="2" Background="{DynamicResource PrimarySoft}" CornerRadius="10" Padding="9,5" VerticalAlignment="Center"><TextBlock x:Name="ChatModeBadgeText" Text="CRM LIVE SYNC" Foreground="{DynamicResource Primary}" FontSize="9" FontWeight="Bold"/></Border></Grid>
                     </Border>
                     <Border x:Name="StatusUpdateBanner" Grid.Row="1" Visibility="Collapsed" Background="{DynamicResource WarningSoft}" BorderBrush="{DynamicResource Warning}" BorderThickness="0,0,0,1" Padding="16,10">
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -421,7 +421,6 @@
                         <TextBlock Text="姓名" Style="{StaticResource LabelText}"/><TextBox x:Name="NameBox" Margin="0,5,0,11"/>
                         <TextBlock Text="阶段" Style="{StaticResource LabelText}"/><ComboBox x:Name="StageCombo" DisplayMemberPath="Label" Margin="0,5,0,11"/>
                         <TextBlock Text="负责人" Style="{StaticResource LabelText}"/><TextBox x:Name="OwnerBox" Margin="0,5,0,11"/>
-                        <TextBlock Text="标签（逗号分隔）" Style="{StaticResource LabelText}"/><TextBox x:Name="TagsBox" Margin="0,5,0,11"/>
                         <CheckBox x:Name="OptInCheck" Content="客户已同意接收 WhatsApp 营销消息" Margin="0,0,0,7"/>
                         <CheckBox x:Name="OptedOutCheck" Content="客户已退订（禁止任何 Campaign）" Margin="0,0,0,11" Foreground="{DynamicResource Danger}"/>
                         <TextBlock Text="人工备注" Style="{StaticResource LabelText}"/>

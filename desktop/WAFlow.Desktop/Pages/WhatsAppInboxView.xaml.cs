@@ -908,7 +908,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             };
             _currentCustomerSuccessContext = null;
             LeadLinkStateText.Text = "群聊安全隔离：不关联单一客户，不触发 CRM/AI 自动化";
-            NameBox.Clear(); OwnerBox.Clear(); TagsBox.Clear(); OptInCheck.IsChecked = false;
+            NameBox.Clear(); OwnerBox.Clear(); OptInCheck.IsChecked = false;
             OptedOutCheck.IsChecked = false; NotesBox.Clear(); CustomFieldsBox.Clear();
             SaveLeadButton.IsEnabled = false;
             UpdateCustomerSuccessPanel(_currentIdentityResolution, null);
@@ -949,7 +949,6 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 : $"WhatsApp：{conversation.DisplayName} · CRM：{_currentLead.DisplayName} · {_currentLead.Grade} 级";
         NameBox.Text = _currentLead?.Name ?? "";
         OwnerBox.Text = _currentLead?.Owner ?? "";
-        TagsBox.Text = _currentLead is null ? "" : string.Join(", ", _currentLead.Tags);
         OptInCheck.IsChecked = _currentLead?.WhatsAppOptIn == true;
         OptedOutCheck.IsChecked = _currentLead?.OptedOut == true;
         NotesBox.Text = _currentLead?.ManualNotes ?? "";
@@ -976,7 +975,6 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 lead.StageSource = "user";
                 lead.StageManuallyUpdatedAt = DateTimeOffset.Now;
             }
-            lead.Tags = TagsBox.Text.Split([',','，',';','；','|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
             var wasOptedIn = lead.WhatsAppOptIn;
             lead.WhatsAppOptIn = OptInCheck.IsChecked == true;
             if (!wasOptedIn && lead.WhatsAppOptIn)
@@ -1582,14 +1580,14 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     private void ApplyConversationFilter()
     {
         var query = ConversationSearchBox.Text.Trim();
-        var selectedLabel = LabelFilterCombo.SelectedItem as string;
+        var selectedLabel = LabelFilterCombo.SelectedItem as LabelFilterOption;
         IEnumerable<ConversationItem> visible = _conversations;
         if (query.Length > 0)
             visible = visible.Where(x => x.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) || x.Phone.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Jid.Contains(query, StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(selectedLabel) && selectedLabel != "全部标签")
-            visible = visible.Where(x => x.Labels.Contains(selectedLabel, StringComparer.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(selectedLabel?.Id))
+            visible = visible.Where(x => x.Labels.Any(label => label.Id.Equals(selectedLabel.Id, StringComparison.OrdinalIgnoreCase)));
         ConversationList.ItemsSource = visible.ToList();
-        var filtered = query.Length > 0 || (selectedLabel is not null && selectedLabel != "全部标签");
+        var filtered = query.Length > 0 || !string.IsNullOrWhiteSpace(selectedLabel?.Id);
         ConversationCountText.Text = filtered ? $"找到 {ConversationList.Items.Count} 个" : $"{_persistedConversationCount} 会话 · {_contactCount} 联系人";
     }
 
@@ -1597,19 +1595,22 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     {
         var accountId = CurrentAccountId;
         var labels = await _services.Repository.GetWhatsAppLabelsAsync(accountId);
-        var labelNames = labels.ToDictionary(label => label.Id, label => label.Name, StringComparer.OrdinalIgnoreCase);
-        var previous = LabelFilterCombo.SelectedItem as string;
+        var labelsById = labels.ToDictionary(label => label.Id, StringComparer.OrdinalIgnoreCase);
+        var previousId = (LabelFilterCombo.SelectedItem as LabelFilterOption)?.Id ?? "";
         LabelFilterCombo.Items.Clear();
-        LabelFilterCombo.Items.Add("全部标签");
-        foreach (var label in labels) LabelFilterCombo.Items.Add(label.Name);
-        LabelFilterCombo.SelectedItem = previous ?? "全部标签";
-        if (LabelFilterCombo.SelectedItem is null && LabelFilterCombo.Items.Count > 0) LabelFilterCombo.SelectedIndex = 0;
+        LabelFilterCombo.Items.Add(new LabelFilterOption("", "全部标签"));
+        foreach (var label in labels) LabelFilterCombo.Items.Add(new LabelFilterOption(label.Id, label.Name));
+        LabelFilterCombo.SelectedItem = LabelFilterCombo.Items.Cast<LabelFilterOption>()
+            .FirstOrDefault(item => item.Id.Equals(previousId, StringComparison.OrdinalIgnoreCase));
+        if (LabelFilterCombo.SelectedItem is null) LabelFilterCombo.SelectedIndex = 0;
+
+        var assignments = await _services.Repository.GetWhatsAppLabelsByChatIdsAsync(accountId, _conversations.Select(item => item.Phone));
         foreach (var conversation in _conversations)
         {
-            conversation.Labels.Clear();
-            var ids = await _services.Repository.GetWhatsAppChatLabelIdsAsync(accountId, conversation.Phone);
-            foreach (var id in ids)
-                if (labelNames.TryGetValue(id, out var name)) conversation.Labels.Add(name);
+            var chips = assignments.TryGetValue(conversation.Phone, out var assigned)
+                ? assigned.Where(label => labelsById.ContainsKey(label.Id)).Select(WhatsAppLabelChip.From)
+                : [];
+            conversation.SetLabels(chips);
         }
     }
 
@@ -1619,7 +1620,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         ApplyConversationFilter();
     }
 
-    private void ChatLabelButton_Click(object sender, RoutedEventArgs e)
+    private async void ChatLabelButton_Click(object sender, RoutedEventArgs e)
     {
         if (ConversationList.SelectedItem is not ConversationItem conversation || conversation.IsGroup) return;
         try
@@ -1629,7 +1630,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 Owner = Window.GetWindow(this)
             };
             window.ShowDialog();
-            _ = RefreshConversationLabelsAsync();
+            await RefreshConversationLabelsAsync();
+            ApplyConversationFilter();
         }
         catch (Exception error)
         {
@@ -1941,7 +1943,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     {
         if (_pendingAgentDraftContextToken is not null)
             ClearKnowledgeReferences(clearBoundComposer: true);
-        _currentLead = null; LeadLinkStateText.Text = "选择会话后关联客户"; NameBox.Clear(); OwnerBox.Clear(); TagsBox.Clear(); OptInCheck.IsChecked = false; OptedOutCheck.IsChecked = false; NotesBox.Clear(); CustomFieldsBox.Clear(); SaveLeadButton.IsEnabled = false;
+        _currentLead = null; LeadLinkStateText.Text = "选择会话后关联客户"; NameBox.Clear(); OwnerBox.Clear(); OptInCheck.IsChecked = false; OptedOutCheck.IsChecked = false; NotesBox.Clear(); CustomFieldsBox.Clear(); SaveLeadButton.IsEnabled = false;
         _currentIdentityResolution = null;
         _currentCustomerSuccessContext = null;
         UpdateCustomerSuccessPanel(null, null);
@@ -2762,6 +2764,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
 
     private sealed record StageOption(string Label, LeadStage Value);
     private sealed record AgentModeOption(string Label, ConversationAgentMode Value);
+    private sealed record LabelFilterOption(string Id, string Name);
     private sealed record KnowledgeReferenceRow(string Citation, string Preview, KnowledgeRetrievalHit Hit);
     private sealed record WhatsAppInboxSnapshot(
         IReadOnlyList<WhatsAppAccount> Accounts,
@@ -2774,7 +2777,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
 
     private sealed class ConversationItem(string accountId, string phone, string displayName, string jid) : INotifyPropertyChanged
     {
-        private string _displayName = displayName; private string _lastMessage = ""; private DateTimeOffset _lastAt; private int _unread; private bool _isPinned; private DateTimeOffset? _pinnedAt; private bool _isGroup;
+        private string _displayName = displayName; private string _lastMessage = ""; private DateTimeOffset _lastAt; private int _unread; private bool _isPinned; private DateTimeOffset? _pinnedAt; private bool _isGroup; private IReadOnlyList<WhatsAppLabelChip> _labels = [];
         public string AccountId { get; } = accountId; public string Phone { get; } = phone; public string Jid { get; set; } = jid; public string LeadId { get; set; } = ""; public string Id => string.IsNullOrWhiteSpace(Phone) ? $"{AccountId}:{Jid}" : $"{AccountId}:{Phone}"; public ObservableCollection<MessageItem> Messages { get; } = [];
         public bool IsGroup { get => _isGroup; set { if (Set(ref _isGroup, value)) { OnPropertyChanged(nameof(GroupVisibility)); OnPropertyChanged(nameof(PinActionLabel)); } } }
         public Visibility GroupVisibility => IsGroup ? Visibility.Visible : Visibility.Collapsed;
@@ -2789,8 +2792,26 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         public DateTimeOffset? PinnedAt { get => _pinnedAt; set => Set(ref _pinnedAt, value); }
         public Visibility PinnedVisibility => IsPinned ? Visibility.Visible : Visibility.Collapsed;
         public string PinActionLabel => IsGroup ? "群聊置顶请在手机 WhatsApp 操作" : IsPinned ? "取消置顶并同步到手机" : "置顶并同步到手机";
-        public ObservableCollection<string> Labels { get; } = [];
+        public IReadOnlyList<WhatsAppLabelChip> Labels => _labels;
+        public IReadOnlyList<WhatsAppLabelChip> VisibleLabels => _labels.Take(2).ToList();
         public Visibility LabelsVisibility => Labels.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility AdditionalLabelsVisibility => Labels.Count > 2 ? Visibility.Visible : Visibility.Collapsed;
+        public string AdditionalLabelsText => Labels.Count > 2 ? $"+{Labels.Count - 2}" : "";
+        public string LabelsToolTip => string.Join("、", Labels.Select(label => label.Name));
+        public void SetLabels(IEnumerable<WhatsAppLabelChip> labels)
+        {
+            _labels = labels
+                .GroupBy(label => label.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(label => label.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            OnPropertyChanged(nameof(Labels));
+            OnPropertyChanged(nameof(VisibleLabels));
+            OnPropertyChanged(nameof(LabelsVisibility));
+            OnPropertyChanged(nameof(AdditionalLabelsVisibility));
+            OnPropertyChanged(nameof(AdditionalLabelsText));
+            OnPropertyChanged(nameof(LabelsToolTip));
+        }
         public event PropertyChangedEventHandler? PropertyChanged;
         private bool Set<T>(ref T field, T value, [CallerMemberName] string? property = null) { if (EqualityComparer<T>.Default.Equals(field, value)) return false; field = value; OnPropertyChanged(property); return true; }
         private void OnPropertyChanged(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
