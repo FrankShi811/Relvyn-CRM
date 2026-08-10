@@ -9,10 +9,17 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.19.3";
+            : "5.19.4";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.19.4", "2026-08-10", "固定 Windows 任务栏与快捷方式品牌图标",
+        [
+            "程序启动时会从受哈希保护的内嵌资源生成固定名称的 Windows Shell ICO；主窗口、任务栏重启身份、桌面快捷方式和开始菜单快捷方式统一引用这份稳定图标，避免更新后回退到旧 EXE 图标缓存。",
+            "主窗口继续显式设置大图标、小图标与 Small2 任务栏图标，并保留稳定 AppUserModelID；Shell ICO 无法生成时会安全回退到 EXE 内嵌图标，不影响启动。",
+            "Windows 安装包冒烟门禁新增真实运行时验证：安装隔离 QA 版并打开主窗口后读取 WM_GETICON，将任务栏大图标和小图标逐像素对比品牌基准，同时校验生成的 Shell ICO 哈希与两个快捷方式的图标位置；任一项不一致都会阻止发布。",
+            "已核验 GitHub v5.19.2 便携包 SHA-256 与发布记录一致，其中 AISalesOS.exe 的 32x32 内嵌图标与当前深海军蓝 R/回路箭头品牌基准逐像素一致；本补丁仅更新 Windows 桌面版和 Windows 自动更新资产，macOS 与 PWA 保持不变。"
+        ], true),
         new("5.19.3", "2026-08-10", "会话级 AI 自动托管与人工接管",
         [
             "Customer Success Agent 的模式配置与运行状态完全分离：选择托管模式不再自动抢占客户锁或发送，只有通过前置检查并明确点击“开始托管”后才会进入运行态。",
@@ -23,7 +30,7 @@ public static class ReleaseCatalog
             "风险事项只允许一次最小必要信息收集，随后进入等待人工；知识冲突、过期、内部专用或证据不足不能解锁自动回复，单纯感谢、告别或明确结束的话题不会生成多余收尾消息。",
             "WhatsApp Inbox 增加动态 AI 主按钮、会话运行状态、模式、话题、风险、暂停原因、Brain/知识来源和审计日志入口，并补齐键盘焦点、实时状态播报与对比度。",
             "本补丁仅更新 Windows 桌面版、Windows Bridge、中文安装包与 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.19.2", "2026-08-10", "修复 WhatsApp 标签展示与回传链路",
         [
             "修复 WhatsApp 标签窗口中“创建”按钮始终不可点击的问题：输入有效名称且账号已连接后即可创建，支持 Enter、重复名称提示与操作中防重复点击；添加、移除、创建和删除均先提交 WhatsApp，再更新 OS。",
