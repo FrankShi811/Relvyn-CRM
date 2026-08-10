@@ -1133,7 +1133,7 @@ await using (var groupBridge = new WhatsAppConnectionManager())
         jid = groupJid,
         groupJid,
         isGroup = true,
-        displayName = "DHGATE-needle machine",
+        displayName = "NORTHSTAR-needle machine",
         lastMessage = "SP-Azita: Series symbols up here",
         lastMessageAt = DateTimeOffset.Now.AddMinutes(-1).ToString("O"),
         unreadCount = 0,
@@ -1145,7 +1145,7 @@ await using (var groupBridge = new WhatsAppConnectionManager())
     {
         jid = groupJid,
         groupJid,
-        groupName = "DHGATE-needle machine",
+        groupName = "NORTHSTAR-needle machine",
         isGroup = true,
         id = "wamid-group-live",
         fromMe = false,
@@ -1165,7 +1165,7 @@ await using (var groupBridge = new WhatsAppConnectionManager())
         groupSynchronized
         && storedGroupConversation is { IsGroup: true, Phone: "", LeadId: "", UnreadCount: 1 }
         && storedGroupConversation.Jid == groupJid
-        && storedGroupConversation.DisplayName == "DHGATE-needle machine"
+        && storedGroupConversation.DisplayName == "NORTHSTAR-needle machine"
         && storedGroupMessage.IsGroup
         && storedGroupMessage.ParticipantName == "SP-Azita"
         && storedGroupMessage.LeadId == "",
@@ -2769,6 +2769,13 @@ Check(
 
 await repository.SaveAppSettingsAsync(new AppSettings
 {
+    BusinessRoleProfile=new BusinessRoleProfile
+    {
+        OrganizationName="Northstar Advisory",
+        BusinessDescription="为成长型企业提供销售流程与客户运营咨询。",
+        RoleName="商务拓展",
+        RoleSkillDescription="识别合作机会和决策链，所有报价与承诺由人工确认。"
+    },
     DeepSeekBaseUrl="https://api.openai.com/v1",
     DeepSeekModel="gpt-4.1-mini",
     ActiveProviderId="openai",
@@ -2832,6 +2839,22 @@ Check(
     && persistedProviderSettings.ConfiguredAiProviders.Single(profile => profile.ProviderId == "deepseek")
         .ModelCapabilities.Single().ReasoningEfforts.Contains("ultra"),
     "global and per-module AI model, reasoning, theme and UI scale preferences persist additively");
+Check(
+    persistedProviderSettings.BusinessRoleProfile.OrganizationName == "Northstar Advisory"
+    && persistedProviderSettings.BusinessRoleProfile.RoleName == "商务拓展"
+    && persistedProviderSettings.BusinessRoleProfile.RoleSkillDescription.Contains("人工确认", StringComparison.Ordinal),
+    "company, business and role Skill context persists with the shared app settings");
+var businessRolePayload = BusinessRoleContextPolicy.ApplyPayload(
+    "{\"customer\":{\"name\":\"Elena\"}}",
+    persistedProviderSettings.BusinessRoleProfile);
+using var businessRoleDocument = JsonDocument.Parse(businessRolePayload);
+var businessRoleContext = businessRoleDocument.RootElement.GetProperty("workspace_profile");
+Check(
+    businessRoleContext.GetProperty("organization_name").GetString() == "Northstar Advisory"
+    && businessRoleContext.GetProperty("operator_role").GetString() == "商务拓展"
+    && businessRoleContext.GetProperty("role_skill").GetString()?.Contains("人工确认", StringComparison.Ordinal) == true
+    && BusinessRoleContextPolicy.ApplyInstructions("Return JSON.").Contains("Never assume a marketplace", StringComparison.Ordinal),
+    "business role context is attached as guarded descriptive data instead of overriding AI contracts");
 
 var settingsWindowRouteSnapshot = AiModulePreferencePersistence.CreateSnapshot(
     AiModuleKeys.Configurable.Select(moduleKey => new AiModulePreferenceSelection(
@@ -3100,6 +3123,13 @@ var deepSeekReasoningProvider = new DeepSeekService(
     new HttpClient(deepSeekReasoningHandler) { Timeout=TimeSpan.FromSeconds(5) });
 await deepSeekReasoningRepository.SaveAppSettingsAsync(new AppSettings
 {
+    BusinessRoleProfile=new BusinessRoleProfile
+    {
+        OrganizationName="Northstar Advisory",
+        BusinessDescription="B2B advisory services",
+        RoleName="商务拓展",
+        RoleSkillDescription="Identify evidence-backed cooperation opportunities."
+    },
     ActiveProviderId="deepseek",
     DeepSeekBaseUrl="https://api.deepseek.com",
     DeepSeekModel="deepseek-v4-flash",
@@ -3131,6 +3161,8 @@ Check(
     deepSeekReasoningResult.Value == "deepseek-thinking"
     && deepSeekReasoningBody.Contains("\"reasoning_effort\":\"high\"")
     && deepSeekReasoningBody.Contains("\"thinking\":{\"type\":\"enabled\"}")
+    && deepSeekReasoningBody.Contains("workspace_profile", StringComparison.Ordinal)
+    && deepSeekReasoningBody.Contains("Northstar Advisory", StringComparison.Ordinal)
     && !deepSeekReasoningBody.Contains("\"temperature\"")
     && !deepSeekReasoningBody.Contains("\"top_p\"")
     && !deepSeekReasoningBody.Contains("\"presence_penalty\"")
@@ -4031,9 +4063,9 @@ Check(aliceCrossAccountContext is not null
     && aliceCrossAccountContext.Messages.Any(item => item.AccountId == "account-a" && item.Body.Contains("account A"))
     && aliceCrossAccountContext.Messages.Any(item => item.AccountId == "account-b" && item.Body.Contains("account B")),
     "same customer context aggregates and updates messages across linked WhatsApp accounts");
-Check(new AccountPersona().RoleName == "Customer Success Agent"
+Check(new AccountPersona().RoleName == "AI 协作助手"
       && !new AccountPersona().Introduction.Contains("DHgate", StringComparison.OrdinalIgnoreCase),
-    "new customer success personas use platform-neutral built-in wording");
+    "new customer success personas use company- and platform-neutral built-in wording");
 await customerSuccessRepository.UpsertAccountPersonaAsync(new AccountPersona
 {
     AccountId = "account-a",
@@ -4043,7 +4075,7 @@ await customerSuccessRepository.UpsertAccountPersonaAsync(new AccountPersona
 var normalizedLegacyContext = await customerSuccessAgent.GetContextAsync("account-a", "conversation-a");
 var persistedLegacyPersona = await customerSuccessRepository.GetAccountPersonaAsync("account-a");
 Check(normalizedLegacyContext?.Persona is { } normalizedLegacyPersona
-      && normalizedLegacyPersona.RoleName == "Customer Success Agent"
+      && normalizedLegacyPersona.RoleName == "AI 协作助手"
       && !normalizedLegacyPersona.Introduction.Contains("DHgate", StringComparison.OrdinalIgnoreCase)
       && persistedLegacyPersona?.RoleName == "DHgate Customer Success",
     "legacy built-in persona wording is neutralized in memory without rewriting stored user data");

@@ -687,6 +687,7 @@ public sealed class DashboardSnapshot
 
 public sealed class AppSettings
 {
+    public BusinessRoleProfile BusinessRoleProfile { get; set; } = new();
     public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com";
     public string DeepSeekModel { get; set; } = "deepseek-v4-flash";
     public string ActiveProviderId { get; set; } = "deepseek";

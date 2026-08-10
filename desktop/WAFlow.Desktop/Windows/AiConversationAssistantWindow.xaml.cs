@@ -23,7 +23,7 @@ public partial class AiConversationAssistantWindow : Window
         LanguageText.Text = string.IsNullOrWhiteSpace(result.ReplyLanguage) ? "自动识别语言" : result.ReplyLanguage;
         NeedsSummaryText.Text = result.NeedsSummary;
         IntentText.Text = result.CustomerIntent;
-        SignalsText.Text = result.PurchaseSignals.Count == 0 ? "尚未识别到明确采购信号" : string.Join("\n", result.PurchaseSignals.Select(value => $"• {value}"));
+        SignalsText.Text = result.PurchaseSignals.Count == 0 ? "尚未识别到明确需求或合作信号" : string.Join("\n", result.PurchaseSignals.Select(value => $"• {value}"));
         RisksText.Text = result.Risks.Count == 0 ? "尚未识别到明确风险" : string.Join("\n", result.Risks.Select(value => $"• {value}"));
         NextActionText.Text = result.RecommendedNextAction;
         _proposals = new ObservableCollection<FieldProposalItem>(result.FieldUpdates.Select(update => new FieldProposalItem(update)));

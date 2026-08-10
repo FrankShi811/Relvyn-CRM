@@ -100,6 +100,8 @@ $whatsAppBridgeClientSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join
 $bridgeBootstrapSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\scripts\sea-bootstrap.cjs')
 $modulePreferencePersistenceSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiModulePreferencePersistence.cs')
 $domainModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\Models.cs')
+$businessRoleProfileSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\BusinessRoleProfile.cs')
+$businessRoleContextPolicySource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\BusinessRoleContextPolicy.cs')
 $deepSeekSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\DeepSeekService.cs')
 $aiProviderCatalogSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiProviderCatalog.cs')
 $aiModelCapabilityResolverSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiModelCapabilityResolver.cs')
@@ -148,6 +150,59 @@ if ($legacyPlatformBrandInDesktopCopy) {
   throw "Desktop product copy must remain platform-neutral; remove the legacy platform brand from fixed UI copy: $matches"
 }
 Write-Host 'PASS  platform-neutral desktop product-copy contract'
+
+$publicBrandCopyFiles = @(
+  Get-ChildItem -LiteralPath (Join-Path $root 'docs') -Recurse -Filter '*.md'
+  Get-Item -LiteralPath (Join-Path $root 'pwa\src\store.tsx')
+)
+$legacyBrandInPublicCopy = $publicBrandCopyFiles |
+  Select-String -Pattern '\b(?:DHgate|MyyBiz)\b' -CaseSensitive:$false
+if ($legacyBrandInPublicCopy) {
+  $matches = ($legacyBrandInPublicCopy | ForEach-Object { "$($_.Path):$($_.LineNumber)" }) -join ', '
+  throw "Public product docs and default examples must remain company- and platform-neutral: $matches"
+}
+$neutralProductCopyFiles = @(
+  Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop') -Recurse -Filter '*.xaml'
+  Get-Item -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\GuideCatalog.cs')
+  Get-Item -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\ReleaseCatalog.cs')
+  $publicBrandCopyFiles
+)
+$legacyIndustryCopy = $neutralProductCopyFiles |
+  Select-String -Pattern '采购需求|采购信号|采购五要素|电商|跨境贸易|下单未付款|纠纷订单|买家询问'
+if ($legacyIndustryCopy) {
+  $matches = ($legacyIndustryCopy | ForEach-Object { "$($_.Path):$($_.LineNumber)" }) -join ', '
+  throw "Public UI, guides, release notes and docs must use generic customer, transaction and cooperation language: $matches"
+}
+if (-not ($domainModelsSource.Contains('BusinessRoleProfile BusinessRoleProfile')) -or
+    -not ($businessRoleProfileSource.Contains('DefaultRoleName = "通用销售"')) -or
+    -not ($businessRoleProfileSource.Contains('DefaultRoleSkillDescription')) -or
+    -not ($businessRoleContextPolicySource.Contains('workspace_profile is user-managed descriptive business context')) -or
+    -not ($businessRoleContextPolicySource.Contains('Never assume a marketplace')) -or
+    -not ($deepSeekSource.Contains('BusinessRoleContextPolicy.ApplyPayload')) -or
+    -not ($settingsXaml.Contains('x:Name="BusinessOrganizationNameBox"')) -or
+    -not ($settingsXaml.Contains('x:Name="BusinessDescriptionBox"')) -or
+    -not ($settingsXaml.Contains('x:Name="BusinessRoleBox"')) -or
+    -not ($settingsXaml.Contains('x:Name="RoleSkillDescriptionBox"')) -or
+    -not ($settingsXaml.Contains('AutomationProperties.Name="公司与 AI 工作角色设置"')) -or
+    -not ($appXaml.Contains('x:Name="PART_EditableTextBox"')) -or
+    -not ($appXaml.Contains('Path=(AutomationProperties.Name)')) -or
+    -not ($appXaml.Contains('<Trigger Property="IsEditable" Value="True">')) -or
+    -not ($appXaml.Contains('<Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource Primary}"/></Trigger>')) -or
+    -not ($settingsSource.Contains('_settings.BusinessRoleProfile = BusinessRoleProfile.Normalize')) -or
+    -not ($guideCatalogSource.Contains('设置公司与工作角色'))) {
+  throw 'Company and role Skill settings must persist and enter every structured AI request through a guarded, platform-neutral workspace profile.'
+}
+$neutralVisibleCopy = @(
+  $whatsAppInboxXaml,
+  $leadIntelligenceXaml,
+  $customerEditXaml,
+  $customerAnalysisSource,
+  $customerReportExportSource
+) -join "`n"
+if ($neutralVisibleCopy -match '采购需求五要素|尚未建立采购需求|采购信号|电商基础|供应链稳定性|预计订单额') {
+  throw 'Primary desktop UI and generated-report copy must use generic customer, cooperation, business and opportunity language.'
+}
+Write-Host 'PASS  company-neutral UI copy plus guarded company and role Skill context contract'
 
 $requiredBrushes = @(
   'Ink', 'InkSecondary', 'Muted', 'Primary', 'OnPrimary', 'AiAccent', 'OnAi', 'AiProcessing',
@@ -490,7 +545,7 @@ if ($customersXaml -match 'TagFilterBox|OwnerFilterBox|CustomValueFilterBox' -or
     $customersSource -notmatch [regex]::Escape('CustomerDimensionCatalog.Build(leads)') -or
     $customerDimensionSource -notmatch [regex]::Escape('ImportService.IsCoreDimension(sourceKey)') -or
     $customersSource -notmatch [regex]::Escape('ImportService.ResolveField(header) == ImportField.Name') -or
-    $customersXaml -notmatch 'Header="Buyer ID" Binding="\{Binding BuyerId\}"' -or
+    $customersXaml -notmatch 'Header="客户 ID" Binding="\{Binding BuyerId\}"' -or
     $customersXaml -notmatch 'Header="公司" Binding="\{Binding Company\}"' -or
     $customersXaml -notmatch 'Header="邮箱" Binding="\{Binding Email\}"' -or
     $customersXaml -notmatch 'Header="WhatsApp 状态" Binding="\{Binding PhoneState\}"[^>]*Width="128"' -or
@@ -1118,7 +1173,7 @@ if ($emailInboxXaml -notmatch 'x:Name="NewEmailButton"' -or
     $guideCatalogSource -notmatch [regex]::Escape('["customer-enrichment"] = ModuleGuideVersion + 1') -or
     $guideCatalogSource -notmatch [regex]::Escape('["broadcast"] = ModuleGuideVersion + 2') -or
     $guideCatalogSource -notmatch [regex]::Escape('["analytics"] = ModuleGuideVersion + 2') -or
-    $guideCatalogSource -notmatch [regex]::Escape('["settings"] = ModuleGuideVersion + 8')) {
+    $guideCatalogSource -notmatch [regex]::Escape('["settings"] = ModuleGuideVersion + 9')) {
   throw 'Email Inbox must support new-message composition, CRM/Customer Brain-aware AI drafting, manual-send safety and current module guidance.'
 }
 Write-Host 'PASS  Email Inbox new-message, Customer Intelligence, AI draft and all-module guide audit contract'
@@ -1228,7 +1283,7 @@ if ($bridgeSource -notmatch [regex]::Escape('WAFLOW_DATA_ROOT') -or
     $whatsAppBridgeClientSource -notmatch [regex]::Escape('start.Environment["WAFLOW_DATA_ROOT"]')) {
   $workspaceMigrationFailures += 'whatsapp_root'
 }
-if ($guideCatalogSource -notmatch [regex]::Escape('["settings"] = ModuleGuideVersion + 8') -or
+if ($guideCatalogSource -notmatch [regex]::Escape('["settings"] = ModuleGuideVersion + 9') -or
     $guideCatalogSource -notmatch [regex]::Escape('迁移本地数据工作区')) {
   $workspaceMigrationFailures += 'settings_guide'
 }

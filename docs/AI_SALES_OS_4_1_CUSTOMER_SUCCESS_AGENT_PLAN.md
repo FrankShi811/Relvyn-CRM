@@ -1,8 +1,8 @@
-# AI Sales OS 4.1：DHgate Customer Success Conversation Agent
+# AI Sales OS 4.1：Customer Success Conversation Agent
 
 ## 目标
 
-在不改变现有 CRM、WhatsApp、Lead Intelligence、Customer Brain、自动化与本地数据库边界的前提下，把单会话 AI 助手升级为“跨 WhatsApp 账号、以全局客户为中心”的 DHgate Customer Success Conversation Agent。Agent 的职责是理解采购需求、补齐标准采购信息、协调人工跟进并沉淀客户记忆；它不是商户、工厂、供应商，也不替人工承诺价格、库存、物流、赔偿或平台政策。
+在不改变现有 CRM、WhatsApp、Lead Intelligence、Customer Brain、自动化与本地数据库边界的前提下，把单会话 AI 助手升级为“跨 WhatsApp 账号、以全局客户为中心”的 Customer Success Conversation Agent。Agent 的职责是理解客户关于产品、服务或合作的需求，补齐关键需求信息、协调人工跟进并沉淀客户记忆；它不会冒充任何公司、平台、商家或服务方，也不替人工承诺价格、资源、交付、赔偿或政策。
 
 ## 1. 客户与 WhatsApp 绑定审计
 
@@ -20,7 +20,7 @@
 
 - 全局客户事实与账号关系记忆分离。
 - `AccountPersona` 保存账号身份与允许的口吻；`AccountRelationshipMemory` 保存该账号下的关系阶段、最近互动和承诺。
-- 生成回复时只使用当前发送账号的 Persona，不把 A 账号身份带入 B 账号；全局 Customer Brain、采购需求和时间线可以跨账号读取。
+- 生成回复时只使用当前发送账号的 Persona，不把 A 账号身份带入 B 账号；全局 Customer Brain、客户需求和时间线可以跨账号读取。
 
 ## 4. Customer Brain 绑定审计
 
@@ -49,7 +49,7 @@
 
 `Incoming message → identity resolution → global customer → global memory + account relationship → sourcing request → risk/state/lock → context assembly → AI/holding response → CRM/Brain/task/event audit`。
 
-上下文检索不再只读取当前会话，而是读取该客户所有已确认关联会话、最近有效 Customer Brain、最新采购需求、未解决问题、任务、人工交接和当前账号 Persona。
+上下文检索不再只读取当前会话，而是读取该客户所有已确认关联会话、最近有效 Customer Brain、最新客户需求、未解决问题、任务、人工交接和当前账号 Persona。
 
 ## 8. 数据迁移方案
 
@@ -72,10 +72,10 @@
 
 ## 11. WPF UI 范围
 
-- WhatsApp Inbox 右侧 Customer Intelligence 抽屉增加：身份结果、全局客户、关联账号、账号关系、Agent 状态、主账号、采购五要素、冲突、待确认问题、交接状态、下一步行动。
+- WhatsApp Inbox 右侧 Customer Intelligence 抽屉增加：身份结果、全局客户、关联账号、账号关系、Agent 状态、主账号、客户需求要点、冲突、待确认问题、交接状态、下一步行动。
 - 增加“身份管理”“接管/解决”“恢复审核”“切换自动账号”和模式选择操作。
-- Customer 360 显示关联账号、统一时间线、最新采购需求和交接状态。
-- Today Brief 增加身份待确认、人工交接、采购需求完成和跨账号待跟进队列。
+- Customer 360 显示关联账号、统一时间线、最新客户需求和交接状态。
+- Today Brief 增加身份待确认、人工交接、客户需求完整和跨账号待跟进队列。
 
 ## 12. 自动化测试矩阵
 
@@ -84,7 +84,7 @@
 - 精确 JID/E.164/确认别名/唯一推断/歧义/无匹配/冲突。
 - 相同客户跨账号统一 Brain、消息去重、Persona 隔离和全局锁。
 - 八种 Agent 状态、受限状态不自动恢复、一次性占位回复和全局静默。
-- 采购五要素提取、字段来源、冲突保留、完整度与状态。
+- 客户需求要点提取、字段来源、冲突保留、完整度与状态。
 - 人工接管、解决、恢复审核、合并和拆分审计。
 - CRM 人工锁定字段、Lead Intelligence 证据去重、任务去重和 Today Brief 队列。
 - SQLite 迁移幂等、旧数据保留、重启持久化和失败保护。
@@ -102,9 +102,9 @@
 
 新增全局身份、号码/JID/LID 链接、匹配日志、账号 Persona、关系记忆、合并/拆分审计及幂等回填。
 
-### Phase B：状态、安全与采购请求
+### Phase B：状态、安全与客户需求
 
-新增 Agent 状态机、全局锁、风险分类、人工交接、待确认问题、采购五要素、字段来源和冲突模型。
+新增 Agent 状态机、全局锁、风险分类、人工交接、待确认问题、客户需求要点、字段来源和冲突模型。
 
 ### Phase C：跨账号 Agent 管线
 
@@ -121,10 +121,10 @@
 ## 15. 实施结果
 
 - Phase A 已完成：全局客户、电话/JID/LID 身份、WhatsApp 链接、解析日志、账号 Persona、账号关系记忆、合并审计及幂等回填均已落地。
-- Phase B 已完成：八态 Agent 状态机、全局客户锁、风险分类、全局人工交接、待确认问题、采购五要素、来源证据、冲突保留和人工确认均已落地。
+- Phase B 已完成：八态 Agent 状态机、全局客户锁、风险分类、全局人工交接、待确认问题、客户需求要点、来源证据、冲突保留和人工确认均已落地。
 - Phase C 已完成：收信协调器按身份解析、安全分类、状态/锁、跨账号上下文、结构化 AI、一次性占位回复、CRM 建议、全局记忆和审计的固定顺序运行。
-- Phase D 已完成：WhatsApp Inbox 客户抽屉与 Dashboard Today Brief 已接入身份、关联账号、Agent 状态、采购需求、冲突和交接队列；既有 Customer Brain、CRM、Lead Intelligence、任务与客户事件继续共用全局客户。
-- Phase E 已完成本地验证：Release 编译、旧功能回归、4.1 状态/身份/安全/采购/接管/重启持久化测试均通过。Windows GitHub Release 与 Velopack 自动更新资产随 v4.1.0 发布；macOS 继续暂停。
+- Phase D 已完成：WhatsApp Inbox 客户抽屉与 Dashboard Today Brief 已接入身份、关联账号、Agent 状态、客户需求、冲突和交接队列；既有 Customer Brain、CRM、Lead Intelligence、任务与客户事件继续共用全局客户。
+- Phase E 已完成本地验证：Release 编译、旧功能回归、4.1 状态/身份/安全/客户需求/接管/重启持久化测试均通过。Windows GitHub Release 与 Velopack 自动更新资产随 v4.1.0 发布；macOS 继续暂停。
 
 ## 16. 安全与数据边界
 

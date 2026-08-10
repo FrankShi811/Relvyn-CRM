@@ -146,7 +146,7 @@ public sealed class ScoreRing : FrameworkElement
 
 public sealed class LeadRadar : FrameworkElement
 {
-    private static readonly string[] Labels = ["付费意愿", "供应稳定", "电商基础", "私域流量", "销售能力", "素材准备"];
+    private static readonly string[] Labels = ["增长投入", "交付稳定", "业务基础", "客户触达", "商业验证", "合作准备"];
     private readonly double[] _values = new double[6];
 
     public void SetValues(IEnumerable<double> values)

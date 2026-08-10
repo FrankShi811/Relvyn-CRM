@@ -133,7 +133,7 @@ public sealed class TodayBriefService
         {
             var source = sourcing.Fields.Values.OrderByDescending(item => item.ObservedAt).FirstOrDefault();
             items.Add(BuildSpecialItem(sourcing.CustomerId, await ResolveCustomerNameAsync(sourcing.CustomerId, source?.SourceConversationId ?? ""),
-                "sourcing_complete", "复核五项采购信息，确认无误后提交采购需求",
+                "sourcing_complete", "复核客户需求信息，确认无误后推进下一步",
                 "图片、数量、目标价、目的地和运输偏好已收齐。", FollowUpPriority.High,
                 source?.SourceAccountId ?? "", source?.SourceConversationId ?? "", now));
         }

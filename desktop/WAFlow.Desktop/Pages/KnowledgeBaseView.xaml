@@ -203,7 +203,7 @@
                                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <TextBox x:Name="RetrievalQueryBox" ToolTip="例如：买家询问运费和交期时应该如何回复？" Margin="0,0,8,0"/>
+                                    <TextBox x:Name="RetrievalQueryBox" ToolTip="例如：客户询问交付费用和时间时应该如何回复？" Margin="0,0,8,0"/>
                                     <Button Grid.Column="1" Content="执行真实检索" Style="{StaticResource PrimaryButton}" Click="RetrievalTest_Click"/>
                                 </Grid>
                                 <Grid Grid.Row="1" Margin="0,9,0,0">

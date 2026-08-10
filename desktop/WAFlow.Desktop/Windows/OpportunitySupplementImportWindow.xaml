@@ -17,7 +17,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="商机补充数据导入" FontSize="23" FontWeight="Bold"/>
-                    <TextBlock Text="仅匹配客户列表中完全相同的 Buyer ID；补充交易证据，不创建客户、不改客户主档。" Foreground="{DynamicResource Muted}" Margin="0,6,0,0"/>
+                    <TextBlock Text="仅匹配客户列表中完全相同的客户 ID；补充交易证据，不创建客户、不改客户主档。兼容 Buyer ID 表头。" Foreground="{DynamicResource Muted}" Margin="0,6,0,0"/>
                 </StackPanel>
                 <Border Grid.Column="1" Background="{DynamicResource SuccessSoft}" CornerRadius="10" Padding="12,7" VerticalAlignment="Center">
                     <TextBlock Text="本地解析 · 预览后提交 · 可重复导入保护" Foreground="{DynamicResource Success}" FontWeight="SemiBold"/>
@@ -65,12 +65,12 @@
                     <Border Style="{StaticResource Card}" Margin="0,0,8,0">
                         <StackPanel>
                             <TextBlock Text="导入契约" Style="{StaticResource SectionTitle}"/>
-                            <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="21"><Run Text="• "/><Run Text="仅 Buyer ID 完全匹配客户白名单的行进入交易事件库。"/><LineBreak/><Run Text="• "/><Run Text="支付成功、失败、未付款和纠纷分别去重，重复交易零写入。"/><LineBreak/><Run Text="• "/><Run Text="不使用姓名或电话兜底；不覆盖姓名、电话、邮箱、负责人、备注或锁定阶段。"/><LineBreak/><Run Text="• "/><Run Text="全部事件与客户快照在同一事务中提交，失败时整体回滚。"/></TextBlock>
+                            <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="21"><Run Text="• "/><Run Text="仅客户 ID 完全匹配客户白名单的行进入交易事件库。"/><LineBreak/><Run Text="• "/><Run Text="成功、失败、待付款和争议交易分别去重，重复交易零写入。"/><LineBreak/><Run Text="• "/><Run Text="不使用姓名或电话兜底；不覆盖姓名、电话、邮箱、负责人、备注或锁定阶段。"/><LineBreak/><Run Text="• "/><Run Text="全部事件与客户快照在同一事务中提交，失败时整体回滚。"/></TextBlock>
                             <Border x:Name="DuplicateFileNotice" Background="{DynamicResource WarningSoft}" CornerRadius="9" Padding="12" Margin="0,15,0,0" Visibility="Collapsed">
                                 <TextBlock Text="该文件已成功导入。再次确认不会写入数据，也不会触发 AI 或消耗 Token。" Foreground="{DynamicResource Warning}" TextWrapping="Wrap"/>
                             </Border>
                             <TextBlock Text="将生成的商机证据" Style="{StaticResource SectionTitle}" Margin="0,18,0,0"/>
-                            <TextBlock Text="交易价值 · 近期购买意图 · 品类画像 · 支付障碍 · 纠纷风险 · 订单证据时间线" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" LineHeight="20" Margin="0,7,0,0"/>
+                            <TextBlock Text="交易价值 · 近期合作意图 · 品类画像 · 支付障碍 · 纠纷风险 · 交易证据时间线" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" LineHeight="20" Margin="0,7,0,0"/>
                         </StackPanel>
                     </Border>
                     <Border Grid.Column="1" Style="{StaticResource Card}" Margin="8,0,0,0">

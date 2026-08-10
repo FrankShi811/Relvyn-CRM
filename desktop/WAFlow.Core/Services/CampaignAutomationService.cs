@@ -855,7 +855,7 @@ public sealed class CampaignAutomationService : IAsyncDisposable
     public static IReadOnlyList<CampaignTemplateField> CoreTemplateFields() =>
     [
         new("name", "姓名", "客户列表"), new("company", "公司", "客户列表"), new("country", "国家", "客户列表"), new("phone", "WhatsApp 号码", "客户列表"),
-        new("email", "邮箱", "客户列表"), new("language", "客户语言", "客户列表"), new("product", "产品兴趣", "客户列表"), new("order_value", "预计订单金额", "客户列表"),
+        new("email", "邮箱", "客户列表"), new("language", "客户语言", "客户列表"), new("product", "产品或服务兴趣", "客户列表"), new("order_value", "预计机会金额", "客户列表"),
         new("currency", "币种", "客户列表"), new("owner", "负责人", "客户列表"), new("tags", "标签", "客户列表"), new("source", "客户来源", "客户列表"),
         new("grade", "商机等级", "商机智能"), new("stage", "跟进阶段", "商机智能"), new("score", "商机评分", "商机智能"), new("profile_summary", "客户画像", "商机智能"),
         new("customer_segment", "客户分组", "商机智能"), new("next_action", "下一步建议", "商机智能"), new("latest_message", "最近消息", "商机智能")

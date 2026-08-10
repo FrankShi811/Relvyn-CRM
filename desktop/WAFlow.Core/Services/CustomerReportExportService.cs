@@ -225,7 +225,7 @@ internal static class WordCustomerReportRenderer
         body.Append(KeyValueTable([
             ("沟通积极度", report.WhatsAppAnalysis.EngagementLevel),
             ("关注主题", Join(report.WhatsAppAnalysis.FocusTopics)),
-            ("采购信号", Join(report.WhatsAppAnalysis.PurchaseSignals)),
+            ("需求与合作信号", Join(report.WhatsAppAnalysis.PurchaseSignals)),
             ("主要顾虑", Join(report.WhatsAppAnalysis.Concerns))
         ], 1900));
         foreach (var quote in report.WhatsAppAnalysis.Quotes.Take(8))
@@ -461,8 +461,8 @@ internal static class WordCustomerReportRenderer
     private static string Join(IEnumerable<string> values) => string.Join("；", values.Where(value => !string.IsNullOrWhiteSpace(value)));
     private static string DimensionName(string key) => key switch
     {
-        "paid_marketing_willingness" => "付费营销意愿", "supply_stability" => "供应链稳定性", "ecommerce_foundation" => "电商基础",
-        "private_traffic" => "私域/流量能力", "existing_sales" => "已有销售能力", "materials_readiness" => "素材准备度", _ => key
+        "paid_marketing_willingness" => "增长投入意愿", "supply_stability" => "运营与交付稳定性", "ecommerce_foundation" => "相关业务基础",
+        "private_traffic" => "客户触达能力", "existing_sales" => "商业验证程度", "materials_readiness" => "合作准备度", _ => key
     };
 }
 
@@ -579,7 +579,7 @@ internal static class PdfCustomerReportRenderer
             Heading("6. WhatsApp沟通分析", 1);
             LabelText("沟通积极度", report.WhatsAppAnalysis.EngagementLevel);
             BulletGroup("关注主题", report.WhatsAppAnalysis.FocusTopics);
-            BulletGroup("采购信号", report.WhatsAppAnalysis.PurchaseSignals);
+            BulletGroup("需求与合作信号", report.WhatsAppAnalysis.PurchaseSignals);
             BulletGroup("主要顾虑", report.WhatsAppAnalysis.Concerns);
             foreach (var quote in report.WhatsAppAnalysis.Quotes.Take(8))
                 Callout($"客户原话：“{quote.Original}”\n中文含义：{quote.ChineseMeaning}\nAI分析：{quote.AiAnalysis}", XColor.FromArgb(244, 246, 249), XColor.FromArgb(31, 77, 120));
@@ -741,8 +741,8 @@ internal static class PdfCustomerReportRenderer
         private static string Join(IEnumerable<string> values) => string.Join("；", values.Where(value => !string.IsNullOrWhiteSpace(value)));
         private static string DimensionName(string key) => key switch
         {
-            "paid_marketing_willingness" => "付费营销意愿", "supply_stability" => "供应链稳定性", "ecommerce_foundation" => "电商基础",
-            "private_traffic" => "私域/流量能力", "existing_sales" => "已有销售能力", "materials_readiness" => "素材准备度", _ => key
+            "paid_marketing_willingness" => "增长投入意愿", "supply_stability" => "运营与交付稳定性", "ecommerce_foundation" => "相关业务基础",
+            "private_traffic" => "客户触达能力", "existing_sales" => "商业验证程度", "materials_readiness" => "合作准备度", _ => key
         };
     }
 }

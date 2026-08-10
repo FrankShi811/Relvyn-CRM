@@ -80,7 +80,7 @@ public sealed partial class SourcingRequestService
         CancellationToken cancellationToken = default)
     {
         var request = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken)
-                      ?? throw new InvalidOperationException("没有待处理的采购需求。");
+                      ?? throw new InvalidOperationException("没有待处理的客户需求。");
         var conflict = request.Conflicts.FirstOrDefault(item => item.Field == field && !item.IsResolved)
                        ?? throw new InvalidOperationException("该字段没有待处理冲突。");
         var selected = conflict.Values.FirstOrDefault(item =>

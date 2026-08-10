@@ -123,7 +123,7 @@
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="" Width="46" CanUserSort="False"><DataGridTemplateColumn.CellTemplate><DataTemplate><CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip="选择该客户"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                         <DataGridTextColumn Header="客户" Binding="{Binding DisplayName}" SortMemberPath="DisplayName" Width="190" ElementStyle="{StaticResource CustomerCellText}"/>
-                        <DataGridTextColumn Header="Buyer ID" Binding="{Binding BuyerId}" SortMemberPath="BuyerId" Width="145" ElementStyle="{StaticResource CustomerCellText}"/>
+                        <DataGridTextColumn Header="客户 ID" Binding="{Binding BuyerId}" SortMemberPath="BuyerId" Width="145" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="公司" Binding="{Binding Company}" SortMemberPath="Company" Width="175" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="邮箱" Binding="{Binding Email}" SortMemberPath="Email" Width="215" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="国家" Binding="{Binding Country}" SortMemberPath="Country" Width="125" ElementStyle="{StaticResource CustomerCellText}"/>

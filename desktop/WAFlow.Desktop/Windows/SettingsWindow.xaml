@@ -11,14 +11,43 @@
         <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="28,22">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <StackPanel><TextBlock Text="SYSTEM CONFIGURATION" Style="{StaticResource PageEyebrow}"/><TextBlock x:Name="SettingsTitleText" Text="设置" FontSize="24" FontWeight="Bold" Margin="0,5,0,0"/><TextBlock x:Name="SettingsSubtitleText" Text="统一管理 AI Provider、板块模型、界面缩放、主题与本地数据体验。" Foreground="{DynamicResource Muted}" Margin="0,6,0,0"/></StackPanel>
+                <StackPanel><TextBlock Text="SYSTEM CONFIGURATION" Style="{StaticResource PageEyebrow}"/><TextBlock x:Name="SettingsTitleText" Text="设置" FontSize="24" FontWeight="Bold" Margin="0,5,0,0"/><TextBlock x:Name="SettingsSubtitleText" Text="统一管理公司与工作角色、AI Provider、板块模型、界面缩放、主题与本地数据体验。" Foreground="{DynamicResource Muted}" Margin="0,6,0,0"/></StackPanel>
                 <Button Grid.Column="1" Content="本页使用手册" ToolTip="查看设置的功能介绍和操作步骤" Style="{StaticResource SecondaryButton}" Click="ShowGuide_Click" VerticalAlignment="Top"/>
             </Grid>
         </Border>
 
         <ScrollViewer x:Name="SettingsScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="28,22,28,28">
-                <Border Style="{StaticResource AiCard}">
+                <Border Style="{StaticResource Card}" AutomationProperties.Name="公司与 AI 工作角色设置">
+                    <StackPanel>
+                        <TextBlock Text="公司与 AI 工作角色" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="让各个 AI 板块理解你服务的公司、产品或服务以及岗位重点。不填写也能使用，系统会保持通用销售语境。" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,8,0">
+                                <TextBlock Text="公司或团队名称（可选）" Style="{StaticResource LabelText}"/>
+                                <TextBox x:Name="BusinessOrganizationNameBox" MaxLength="120" Margin="0,5,0,0" AutomationProperties.Name="公司或团队名称"/>
+                                <TextBlock Text="留空时不会在 AI 内容中假设公司名称。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <TextBlock Text="你的主要角色" Style="{StaticResource LabelText}"/>
+                                <ComboBox x:Name="BusinessRoleBox" IsEditable="True" IsTextSearchEnabled="True" Margin="0,5,0,0" SelectionChanged="BusinessRoleBox_SelectionChanged" AutomationProperties.Name="主要工作角色"/>
+                                <TextBlock Text="可选择常用角色，也可以直接输入自己的岗位。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Text="公司业务（推荐）" Style="{StaticResource LabelText}" Margin="0,13,0,0"/>
+                        <TextBox x:Name="BusinessDescriptionBox" MaxLength="800" MinHeight="58" MaxHeight="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,5,0,0" AutomationProperties.Name="公司业务描述"/>
+                        <TextBlock Text="简要说明提供什么产品或服务、主要客户和市场。不要填写客户隐私、账号密码或内部机密。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="角色 Skill 描述" Style="{StaticResource LabelText}" Margin="0,13,0,0"/>
+                        <TextBox x:Name="RoleSkillDescriptionBox" MaxLength="1200" MinHeight="70" MaxHeight="150" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,5,0,0" AutomationProperties.Name="角色 Skill 描述"/>
+                        <TextBlock Text="说明你希望 AI 协助完成的职责、判断重点和人工确认边界。该描述会进入商机智能、Customer Brain、客户分析、WhatsApp、邮件和触达内容的共同上下文。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        <Border Background="{DynamicResource PrimarySoft}" CornerRadius="9" Padding="11" Margin="0,12,0,0">
+                            <TextBlock Text="此设置只影响新生成内容的业务语境，不修改客户资料、历史消息或既有报告，也不能覆盖证据、安全规则和人工确认要求。" Foreground="{DynamicResource PrimaryDark}" FontSize="9.5" TextWrapping="Wrap"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource AiCard}" Margin="0,15,0,0">
                     <StackPanel>
                         <Grid><StackPanel><TextBlock Text="AI Provider" Style="{StaticResource SectionTitle}"/><TextBlock Text="选择主流 Provider，自动带入默认 Base URL，再拉取该 Key 可用的真实模型。" Style="{StaticResource LabelText}" Margin="0,3,0,0"/></StackPanel><Border HorizontalAlignment="Right" Background="{DynamicResource SuccessSoft}" CornerRadius="10" Padding="9,5"><TextBlock x:Name="ApiStatusText" Text="未配置" Foreground="{DynamicResource Success}" FontSize="10.5" FontWeight="SemiBold"/></Border></Grid>
                         <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource AiSoft}" BorderThickness="1" CornerRadius="11" Padding="15" Margin="0,16,0,0">

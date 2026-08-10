@@ -17,7 +17,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="直接导入 Excel / CSV 客户表" FontSize="22" FontWeight="Bold"/>
-                    <TextBlock Text="Buyer ID 识别新旧客户；已有列增量更新，新列自动扩展" Foreground="{DynamicResource Muted}" Margin="0,5,0,0"/>
+                    <TextBlock Text="客户 ID 识别新旧客户（兼容 Buyer ID）；已有列增量更新，新列自动扩展" Foreground="{DynamicResource Muted}" Margin="0,5,0,0"/>
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="单文件 200MB · 不设固定行数上限" Foreground="{DynamicResource Muted}" VerticalAlignment="Center"/>
             </Grid>

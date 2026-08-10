@@ -49,7 +49,7 @@
 
                             <TextBlock Grid.Row="4" Text="意向产品" Style="{StaticResource LabelText}" VerticalAlignment="Center"/><TextBox x:Name="ProductBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,0,0,10"/>
 
-                            <TextBlock Grid.Row="5" Text="预计订单额" Style="{StaticResource LabelText}" VerticalAlignment="Center"/><TextBox x:Name="AmountBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10"/>
+                            <TextBlock Grid.Row="5" Text="预计机会金额" Style="{StaticResource LabelText}" VerticalAlignment="Center"/><TextBox x:Name="AmountBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10"/>
                             <TextBlock Grid.Row="5" Grid.Column="3" Text="币种" Style="{StaticResource LabelText}" VerticalAlignment="Center"/><TextBox x:Name="CurrencyBox" Grid.Row="5" Grid.Column="4" Margin="0,0,0,10"/>
 
                             <TextBlock Grid.Row="6" Text="来源" Style="{StaticResource LabelText}" VerticalAlignment="Center"/><TextBox x:Name="SourceBox" Grid.Row="6" Grid.Column="1" Margin="0,0,0,10"/>
@@ -61,11 +61,11 @@
                                 <CheckBox x:Name="OptedOutCheck" Content="已退订" VerticalAlignment="Center"/>
                             </StackPanel>
 
-                            <TextBlock Grid.Row="8" Text="Buyer ID" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Row="8" Text="客户 ID" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
                             <TextBox x:Name="BuyerIdBox" Grid.Row="8" Grid.Column="1" Margin="0,10,0,0"
-                                     ToolTip="有 Buyer ID 时作为跨板块客户统一标识；为空时回退到电话号码。"/>
+                                     ToolTip="有客户 ID 时作为跨板块统一标识；兼容 Buyer ID 等旧表头。为空时回退到电话号码。"/>
                             <TextBlock Grid.Row="8" Grid.Column="3" Grid.ColumnSpan="2"
-                                       Text="身份优先级：Buyer ID → 电话号码。Buyer ID 冲突时禁止自动合并。"
+                                       Text="身份优先级：客户 ID → 电话号码。客户 ID 冲突时禁止自动合并。"
                                        Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0" VerticalAlignment="Center"/>
                         </Grid>
                         <TextBlock Text="人工备注" Style="{StaticResource LabelText}" Margin="0,15,0,5"/>

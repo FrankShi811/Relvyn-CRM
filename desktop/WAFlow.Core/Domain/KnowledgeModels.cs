@@ -407,7 +407,7 @@ public static class KnowledgeLabels
     {
         KnowledgeCategory.DhgatePolicy => "平台政策",
         KnowledgeCategory.CustomerSuccessSop => "客户成功 SOP",
-        KnowledgeCategory.SourcingRequirement => "搜品采集规范",
+        KnowledgeCategory.SourcingRequirement => "客户需求采集规范",
         KnowledgeCategory.ProductKnowledge => "产品知识",
         KnowledgeCategory.ShippingKnowledge => "物流知识",
         KnowledgeCategory.SalesScript => "销售话术",
