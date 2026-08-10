@@ -8,12 +8,12 @@
     <AssemblyName>AISalesOS</AssemblyName>
     <AssemblyTitle>AI Sales OS</AssemblyTitle>
     <RootNamespace>WAFlow.Desktop</RootNamespace>
-    <Version>5.19.2</Version>
+    <Version>5.19.3</Version>
     <Title>AI Sales OS</Title>
     <Product>AI Sales OS</Product>
     <Company>AI Sales OS</Company>
     <Description>AI-driven WhatsApp sales intelligence and campaign automation</Description>
-    <ApplicationIcon>Assets\Relvyn.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\AI-Sales-OS.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -27,8 +27,8 @@
     <ProjectReference Include="..\WAFlow.Core\WAFlow.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Resource Include="Assets\Relvyn.ico" />
-    <Resource Include="Assets\Relvyn.png" />
+    <Resource Include="Assets\AI-Sales-OS.ico" />
+    <Resource Include="Assets\AI-Sales-OS.png" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

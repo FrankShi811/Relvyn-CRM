@@ -9,10 +9,21 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.19.2";
+            : "5.19.3";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.19.3", "2026-08-10", "会话级 AI 自动托管与人工接管",
+        [
+            "Customer Success Agent 的模式配置与运行状态完全分离：选择托管模式不再自动抢占客户锁或发送，只有通过前置检查并明确点击“开始托管”后才会进入运行态。",
+            "新增可恢复、可审计的会话状态轨道：覆盖前置检查、协作、处理、发送、等待客户、风险暂停、人工接管、话题结束、异常暂停和重新托管；程序重启后旧活动状态一律以结束状态恢复，不会补发旧草稿。",
+            "客户连续短消息采用约 10 秒归并窗口，同一会话串行处理并取消旧草稿；每次生成前和发送前都会复核最新客户消息、人工外发、身份绑定、客户/账号/会话作用域与话题状态。",
+            "桌面端或手机端人工发出消息会立即触发 HUMAN_TAKEOVER，清除待发送草稿并释放客户锁；自动发送使用稳定幂等键，瞬时超时只有限重试一次且不会重复提交同一回复。",
+            "Customer Brain、WhatsApp、邮件、商机、已批准知识库与当前风险状态进入同一受限上下文；tenant、user、customer、account、conversation、opportunity、source 与 context namespace 不一致时直接阻断。",
+            "风险事项只允许一次最小必要信息收集，随后进入等待人工；知识冲突、过期、内部专用或证据不足不能解锁自动回复，单纯感谢、告别或明确结束的话题不会生成多余收尾消息。",
+            "WhatsApp Inbox 增加动态 AI 主按钮、会话运行状态、模式、话题、风险、暂停原因、Brain/知识来源和审计日志入口，并补齐键盘焦点、实时状态播报与对比度。",
+            "本补丁仅更新 Windows 桌面版、Windows Bridge、中文安装包与 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.19.2", "2026-08-10", "修复 WhatsApp 标签展示与回传链路",
         [
             "修复 WhatsApp 标签窗口中“创建”按钮始终不可点击的问题：输入有效名称且账号已连接后即可创建，支持 Enter、重复名称提示与操作中防重复点击；添加、移除、创建和删除均先提交 WhatsApp，再更新 OS。",
@@ -20,7 +31,7 @@ public static class ReleaseCatalog
             "移除 WhatsApp 右侧客户资料栏中视觉重复的 CRM 标签输入框；已有 CRM 标签数据继续保留并在客户列表的“CRM 标签”列显示，不会被保存客户资料时清空，也不会与 WhatsApp 原生标签混写。",
             "修复 WhatsApp 以 LID 标识联系人时标签关联无法落到手机号会话的问题：号码映射稍后到达时会有界排队并按序回放，消息级标签不会误写成客户标签；界面状态改为“已提交、请在手机端确认”，避免把协议接受误报为手机已显示。",
             "Windows 应用图标更新为新的深海军蓝 R/回路箭头标志，并保留生成母版、提示词、参考资产与派生文件哈希；本版本只发布 Windows x64 安装包与自动更新资产，macOS 和 PWA 版本、图标与部署均保持不变。"
-        ], true),
+        ]),
         new("5.19.1", "2026-08-10", "修复 Windows 5.19.0 更新后的启动错误",
         [
             "修复 Windows 5.19.0 启动时提示 TypeConverterMarkupExtension、主窗口无法打开的问题：重新生成符合 WPF 与 Windows Imaging Component 解码规范的多尺寸应用图标，保留 5.19.0 已确认的原创品牌母版与外观。",
