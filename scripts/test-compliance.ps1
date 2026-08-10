@@ -68,10 +68,22 @@ if (Test-Path -LiteralPath $brandManifestPath) {
   if ($brand.promptHashNormalization -ne 'UTF-8 without BOM; CRLF and CR line endings normalized to LF before SHA-256') {
     Add-ComplianceError 'Brand prompt hash must declare cross-platform UTF-8/LF normalization.'
   }
-  foreach ($entry in @(
+  if ([string]::IsNullOrWhiteSpace([string]$brand.platformScope)) {
+    Add-ComplianceError 'Brand provenance manifest must declare the platform scope.'
+  }
+  $brandEntries = @(
     [pscustomobject]@{ path = $brand.prompt; sha256 = $brand.promptSha256; canonicalText = $true },
     [pscustomobject]@{ path = $brand.originalMaster; sha256 = $brand.originalMasterSha256; canonicalText = $false }
-  ) + @($brand.assets)) {
+  )
+  if ($brand.sourceUsedReferenceImages) {
+    if ([string]::IsNullOrWhiteSpace([string]$brand.referenceImage) -or [string]::IsNullOrWhiteSpace([string]$brand.referenceImageSha256)) {
+      Add-ComplianceError 'Brand provenance must identify and hash every declared reference image.'
+    }
+    else {
+      $brandEntries += [pscustomobject]@{ path = $brand.referenceImage; sha256 = $brand.referenceImageSha256; canonicalText = $false }
+    }
+  }
+  foreach ($entry in $brandEntries + @($brand.assets)) {
     $assetPath = Join-Path $root ([string]$entry.path)
     if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
       Add-ComplianceError "Brand provenance file is missing: $($entry.path)"

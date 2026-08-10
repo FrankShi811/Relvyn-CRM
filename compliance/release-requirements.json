@@ -19,7 +19,7 @@
     {
       "id": "BRAND-ASSET-PROVENANCE",
       "status": "resolved",
-      "evidence": "docs/brand/generation-records stores the exact prompt, untouched generated master, deterministic derivation script authorization and hashes"
+      "evidence": "docs/brand/generation-records stores the Windows-only exact edit prompt, sole project-owned reference, untouched generated master, owner authorization, deterministic derivation script and hashes"
     }
   ]
 }

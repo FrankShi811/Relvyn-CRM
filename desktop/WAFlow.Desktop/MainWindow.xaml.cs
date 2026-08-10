@@ -910,7 +910,11 @@ public partial class MainWindow : Window
         _dashboard.NotifyUnreadChanged();
     }
 
-    private void WhatsAppSynchronizationChanged(object? sender, WhatsAppSyncProgress e) => QueueUnreadBadgeRefresh();
+    private void WhatsAppSynchronizationChanged(object? sender, WhatsAppSyncProgress e)
+    {
+        QueueUnreadBadgeRefresh();
+        if (e.State == "data" && e.Phase == "labels") QueueCurrentViewRefresh(_customers);
+    }
 
     private void EmailSynchronizationChanged(object? sender, EmailSynchronizationState e)
     {

@@ -195,6 +195,60 @@ var groupRequest = WhatsAppGroupCreateRequest.CreateValidated("Priority Buyers",
 Check(groupRequest.Subject == "Priority Buyers" && groupRequest.ParticipantPhones.SequenceEqual(["+447700900123", "+14155550103"]), "WhatsApp group request validates and deduplicates international members");
 try { WhatsAppGroupCreateRequest.CreateValidated("", ["+447700900123"]); Check(false, "WhatsApp group rejects empty subject"); }
 catch (InvalidOperationException) { Check(true, "WhatsApp group rejects empty subject"); }
+
+var labelProjectionLead = new Lead
+{
+    Id = "label-projection-lead",
+    Name = "Label Projection",
+    PhoneE164 = "+447700900777",
+    PhoneValid = true,
+    Tags = ["legacy-crm-tag"]
+};
+var labelProjectionRepository = new LocalRepository(Path.Combine(root, "label-projection", "labels.db"));
+await labelProjectionRepository.InitializeAsync();
+await labelProjectionRepository.UpsertLeadAsync(labelProjectionLead);
+await labelProjectionRepository.UpsertWhatsAppConversationAsync(new WhatsAppConversation
+{
+    Id = "label-account-a:447700900777",
+    AccountId = "label-account-a",
+    Phone = "447700900777",
+    LeadId = labelProjectionLead.Id,
+    DisplayName = labelProjectionLead.Name
+});
+await labelProjectionRepository.UpsertWhatsAppConversationAsync(new WhatsAppConversation
+{
+    Id = "label-account-b:447700900777",
+    AccountId = "label-account-b",
+    Phone = "447700900777",
+    LeadId = labelProjectionLead.Id,
+    DisplayName = labelProjectionLead.Name
+});
+await labelProjectionRepository.UpsertWhatsAppLabelAsync(new WhatsAppLabel { Id="label-red", AccountId="label-account-a", Name="重点客户", Color=0 });
+await labelProjectionRepository.UpsertWhatsAppLabelAsync(new WhatsAppLabel { Id="label-blue", AccountId="label-account-a", Name="等待报价", Color=6 });
+await labelProjectionRepository.UpsertWhatsAppLabelAsync(new WhatsAppLabel { Id="label-red", AccountId="label-account-b", Name="海外客户", Color=3 });
+await labelProjectionRepository.SetWhatsAppChatLabelAsync("label-account-a", "447700900777", "label-red", add:true);
+await labelProjectionRepository.SetWhatsAppChatLabelAsync("label-account-a", "447700900777", "label-blue", add:true);
+await labelProjectionRepository.SetWhatsAppChatLabelAsync("label-account-b", "447700900777", "label-red", add:true);
+var labelsByChat = await labelProjectionRepository.GetWhatsAppLabelsByChatIdsAsync("label-account-a", ["447700900777", "missing"]);
+Check(
+    labelsByChat.TryGetValue("447700900777", out var projectedChatLabels)
+    && projectedChatLabels.Select(label => label.Name).Order().SequenceEqual(new[] { "等待报价", "重点客户" }.Order())
+    && projectedChatLabels.All(label => label.AccountId == "label-account-a"),
+    "WhatsApp label projection batches chat lookups and keeps accounts isolated");
+var labelsByLead = await labelProjectionRepository.GetWhatsAppLabelsByLeadIdsAsync([labelProjectionLead.Id, "missing"]);
+Check(
+    labelsByLead.TryGetValue(labelProjectionLead.Id, out var projectedLeadLabels)
+    && projectedLeadLabels.Count == 3
+    && projectedLeadLabels.Select(label => label.AccountId).Distinct().Count() == 2,
+    "WhatsApp label projection joins all linked account conversations to the customer");
+await labelProjectionRepository.UpsertWhatsAppLabelAsync(new WhatsAppLabel { Id="label-blue", AccountId="label-account-a", Name="等待报价", Color=6, Deleted=true });
+var labelsAfterDelete = await labelProjectionRepository.GetWhatsAppLabelsByLeadIdsAsync([labelProjectionLead.Id]);
+var preservedLabelLead = await labelProjectionRepository.GetLeadAsync(labelProjectionLead.Id);
+Check(
+    labelsAfterDelete[labelProjectionLead.Id].All(label => label.Id != "label-blue")
+    && preservedLabelLead?.Tags.SequenceEqual(["legacy-crm-tag"]) == true,
+    "deleted WhatsApp labels are hidden without overwriting legacy CRM tags");
+
 var ambiguousPhoneMatch = PhoneIdentity.FindUniqueLead([
     new Lead { Name="first", PhoneE164="+11234567890" },
     new Lead { Name="second", PhoneE164="+21234567890" }

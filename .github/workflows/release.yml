@@ -1,35 +1,65 @@
-name: Release AI Sales OS
+name: Release AI Sales OS Windows
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-    paths-ignore:
-      - 'pwa/**'
-      - '.github/workflows/pwa-pages.yml'
-      - '.github/workflows/release.yml'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Semantic version without v prefix, for example 1.16.0'
-        required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: ai-sales-os-windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   windows-release:
+    name: Build and publish Windows update
     runs-on: windows-latest
+    timeout-minutes: 90
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
-      ENABLE_MACOS_RELEASE: ${{ vars.ENABLE_MACOS_RELEASE }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Resolve and validate tagged version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ('${{ github.ref_type }}' -ne 'tag' -or $tag -notmatch '^v(?<Version>\d+\.\d+\.\d+)$') {
+            throw "Windows releases require an exact vMAJOR.MINOR.PATCH tag; received '$tag'."
+          }
+          $version = $Matches.Version
+          $coreVersion = ([xml](Get-Content -Raw -Encoding utf8 desktop/WAFlow.Core/WAFlow.Core.csproj)).Project.PropertyGroup.Version | Select-Object -First 1
+          $desktopVersion = ([xml](Get-Content -Raw -Encoding utf8 desktop/WAFlow.Desktop/WAFlow.Desktop.csproj)).Project.PropertyGroup.Version | Select-Object -First 1
+          if ($coreVersion -ne $version -or $desktopVersion -ne $version) {
+            throw "Tag/version mismatch: tag=$version core=$coreVersion desktop=$desktopVersion"
+          }
+          $catalog = Get-Content -Raw -Encoding utf8 desktop/WAFlow.Desktop/ReleaseCatalog.cs
+          $escapedVersion = [Regex]::Escape($version)
+          $catalogPattern = 'new\("{0}"[\s\S]*?\], true\)' -f $escapedVersion
+          if ($catalog -notmatch $catalogPattern) {
+            throw "ReleaseCatalog must mark $version as the current release."
+          }
+          $notesPath = "docs/releases/v$version.md"
+          if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Release notes are missing: $notesPath"
+          }
+          $heading = (Get-Content -LiteralPath $notesPath -Encoding utf8 | Select-Object -First 1)
+          if ($heading -ne "# AI Sales OS v$version") {
+            throw "Release notes heading mismatch: $heading"
+          }
+          git fetch origin main --no-tags
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to fetch origin/main for tag ancestry validation.' }
+          $taggedCommit = (git rev-parse "$tag^{}").Trim()
+          git merge-base --is-ancestor $taggedCommit origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Tag $tag must point to a commit contained in origin/main." }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TAGGED_COMMIT=$taggedCommit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -43,24 +73,10 @@ jobs:
         shell: pwsh
         run: npm install --global pnpm@10.14.0
 
-      - name: Resolve version
-        shell: pwsh
-        run: |
-          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            '${{ inputs.version }}'
-          } elseif ('${{ github.ref_type }}' -eq 'tag') {
-            '${{ github.ref_name }}'.TrimStart('v')
-          } else {
-            ([xml](Get-Content -Raw -Encoding utf8 desktop/WAFlow.Desktop/WAFlow.Desktop.csproj)).Project.PropertyGroup.Version | Select-Object -First 1
-          }
-          if ($version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw "Invalid version: $version" }
-          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - name: Install Bridge dependencies
         run: pnpm --dir bridge install --frozen-lockfile
 
-      - name: Validate licenses, Bridge separation and brand provenance
+      - name: Audit licenses, Bridge separation and brand provenance
         shell: pwsh
         run: .\scripts\test-compliance.ps1
 
@@ -74,16 +90,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           New-Item -ItemType Directory -Force dist/velopack | Out-Null
-          gh release download --pattern '*.nupkg' --pattern 'releases.win.json' --dir dist/velopack 2>$null
+          gh release download --repo '${{ github.repository }}' --pattern '*.nupkg' --pattern 'releases.win.json' --dir dist/velopack 2>$null
           if ($LASTEXITCODE -ne 0) {
-            Write-Host 'No previous release assets found; creating the first full package.'
+            Write-Host 'No previous release assets found; creating a full package without a delta base.'
             $global:LASTEXITCODE = 0
           }
 
       - name: Build application and Velopack release
         shell: pwsh
-        run: |
-          .\scripts\build-velopack-release.ps1 -Version $env:RELEASE_VERSION -RepositoryUrl "https://github.com/${{ github.repository }}"
+        run: .\scripts\build-velopack-release.ps1 -Version $env:RELEASE_VERSION -RepositoryUrl "https://github.com/${{ github.repository }}"
 
       - name: Run core regression tests
         shell: pwsh
@@ -93,17 +108,21 @@ jobs:
         shell: pwsh
         run: .\scripts\test-windows-installer.ps1 -ExpectedVersion $env:RELEASE_VERSION
 
-      - name: Publish GitHub Release assets
+      - name: Publish Windows GitHub Release assets
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           dotnet tool restore
-          dotnet tool run vpk -- upload github --outputDir dist/velopack --channel win --repoUrl "https://github.com/${{ github.repository }}" --token $env:GITHUB_TOKEN --publish true --merge true --releaseName "AI Sales OS $env:RELEASE_VERSION" --tag $env:RELEASE_TAG --targetCommitish "${{ github.sha }}"
-          gh release upload $env:RELEASE_TAG "dist/installers/AI Sales OS Setup.exe" --clobber
-          gh release upload $env:RELEASE_TAG dist/source/*.zip LICENSE EULA.md PRIVACY.md THIRD_PARTY_NOTICES.md docs/BRIDGE_GPL_COMPLIANCE.md --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Velopack tool restore failed.' }
+          dotnet tool run vpk -- upload github --outputDir dist/velopack --channel win --repoUrl "https://github.com/${{ github.repository }}" --token $env:GITHUB_TOKEN --publish true --merge true --releaseName "AI Sales OS $env:RELEASE_VERSION" --tag $env:RELEASE_TAG --targetCommitish $env:TAGGED_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'Velopack GitHub upload failed.' }
+          gh release upload $env:RELEASE_TAG "dist/installers/AI Sales OS Setup.exe" --repo '${{ github.repository }}' --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer upload failed.' }
+          gh release upload $env:RELEASE_TAG dist/source/*.zip LICENSE EULA.md PRIVACY.md THIRD_PARTY_NOTICES.md docs/BRIDGE_GPL_COMPLIANCE.md --repo '${{ github.repository }}' --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Compliance/source asset upload failed.' }
 
-      - name: Upload build evidence
+      - name: Upload Windows build evidence
         uses: actions/upload-artifact@v7
         with:
           name: AI-Sales-OS-${{ env.RELEASE_VERSION }}-windows
@@ -111,71 +130,4 @@ jobs:
             dist/installers/AI Sales OS Setup.exe
             dist/velopack/*
             dist/source/*.zip
-          if-no-files-found: error
-
-  macos-preview:
-    # macOS packages are intentionally opt-in until Developer ID signing and
-    # notarization credentials are available. Enable with repository variable
-    # ENABLE_MACOS_RELEASE=true when the user explicitly resumes Mac releases.
-    if: vars.ENABLE_MACOS_RELEASE == 'true'
-    needs: windows-release
-    runs-on: macos-latest
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '8.0.x'
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-
-      - name: Resolve version
-        shell: pwsh
-        run: |
-          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            '${{ inputs.version }}'
-          } elseif ('${{ github.ref_type }}' -eq 'tag') {
-            '${{ github.ref_name }}'.TrimStart('v')
-          } else {
-            ([xml](Get-Content -Raw -Encoding utf8 desktop/WAFlow.Mac/WAFlow.Mac.csproj)).Project.PropertyGroup.Version | Select-Object -First 1
-          }
-          if ($version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw "Invalid version: $version" }
-          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Install macOS packaging dependency
-        run: python -m pip install --disable-pip-version-check Pillow
-
-      - name: Build native macOS Chinese preview packages
-        shell: pwsh
-        run: ./scripts/build-macos-preview.ps1 -Version $env:RELEASE_VERSION -Architecture Both -Velopack -RepositoryUrl "https://github.com/${{ github.repository }}"
-
-      - name: Smoke test macOS application packages
-        run: python scripts/test-macos-packages.py --version "$RELEASE_VERSION"
-
-      - name: Upload macOS packages to GitHub Release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload $env:RELEASE_TAG `
-            "dist/installers/AI Sales OS macOS Apple-Silicon Chinese Preview.zip" `
-            "dist/installers/AI Sales OS macOS Apple-Silicon Chinese Preview.pkg" `
-            "dist/installers/AI Sales OS macOS Intel Chinese Preview.zip" `
-            "dist/installers/AI Sales OS macOS Intel Chinese Preview.pkg" `
-            dist/velopack-macos-arm64/* dist/velopack-macos-x64/* --clobber
-
-      - name: Upload macOS build evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: AI-Sales-OS-${{ env.RELEASE_VERSION }}-macos-preview
-          path: |
-            dist/installers/AI Sales OS macOS * Chinese Preview.zip
-            dist/installers/AI Sales OS macOS * Chinese Preview.pkg
-            dist/velopack-macos-*/*
           if-no-files-found: error

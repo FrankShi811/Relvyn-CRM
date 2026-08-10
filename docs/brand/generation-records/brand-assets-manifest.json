@@ -1,80 +1,73 @@
 {
     "schemaVersion":  1,
-    "generatedAtUtc":  "2026-08-10T05:35:12Z",
+    "generatedAtUtc":  "2026-08-10T08:09:30Z",
     "sourceTool":  "OpenAI host-native image generation tool; model selected by host runtime",
-    "sourceUsedReferenceImages":  false,
-    "projectOwnerAuthorization":  "The project owner explicitly authorized replacement with newly generated assets on 2026-08-10.",
-    "prompt":  "docs/brand/generation-records/ai-sales-os-brand-master-prompt-20260810-133512.md",
-    "promptSha256":  "F505DA111C82B9E26937895EF9AD0DC12B8583A760189ECAD617541CAF95DDB2",
+    "sourceUsedReferenceImages":  true,
+    "projectOwnerAuthorization":  "The project owner explicitly authorized updating the program icon to this generated version on 2026-08-10.",
+    "platformScope":  "Windows desktop executable, taskbar, shortcut and installer assets only; macOS and PWA assets are unchanged.",
+    "prompt":  "docs/brand/generation-records/ai-sales-os-windows-icon-prompt-20260810-160930.md",
+    "promptSha256":  "7A5F43758728A8164781136466A843906BD85A67E2A7480885CC399DB0B5A1F0",
     "promptHashNormalization":  "UTF-8 without BOM; CRLF and CR line endings normalized to LF before SHA-256",
-    "originalMaster":  "docs/brand/generation-records/ai-sales-os-brand-master-original-20260810-133512.png",
-    "originalMasterSha256":  "F12BC1986CAEF9A1E297773428D294CA1086926EBE0E71FA8A279D09AA6254ED",
-    "derivation":  "Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1; no third-party brand assets or reference images used.",
+    "referenceImage":  "docs/brand/generation-records/ai-sales-os-windows-icon-reference-20260810-160930.png",
+    "referenceImageSha256":  "DD5FE189D94AD94DE042F5182EE58C948AC0337AEC749D1E2A09379905558323",
+    "originalMaster":  "docs/brand/generation-records/ai-sales-os-windows-icon-master-original-20260810-160930.png",
+    "originalMasterSha256":  "D6CF6ACD5D8C62BADCEB4DD2BAE632E4F4F0197348DE7A37FC4F1FE4419C6A43",
+    "derivation":  "Rounded-square alpha mask and deterministic high-quality downscaling through scripts/generate-brand-assets.ps1. Scope: Windows desktop executable, taskbar, shortcut and installer assets only; macOS and PWA assets are unchanged.",
     "assets":  [
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/AI-Sales-OS.png",
-                       "sha256":  "4485CBC528A209DF708ECCAD3DCBEA4E7EB4225E5668C144C8F85175DBBB35F0",
-                       "bytes":  847060
+                       "sha256":  "C1A6DE91E77697A93BBA382D1EA093ED5D23209B9D655EBF6512F7D2E8B209DD",
+                       "bytes":  857897
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/AI-Sales-OS.ico",
-                       "sha256":  "484610BFCB274129C42B537740CA419BCBF6A62CE0974B951ECAA4F036F3D4B4",
+                       "sha256":  "D945B52D252FBE72A44C985E6426C00967E8C35FE046973204B21309DD8037A4",
                        "bytes":  381038
                    },
                    {
-                       "path":  "pwa/public/pwa-192.png",
-                       "sha256":  "12FFEAFEC1FF8761430A018D53D12CA6E14F0AEC1460D19924142911FF0B1123",
-                       "bytes":  29250
-                   },
-                   {
-                       "path":  "pwa/public/pwa-512.png",
-                       "sha256":  "F6889D7B343E61D6D96A57858E3FA1B98F7AF5763362F11BB86938BEA0F8373E",
-                       "bytes":  225775
-                   },
-                   {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-16.png",
-                       "sha256":  "4D02B8C33C84142368048840BD19040704BC890A7CD355D7881CAFC7C6A89265",
-                       "bytes":  726
+                       "sha256":  "A2EDB8F76F4BBC4982536F4863037DBDAAB9CCFB6A0F4240D6A624CADD1A7C59",
+                       "bytes":  758
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-20.png",
-                       "sha256":  "65282FDC3ADE6FA4E62B459118D5AF518895E25106A3474ABC9629DF14C83742",
-                       "bytes":  963
+                       "sha256":  "36059B47E7C95052F633A551C8677D26750A02FE0B3D9333585FDCE5BFCD78CF",
+                       "bytes":  994
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-24.png",
-                       "sha256":  "AEE17B9304155381FCFC3B00D30ED39DC057CECF76837E074B6598BB42A68149",
-                       "bytes":  1193
+                       "sha256":  "47A7F054E6E72EB7EF6DBE14F4B284D55731B4AA793A9EA11E4E37B754394E35",
+                       "bytes":  1212
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-32.png",
-                       "sha256":  "099F69E57F9C0A0048BD21793C6D049272DE3F9370CC0CC797A817ADEE9F0520",
-                       "bytes":  1720
+                       "sha256":  "F07AF461D0B300F7F97B4789F8F38C8725CAF0751D8AD695DC18B4D215756668",
+                       "bytes":  1677
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-40.png",
-                       "sha256":  "65685E4E3EA56C8590FEBFB2BDF0CE8ECEDF38F8A1D92153F6026A50010E5B82",
-                       "bytes":  2259
+                       "sha256":  "2AA6A2ED16FA4DAB568B2304E9F2C934ACAC37F0654C0BF66061556DDBEA9CF8",
+                       "bytes":  2321
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-48.png",
-                       "sha256":  "FC7AAACAAA67F5F48A2FFBD66F086C66AE02F29497AA113C9C1E7ABA0A782230",
-                       "bytes":  2902
+                       "sha256":  "F951128750DC6C017BB3E8703130E182B30875F2A97CEC2BB9FC7975FC8786D7",
+                       "bytes":  3009
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-64.png",
-                       "sha256":  "02CE401AC0D72A6E875049D31417224E1403A1885A6FFEBC75C00F2E225257FE",
-                       "bytes":  4212
+                       "sha256":  "657FBDE2183F05BC8536D9DF73105F7B6E5477880EC750A7340EE4C85AB24236",
+                       "bytes":  4500
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-128.png",
-                       "sha256":  "A4E33A9933D3E3E8E54520B6B7A1E4ED30004731FA34E9092F9497812D5C7C41",
-                       "bytes":  13395
+                       "sha256":  "3660D4A3221792DE8A93B18F32036F9942E8BE5FF95FFBA94F39C2157228F036",
+                       "bytes":  13947
                    },
                    {
                        "path":  "desktop/WAFlow.Desktop/Assets/Icons/AI-Sales-OS-256.png",
-                       "sha256":  "48A8159F4924262970F25257396721899C1FFCC38121490AB1DA8BB971CD2DE4",
-                       "bytes":  53678
+                       "sha256":  "A3FF822DEC9CB27EABDCF80103330C37A21CD1EA21B6780DC39C95695B072517",
+                       "bytes":  55267
                    }
                ]
 }
