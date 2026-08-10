@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 const DEFAULT_TIMEOUT_MS = 8000
 export const BUNDLED_VALIDATED_VERSION = [2, 3000, 1043857760]
 

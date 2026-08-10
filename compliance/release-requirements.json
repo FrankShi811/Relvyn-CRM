@@ -1,0 +1,25 @@
+{
+  "snapshotDate": "2026-08-10",
+  "requirements": [
+    {
+      "id": "GPL-BRIDGE-SEPARATE-COMPANION",
+      "status": "resolved",
+      "evidence": "WAFlow.Core no longer embeds the Bridge; Windows packaging copies WAFlow.WhatsApp.Bridge.exe as a separate companion"
+    },
+    {
+      "id": "GPL-BRIDGE-CORRESPONDING-SOURCE",
+      "status": "resolved",
+      "evidence": "Every release builds and uploads an exact Bridge source archive including resolved dependency source trees, GPL text, build scripts, lockfile and installation information"
+    },
+    {
+      "id": "GPL-BRIDGE-INSTALLATION-INFORMATION",
+      "status": "resolved",
+      "evidence": "AI_SALES_OS_WHATSAPP_BRIDGE_PATH allows users to run a rebuilt or modified Bridge without vendor signature or hash approval"
+    },
+    {
+      "id": "BRAND-ASSET-PROVENANCE",
+      "status": "resolved",
+      "evidence": "docs/brand/generation-records stores the exact prompt, untouched generated master, deterministic derivation script authorization and hashes"
+    }
+  ]
+}

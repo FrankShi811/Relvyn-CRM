@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 import { normalizeMessageContent } from '@whiskeysockets/baileys'
 
 const mediaKinds = new Map([

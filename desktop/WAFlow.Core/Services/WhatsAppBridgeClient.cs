@@ -488,17 +488,15 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
     {
         public static BridgeLaunch Resolve(string dataRoot)
         {
-            var explicitExe = Environment.GetEnvironmentVariable("WAFLOW_BRIDGE_EXE");
+            var explicitExe = Environment.GetEnvironmentVariable("AI_SALES_OS_WHATSAPP_BRIDGE_PATH");
+            if (string.IsNullOrWhiteSpace(explicitExe))
+                explicitExe = Environment.GetEnvironmentVariable("WAFLOW_BRIDGE_EXE");
             if (!string.IsNullOrWhiteSpace(explicitExe) && File.Exists(explicitExe))
                 return new(explicitExe, Path.GetDirectoryName(explicitExe)!, []);
 
             var processDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
             var packaged = Path.Combine(processDirectory, "WAFlow.WhatsApp.Bridge.exe");
             if (File.Exists(packaged)) return new(packaged, processDirectory, []);
-
-            var embedded = ExtractEmbeddedBridge(dataRoot);
-            if (!string.IsNullOrWhiteSpace(embedded) && File.Exists(embedded))
-                return new(embedded, Path.GetDirectoryName(embedded)!, []);
 
             var script = Environment.GetEnvironmentVariable("WAFLOW_BRIDGE_SCRIPT");
             if (string.IsNullOrWhiteSpace(script) || !File.Exists(script)) script = FindDevelopmentScript(AppContext.BaseDirectory);
@@ -507,41 +505,9 @@ public sealed class WhatsAppBridgeClient : IAsyncDisposable
             if (!string.IsNullOrWhiteSpace(script) && File.Exists(script) && !string.IsNullOrWhiteSpace(node) && File.Exists(node))
                 return new(node, Path.GetDirectoryName(Path.GetDirectoryName(script))!, [script]);
 
-            throw new WhatsAppBridgeException("bridge_runtime_missing", "未找到 WAFlow.WhatsApp.Bridge.exe。开发环境可设置 WAFLOW_NODE_PATH 和 WAFLOW_BRIDGE_SCRIPT。");
-        }
-
-        private static string? ExtractEmbeddedBridge(string dataRoot)
-        {
-            var assembly = typeof(WhatsAppBridgeClient).Assembly;
-            using var resource = assembly.GetManifestResourceStream("WAFlow.WhatsApp.Bridge.exe");
-            if (resource is null) return null;
-            var version = assembly.GetName().Version?.ToString() ?? "1.0.0";
-            var directory = Path.Combine(dataRoot, "runtime", version);
-            Directory.CreateDirectory(directory);
-            var temporary = Path.Combine(directory, $"WAFlow.WhatsApp.Bridge.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
-            string hash;
-            using var sha256 = SHA256.Create();
-            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var hashing = new CryptoStream(output, sha256, CryptoStreamMode.Write))
-            {
-                resource.CopyTo(hashing);
-                hashing.FlushFinalBlock();
-                hash = Convert.ToHexString(sha256.Hash!)[..16].ToLowerInvariant();
-            }
-
-            // The product version can stay unchanged while the embedded bridge changes during
-            // development or a hotfix. A content-addressed filename avoids replacing a bridge
-            // executable that is still in use by another AI Sales OS process.
-            var destination = Path.Combine(directory, $"WAFlow.WhatsApp.Bridge-{hash}.exe");
-            if (File.Exists(destination))
-            {
-                File.Delete(temporary);
-                return destination;
-            }
-
-            try { File.Move(temporary, destination); }
-            catch when (File.Exists(destination)) { File.Delete(temporary); }
-            return destination;
+            throw new WhatsAppBridgeException(
+                "bridge_runtime_missing",
+                "未找到 WhatsApp Bridge。请修复安装，或通过 AI_SALES_OS_WHATSAPP_BRIDGE_PATH 选择自行编译的 Bridge。");
         }
 
         private static string? FindDevelopmentScript(string start)

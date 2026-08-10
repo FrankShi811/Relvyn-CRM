@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>5.18.15</Version>
+    <Version>5.19.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.104.2" />
@@ -13,9 +13,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.19" />
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="PdfPig" Version="0.1.12" />
-  </ItemGroup>
-  <ItemGroup Condition="Exists('..\..\bridge\dist\WAFlow.WhatsApp.Bridge.exe')">
-    <EmbeddedResource Include="..\..\bridge\dist\WAFlow.WhatsApp.Bridge.exe" LogicalName="WAFlow.WhatsApp.Bridge.exe" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\Fonts\NotoSansCJKsc-Regular.otf" LogicalName="WAFlow.Assets.Fonts.NotoSansCJKsc-Regular.otf" />

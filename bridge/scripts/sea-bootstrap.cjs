@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')

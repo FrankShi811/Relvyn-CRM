@@ -18,6 +18,8 @@ $env:NUGET_PACKAGES = Join-Path $work 'nuget'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
 
+& (Join-Path $root 'scripts\test-compliance.ps1')
+
 $desktopProject = Join-Path $root 'desktop\WAFlow.Desktop\WAFlow.Desktop.csproj'
 $coreProject = Join-Path $root 'desktop\WAFlow.Core\WAFlow.Core.csproj'
 $macProject = Join-Path $root 'desktop\WAFlow.Mac\WAFlow.Mac.csproj'
@@ -120,6 +122,10 @@ $customerEditXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $roo
 $customerEditSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CustomerEditWindow.xaml.cs')
 $knowledgeProcessingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\KnowledgeProcessingComponents.cs')
 $velopackBuildSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'scripts\build-velopack-release.ps1')
+$coreProjectSource = Get-Content -Raw -Encoding utf8 -LiteralPath $coreProject
+$bridgePackageSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\package.json')
+$bridgeSourceArchiveSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'scripts\build-bridge-source-archive.ps1')
+$releaseWorkflowSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root '.github\workflows\release.yml')
 $allDesktopXaml = (Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop') -Recurse -Filter '*.xaml' |
   ForEach-Object { Get-Content -Raw -Encoding utf8 -LiteralPath $_.FullName }) -join "`n"
 $desktopVersion = ([xml](Get-Content -Raw -Encoding utf8 -LiteralPath $desktopProject)).Project.PropertyGroup.Version | Select-Object -First 1
@@ -140,6 +146,17 @@ if ($env:ENABLE_MACOS_RELEASE -eq 'true') {
 else {
   Write-Host "PASS  Windows release version contract: $desktopVersion (macOS release paused at $macVersion)"
 }
+
+if ($coreProjectSource -match 'WAFlow\.WhatsApp\.Bridge\.exe' -or
+    $bridgePackageSource -notmatch '"license"\s*:\s*"GPL-3\.0-only"' -or
+    $whatsAppBridgeClientSource -notmatch 'AI_SALES_OS_WHATSAPP_BRIDGE_PATH' -or
+    $whatsAppBridgeClientSource -match 'GetManifestResourceStream\("WAFlow\.WhatsApp\.Bridge\.exe"\)' -or
+    $bridgeSourceArchiveSource -notmatch 'pnpm.*deploy.*--legacy' -or
+    $velopackBuildSource -notmatch 'test-compliance\.ps1' -or
+    $releaseWorkflowSource -notmatch 'dist/source/\*\.zip') {
+  throw 'Windows releases must keep the GPL Bridge separate, user-replaceable and accompanied by complete corresponding source.'
+}
+Write-Host 'PASS  separate GPL Bridge, replacement path and corresponding-source release contract'
 
 $desktopProductSourceFiles = Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop') -Recurse -File |
   Where-Object { $_.Extension -in @('.xaml', '.cs') -and $_.FullName -notmatch '[\\/](?:bin|obj)[\\/]' }

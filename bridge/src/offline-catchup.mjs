@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 export const DEFAULT_OFFLINE_CATCHUP_TIMEOUT_MS = 30000
 export const DEFAULT_OFFLINE_CATCHUP_SETTLE_MS = 6000
 

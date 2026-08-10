@@ -441,7 +441,8 @@ progress::-moz-progress-bar { background: var(--primary); }
 }
 
 @media (max-width: 860px) {
-  .sidebar { transform: translateX(-102%); transition: transform .22s ease; box-shadow: 18px 0 50px rgba(0,0,0,.22); }
+  .sidebar { width: min(280px, calc(100vw - 48px)); transform: translateX(-102%); transition: transform .22s ease; box-shadow: 18px 0 50px rgba(0,0,0,.22); }
+  .brand strong, .brand span { white-space: nowrap; }
   .sidebar.open { transform: translateX(0); }
   .mobile-close { margin-left: auto; width: 36px; height: 36px; border: 0; border-radius: 9px; display: grid; place-items: center; background: var(--sidebar-raised); color: #fff; }
   .nav-scrim { position: fixed; inset: 0; z-index: 35; border: 0; background: rgba(0,0,0,.45); }

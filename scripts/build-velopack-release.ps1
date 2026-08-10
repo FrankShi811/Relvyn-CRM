@@ -42,10 +42,14 @@ if (-not $SkipBridgeBuild) {
     $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
     if ($nodeCommand) { $node = $nodeCommand.Source }
   }
-  if (-not $node -or -not (Test-Path -LiteralPath $node)) { throw 'Node.js is required to build the embedded WhatsApp bridge. Set WAFLOW_NODE_PATH.' }
+  if (-not $node -or -not (Test-Path -LiteralPath $node)) { throw 'Node.js is required to build the companion WhatsApp Bridge. Set WAFLOW_NODE_PATH.' }
   & $node $bridgeBuild
   if ($LASTEXITCODE -ne 0) { throw 'WhatsApp bridge build failed.' }
 }
+
+$sourceDirectory = Join-Path $root 'dist\source'
+& (Join-Path $root 'scripts\build-bridge-source-archive.ps1') -Version $Version -OutputDirectory $sourceDirectory
+$sourceArchive = Join-Path $sourceDirectory "AI-Sales-OS-WhatsApp-Bridge-$Version-source.zip"
 
 $publish = Join-Path $work "velopack-publish\$Runtime-$([Guid]::NewGuid().ToString('N'))"
 $releases = if ($ReleaseOutputDirectory) { [IO.Path]::GetFullPath($ReleaseOutputDirectory) } else { Join-Path $root 'dist\velopack' }
@@ -90,6 +94,14 @@ if ($LASTEXITCODE -ne 0) { throw 'AI Sales OS publish failed.' }
 
 $publishedExe = Join-Path $publish 'AISalesOS.exe'
 if (-not (Test-Path -LiteralPath $publishedExe)) { throw 'Published AISalesOS.exe is missing.' }
+$bridgeExe = Join-Path $root 'bridge\dist\WAFlow.WhatsApp.Bridge.exe'
+if (-not (Test-Path -LiteralPath $bridgeExe)) { throw 'Built WhatsApp Bridge executable is missing.' }
+Copy-Item -LiteralPath $bridgeExe -Destination (Join-Path $publish 'WAFlow.WhatsApp.Bridge.exe') -Force
+Write-Host 'PASS packaged WhatsApp Bridge as a separate GPL-3.0 companion executable'
+& (Join-Path $root 'scripts\test-compliance.ps1') `
+  -ReleaseGate `
+  -PackageRoot $publish `
+  -SourceArchive $sourceArchive
 if (-not $SkipCanonicalCopy) {
   try { Copy-Item -LiteralPath $publishedExe -Destination $canonicalExe -Force }
   catch [System.IO.IOException] { throw 'AI Sales OS.exe is running. Close it before building so the canonical file can be overwritten.' }

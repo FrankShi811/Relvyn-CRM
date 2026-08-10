@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 import readline from 'node:readline'
 import path from 'node:path'
 import fs from 'node:fs/promises'

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 AI Sales OS contributors
+
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -62,7 +65,10 @@ async function command(name, payload = {}, timeoutMs = 15000) {
 
 try {
   currentStage = 'bridge ready'
-  await waitFor(message => message.type === 'event' && message.event === 'ready')
+  // Source-mode cold starts can spend tens of seconds in dependency loading on
+  // Windows antivirus-scanned worktrees. Runtime commands retain the stricter
+  // 15-second timeout; only the source-test bootstrap gets a wider allowance.
+  await waitFor(message => message.type === 'event' && message.event === 'ready', 60000)
   currentStage = 'initialize'
   await command('initialize', {
     accountId: 'lifecycle_smoke',

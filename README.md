@@ -17,9 +17,10 @@ remain publicly reachable until an approved transition release has moved those
 clients to the new feed. Making it private before that transition would break
 their update path.
 
-Previously published installers remain legacy artifacts. No new commercial
-binary will be published while the compliance release gate is blocked by the
-identified copyleft-dependency and brand-asset provenance issues.
+Previously published installers remain legacy artifacts. New Windows releases
+must pass the repository compliance gate: the WhatsApp Bridge is distributed
+as a separate GPL-3.0 companion with complete corresponding source, while all
+distributed brand assets must match the recorded generation manifest.
 
 ## Source and commercial use
 
