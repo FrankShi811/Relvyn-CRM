@@ -177,6 +177,10 @@ public sealed class ImportService
             }
             if (buyerKey.Length > 0 && !firstRowsByBuyerId.ContainsKey(buyerKey))
                 firstRowsByBuyerId[buyerKey] = item;
+            if (item.Errors.Count == 0 && string.IsNullOrWhiteSpace(item.Changes))
+                item.Changes = item.IsDuplicate || item.DuplicateRowNumber is not null
+                    ? "匹配已有客户；没有非空字段变化"
+                    : "新增客户并保留全部原表维度";
             // Buyer ID is the authoritative business identity. Only when it is absent do
             // we use an unambiguous normalized phone or stable prior-import row identity.
             output.Add(item);

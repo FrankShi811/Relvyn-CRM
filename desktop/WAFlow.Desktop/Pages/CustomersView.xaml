@@ -115,7 +115,7 @@
                 </Border>
                 <DataGrid x:Name="CustomerGrid" Grid.Row="1" IsReadOnly="True" EnableRowVirtualization="True" EnableColumnVirtualization="True"
                           ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                          FrozenColumnCount="0" CanUserSortColumns="True" Sorting="CustomerGrid_Sorting"
+                          FrozenColumnCount="3" CanUserSortColumns="True" Sorting="CustomerGrid_Sorting"
                           SelectionChanged="CustomerGrid_SelectionChanged" MouseDoubleClick="CustomerGrid_MouseDoubleClick" BorderThickness="0">
                     <DataGrid.Resources>
                         <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource CustomerScrollBar}"/>

@@ -86,7 +86,15 @@
                         <TextBlock Text="02 · 任务触发方式" FontWeight="SemiBold" Margin="0,13,0,6"/>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="1.35*"/></Grid.ColumnDefinitions>
                             <ComboBox x:Name="ScheduleModeBox" DisplayMemberPath="Label" SelectionChanged="ScheduleModeBox_SelectionChanged"/>
-                            <StackPanel x:Name="StartAtPanel" Grid.Column="2"><TextBlock Text="定时开始（北京时间）" Style="{StaticResource LabelText}"/><TextBox x:Name="StartAtBox" ToolTip="例如 2026-07-20 18:30" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel x:Name="StartAtPanel" Grid.Column="2">
+                                <TextBlock Text="定时开始（北京时间）" Style="{StaticResource LabelText}"/>
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="7"/><ColumnDefinition Width="84"/></Grid.ColumnDefinitions>
+                                    <DatePicker x:Name="StartDatePicker" SelectedDateChanged="ScheduleDateTime_Changed" ToolTip="选择开始日期" AutomationProperties.Name="定时发送开始日期"/>
+                                    <TextBox x:Name="StartTimeBox" Grid.Column="2" MaxLength="5" TextChanged="ScheduleTime_TextChanged" ToolTip="24 小时制，例如 18:30" AutomationProperties.Name="定时发送开始时间"/>
+                                </Grid>
+                                <TextBlock x:Name="StartAtValidationText" Text="请选择未来的日期和时间" Foreground="{DynamicResource Warning}" FontSize="9" Margin="0,4,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                            </StackPanel>
                         </Grid>
 
                         <TextBlock Text="03 · 逐条发送节奏" FontWeight="SemiBold" Margin="0,13,0,6"/>

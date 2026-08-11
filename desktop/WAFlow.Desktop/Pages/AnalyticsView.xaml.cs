@@ -6,6 +6,7 @@ using System.Windows.Media;
 using WAFlow.Core;
 using WAFlow.Core.Domain;
 using WAFlow.Core.Services;
+using WAFlow.Desktop.Windows;
 
 namespace WAFlow.Desktop.Pages;
 
@@ -357,9 +358,10 @@ public partial class AnalyticsView : UserControl, IRefreshableView
         if (_currentReport is null) return;
         var previous = _history.Where(report => report.Version < _currentReport.Version && report.Status == CustomerReportStatus.Succeeded).OrderByDescending(report => report.Version).FirstOrDefault();
         if (previous is null) { MessageBox.Show("当前报告没有可比较的上一成功版本。", "版本对比", MessageBoxButton.OK, MessageBoxImage.Information); return; }
-        var currentScore = _currentReport.Report.OpportunityJudgment.AiScore; var previousScore = previous.Report.OpportunityJudgment.AiScore;
-        var currentProbability = _currentReport.Report.OpportunityJudgment.DealProbability; var previousProbability = previous.Report.OpportunityJudgment.DealProbability;
-        MessageBox.Show($"{previous.VersionLabel}  →  {_currentReport.VersionLabel}\n\n等级：{previous.Report.OpportunityJudgment.Grade} → {_currentReport.Report.OpportunityJudgment.Grade}\nAI 评分：{previousScore} → {currentScore}（{currentScore - previousScore:+#;-#;0}）\n成交概率：{previousProbability}% → {currentProbability}%（{currentProbability - previousProbability:+#;-#;0}%）\n\n上一版判断：\n{previous.Report.ExecutiveSummary.OverallValueJudgment}\n\n当前判断：\n{_currentReport.Report.ExecutiveSummary.OverallValueJudgment}", "客户情报版本对比", MessageBoxButton.OK, MessageBoxImage.Information);
+        new CustomerReportComparisonWindow(previous, _currentReport)
+        {
+            Owner = Window.GetWindow(this)
+        }.ShowDialog();
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) { if (IsLoaded) ApplyCustomerFilter(); }

@@ -270,6 +270,61 @@ public partial class CustomerEditWindow : Window
     {
         RefreshBrainButton.IsEnabled = enabled;
         AnalyzeBrainButton.IsEnabled = enabled;
+        BrainRecommendationItems.IsEnabled = enabled;
+        RecommendationActionPanel.IsEnabled = enabled;
+        UpdateRecommendationActions();
+    }
+
+    private void BrainRecommendationItems_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdateRecommendationActions();
+
+    private void UpdateRecommendationActions()
+    {
+        AcceptRecommendationButton.Visibility = Visibility.Collapsed;
+        DeferRecommendationButton.Visibility = Visibility.Collapsed;
+        StartRecommendationButton.Visibility = Visibility.Collapsed;
+        CompleteRecommendationButton.Visibility = Visibility.Collapsed;
+        FailRecommendationButton.Visibility = Visibility.Collapsed;
+        DismissRecommendationButton.Visibility = Visibility.Collapsed;
+
+        if (BrainRecommendationItems.SelectedItem is not RecommendationOption { Item: { } recommendation })
+        {
+            RecommendationActionHintText.Text = "选择建议后显示当前可执行操作";
+            return;
+        }
+
+        switch (recommendation.Status)
+        {
+            case AiRecommendationStatus.Proposed:
+                AcceptRecommendationButton.Visibility = Visibility.Visible;
+                DeferRecommendationButton.Visibility = Visibility.Visible;
+                DismissRecommendationButton.Visibility = Visibility.Visible;
+                RecommendationActionHintText.Text = "待确认：接受后才能开始执行，也可延期或忽略。";
+                break;
+            case AiRecommendationStatus.Accepted:
+                StartRecommendationButton.Visibility = Visibility.Visible;
+                DeferRecommendationButton.Visibility = Visibility.Visible;
+                DismissRecommendationButton.Visibility = Visibility.Visible;
+                RecommendationActionHintText.Text = "已接受：开始执行，或先延期。";
+                break;
+            case AiRecommendationStatus.InProgress:
+                CompleteRecommendationButton.Visibility = Visibility.Visible;
+                FailRecommendationButton.Visibility = Visibility.Visible;
+                RecommendationActionHintText.Text = "执行中：请按真实结果标记完成或失败。";
+                break;
+            case AiRecommendationStatus.Completed:
+                RecommendationActionHintText.Text = "此建议已完成，结果已进入客户经验。";
+                break;
+            case AiRecommendationStatus.Failed:
+                RecommendationActionHintText.Text = "此建议已记录为失败，结果已保留用于后续复盘。";
+                break;
+            case AiRecommendationStatus.Dismissed:
+                RecommendationActionHintText.Text = "此建议已忽略。";
+                break;
+            default:
+                RecommendationActionHintText.Text = "此建议已结束，没有后续操作。";
+                break;
+        }
     }
 
     private void AddDimension_Click(object sender, RoutedEventArgs e)

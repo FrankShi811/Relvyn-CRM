@@ -34,7 +34,6 @@ public partial class MainWindow : Window
     private readonly AnalyticsView _analytics;
     private Button? _activeButton;
     private OnboardingState _onboardingState = new();
-    private bool _onboardingReady;
     private string _currentPage = "dashboard";
     private readonly DispatcherTimer _unreadBadgeTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private bool _unreadBadgeRefreshRunning;
@@ -405,17 +404,15 @@ public partial class MainWindow : Window
         InitializeSidebarMotionState();
         await UpdateProviderStateAsync();
         await UpdateUnreadBadgesAsync();
+        await RefreshDemoDataBannerAsync();
         _services.DashboardUnreadDigest.QueueBackgroundRefresh();
         _unreadBadgeTimer.Start();
         await NavigateAsync("dashboard", DashboardButton);
         _onboardingState = await _services.Repository.GetOnboardingStateAsync();
         if (GuideCatalog.MigrateLegacyState(_onboardingState))
             await _services.Repository.SaveOnboardingStateAsync(_onboardingState);
-        _onboardingReady = true;
         if (!GuideCatalog.IsSeen(_onboardingState, "global"))
             OnboardingGuide.ShowGuide(GuideCatalog.Global);
-        else
-            await ShowModuleGuideIfNeededAsync(_currentPage);
         _updates.StartMonitoring();
     }
 
@@ -553,8 +550,6 @@ public partial class MainWindow : Window
             await Task.WhenAll(enterTask, refreshTask);
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (_onboardingReady && !OnboardingGuide.IsOpen)
-                await ShowModuleGuideIfNeededAsync(page);
         }
         catch (OperationCanceledException)
         {
@@ -607,14 +602,6 @@ public partial class MainWindow : Window
 
     private void ShowGuide_Click(object sender, RoutedEventArgs e) => OnboardingGuide.ShowGuide(GuideCatalog.ForModule(_currentPage));
 
-    private async Task ShowModuleGuideIfNeededAsync(string page)
-    {
-        if (!_onboardingReady || OnboardingGuide.IsOpen) return;
-        if (!GuideCatalog.IsSeen(_onboardingState, page))
-            OnboardingGuide.ShowGuide(GuideCatalog.ForModule(page));
-        await Task.CompletedTask;
-    }
-
     private async Task MarkModuleGuideSeenAsync(string key)
     {
         GuideCatalog.MarkSeen(_onboardingState, key);
@@ -631,7 +618,6 @@ public partial class MainWindow : Window
         {
             GuideCatalog.MarkSeen(_onboardingState, "global");
             await _services.Repository.SaveOnboardingStateAsync(_onboardingState);
-            await ShowModuleGuideIfNeededAsync(_currentPage);
         }
     }
 
@@ -642,16 +628,9 @@ public partial class MainWindow : Window
         if (OnboardingGuide.CurrentDefinition is not { } definition) return;
         if (definition.IsGlobal)
         {
-            if (!_services.DeepSeek.HasApiKey())
-            {
-                MessageBox.Show("请先配置 DeepSeek 或兼容 AI 接口的 API Key，并从自动拉取的列表中选择模型，再结束首次使用引导。", "需要配置 AI API", MessageBoxButton.OK, MessageBoxImage.Information);
-                await OpenSettingsAsync();
-                if (!_services.DeepSeek.HasApiKey()) return;
-            }
             GuideCatalog.MarkSeen(_onboardingState, "global");
             await _services.Repository.SaveOnboardingStateAsync(_onboardingState);
             OnboardingGuide.HideGuide();
-            await ShowModuleGuideIfNeededAsync(_currentPage);
             return;
         }
         await MarkModuleGuideSeenAsync(definition.Key);
@@ -675,7 +654,54 @@ public partial class MainWindow : Window
         if (window.ShowDialog() != true) return;
         if (ContentHost.Content is IRefreshableView currentView)
             await currentView.RefreshAsync();
+        await RefreshDemoDataBannerAsync();
         await UpdateUnreadBadgesAsync();
+    }
+
+    private async Task RefreshDemoDataBannerAsync()
+    {
+        try
+        {
+            var count = await _services.Repository.GetDemoLeadCountAsync();
+            DemoDataText.Text = $"当前工作区包含 {count} 条演示客户；它们只用于熟悉界面，不是真实客户数据。";
+            DemoDataBanner.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch
+        {
+            DemoDataBanner.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private async void RemoveDemoData_Click(object sender, RoutedEventArgs e)
+    {
+        var count = await _services.Repository.GetDemoLeadCountAsync();
+        if (count == 0)
+        {
+            await RefreshDemoDataBannerAsync();
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"将删除 {count} 条内置演示客户。\n\n真实客户，以及已同步的邮件和 WhatsApp 历史不会删除。是否继续？",
+            "清空演示数据",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
+        if (!confirmed) return;
+
+        try
+        {
+            var removed = await _services.Repository.RemoveDemoLeadsAsync();
+            await RefreshDemoDataBannerAsync();
+            if (ContentHost.Content is IRefreshableView currentView)
+                await currentView.RefreshAsync();
+            _dashboard.NotifyUnreadChanged();
+            MessageBox.Show($"已清空 {removed} 条演示客户。", "演示数据已清空", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "无法清空演示数据", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void OpenOpportunityImport(object? sender, EventArgs e)
