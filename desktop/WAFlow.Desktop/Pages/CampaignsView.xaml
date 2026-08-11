@@ -102,7 +102,9 @@
 
                         <WrapPanel>
                             <Button x:Name="SaveButton" Content="保存任务草稿" Style="{StaticResource SecondaryButton}" Click="Save_Click" Margin="0,0,7,7"/>
-                            <Button x:Name="PreviewButton" Content="预览个性化话术" Style="{StaticResource SecondaryButton}" Click="Preview_Click" Margin="0,0,7,7"/>
+                            <Button x:Name="PreviewButton" Content="预览个性化话术" Style="{StaticResource SecondaryButton}" Click="Preview_Click" Margin="0,0,7,7"
+                                    AutomationProperties.Name="预览所有已选客户的个性化话术"
+                                    AutomationProperties.HelpText="打开集中预览窗口，逐位检查所有已选客户的字段替换结果。"/>
                             <Button x:Name="ApproveButton" Content="批准并建立任务" Style="{StaticResource PrimaryButton}" Click="Approve_Click" Margin="0,0,7,7"/>
                             <Button x:Name="PauseResumeButton" Content="暂停" Style="{StaticResource SecondaryButton}" Click="PauseResume_Click" Margin="0,0,7,7" IsEnabled="False"/>
                             <Button x:Name="CancelButton" Content="取消任务" Style="{StaticResource DangerButton}" Click="Cancel_Click" Margin="0,0,0,7" IsEnabled="False"/>
@@ -149,7 +151,8 @@
                             </StackPanel>
                         </Grid>
                     </StackPanel>
-                    <DataGrid x:Name="AudienceGrid" Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" RowHeight="40" BorderThickness="0,1,0,1" SelectionChanged="AudienceGrid_SelectionChanged">
+                    <DataGrid x:Name="AudienceGrid" Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" RowHeight="40" BorderThickness="0,1,0,1"
+                              AutomationProperties.Name="发送客户列表">
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="选" Width="38"><DataGridTemplateColumn.CellTemplate><DataTemplate><CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" Click="AudienceCheck_Click" IsEnabled="{Binding Eligible}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                             <DataGridTextColumn Header="客户" Binding="{Binding DisplayName}" Width="1.05*" IsReadOnly="True"/>
@@ -161,9 +164,8 @@
                     </DataGrid>
                     <Border Grid.Row="2" Background="{DynamicResource SurfaceMuted}" Padding="12" CornerRadius="0,0,16,16">
                         <StackPanel>
-                            <TextBlock Text="当前客户个性化预览" Style="{StaticResource LabelText}"/>
-                            <TextBlock x:Name="SelectedPreviewText" Text="选择表格中的客户可查看字段替换结果。" TextWrapping="Wrap" MaxHeight="76" Margin="0,4,0,7"/>
-                            <TextBlock x:Name="CampaignStateText" Text="新草稿" FontWeight="SemiBold"/>
+                            <TextBlock Text="任务状态" Style="{StaticResource LabelText}"/>
+                            <TextBlock x:Name="CampaignStateText" Text="新草稿" FontWeight="SemiBold" Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite"/>
                             <TextBlock x:Name="PauseReasonText" Text="" Foreground="{DynamicResource Warning}" FontSize="10" Margin="0,3,0,0"/>
                         </StackPanel>
                     </Border>

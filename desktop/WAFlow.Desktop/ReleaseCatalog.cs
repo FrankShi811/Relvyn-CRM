@@ -9,10 +9,17 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.19.5";
+            : "5.19.6";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.19.6", "2026-08-11", "集中查看全部客户个性化话术预览",
+        [
+            "自动化触达页移除受众表格下方重复的单客户预览，把预览入口统一到左侧“预览个性化话术”按钮；按钮会显示当前已选人数，点击后一次打开全部已选客户的个性化结果。",
+            "集中预览窗口支持按客户、发送目标或话术内容搜索，并逐位展示可发送状态、排除原因、联系目标与完整正文；邮件任务同时展示个性化主题，方向键可切换客户，只读内容可选择复制。",
+            "搜索无结果时提供明确空状态和清除入口，长客户信息会安全截断并保留悬停全文；列表启用回收虚拟化，并补齐可访问名称、搜索标签、实时结果计数与键盘焦点。",
+            "已通过 Windows WPF 浅色、深色、1040×720 与 780×560 紧凑窗口验证；本补丁只发布 Windows x64 桌面程序、中文安装包与 Velopack 自动更新资产，macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.19.5", "2026-08-10", "修复 WhatsApp 自定义列表打标与 Windows 任务栏图标",
         [
             "修复 OS 创建标签时报 fetch failed 的问题：WhatsApp Bridge 的加密 App State 快照下载现在与 WebSocket 一致继承 Windows 或环境代理，同时支持 HTTP、HTTPS 与 SOCKS 路由；自动测试会通过真实本地代理下载快照，避免后续更新退回直连。",
@@ -20,7 +27,7 @@ public static class ReleaseCatalog
             "创建、删除、添加与移除不再把本地协议调用成功当作同步成功：每次写入后都会强制重新拉取 WhatsApp regular App State 服务端快照，只有快照确认标签和客户归属后才在 OS 保存并显示成功，否则给出可重试错误。",
             "标签窗口会明确区分 WhatsApp 自定义列表与 Business 标签，并展示服务端确认状态；已有 CRM 标签、左侧会话标签卡片和客户列表标签列保持不变。",
             "修复程序打开后任务栏 Logo 可能缩小或模糊的问题：旧实现把仅用于查询的 ICON_SMALL2 当成 WM_SETICON 写入值，覆盖了高 DPI 大图标；现在按窗口 DPI 分别装载大、小 ICO 帧，并在真实隔离安装中要求 125% DPI 下 40×40 与 20×20 图标逐像素匹配品牌基准。安装测试支持与正式版并行的独立单实例作用域；本补丁只发布 Windows x64 桌面程序、Bridge、中文安装包与自动更新资产，macOS 与 PWA 保持不变。"
-        ], true),
+        ]),
         new("5.19.4", "2026-08-10", "固定 Windows 任务栏与快捷方式品牌图标",
         [
             "程序启动时会从受哈希保护的内嵌资源生成固定名称的 Windows Shell ICO；主窗口、任务栏重启身份、桌面快捷方式和开始菜单快捷方式统一引用这份稳定图标，避免更新后回退到旧 EXE 图标缓存。",
