@@ -19,7 +19,7 @@ public partial class HtmlPreviewWindow : Window
         InitializeComponent();
         _html = html;
         _attachmentRoot = attachmentRoot;
-        Title = string.IsNullOrWhiteSpace(subject) ? "邮件预览" : $"邮件预览 · {subject}";
+        Title = string.IsNullOrWhiteSpace(subject) ? "原邮件" : $"原邮件 · {subject}";
         PreviewWeb.CoreWebView2InitializationCompleted += OnCoreWebView2Initialized;
         Loaded += async (_, _) =>
         {
@@ -30,7 +30,7 @@ public partial class HtmlPreviewWindow : Window
             }
             catch (Exception error)
             {
-                MessageBox.Show($"无法打开邮件原格式预览：{error.Message}", "邮件预览", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"无法打开原邮件：{error.Message}", "原邮件", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
     }

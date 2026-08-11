@@ -319,6 +319,7 @@ try {
     throw "Materialized Windows shell icon hash mismatch. actual=$materializedBrandIconHash expected=$sourceBrandIconHash"
   }
   $shortcutIconLocations = @()
+  $shortcutShellIcons = @()
   $shortcutTargets = foreach ($shortcutPath in $shortcutPaths) {
     if (-not (Test-Path -LiteralPath $shortcutPath)) {
       throw "Installed application did not create the shortcut: $shortcutPath"
@@ -332,6 +333,33 @@ try {
       throw "Installed shortcut does not use the stable brand icon: $shortcutPath -> $($shortcut.IconLocation)"
     }
     $shortcutIconLocations += $shortcut.IconLocation
+    $shellIcon = [Drawing.Icon]::ExtractAssociatedIcon($shortcutPath)
+    if ($null -eq $shellIcon) {
+      throw "Windows Shell could not extract the shortcut icon: $shortcutPath"
+    }
+    try {
+      $shellBitmap = $shellIcon.ToBitmap()
+      try {
+        $expectedShellIconPath = Join-Path $root "desktop\WAFlow.Desktop\Assets\Icons\AI-Sales-OS-$($shellBitmap.Width).png"
+        if (-not (Test-Path -LiteralPath $expectedShellIconPath -PathType Leaf)) {
+          throw "No protected brand reference exists for the Shell shortcut icon size: $expectedShellIconPath"
+        }
+        $expectedShellBitmap = [Drawing.Bitmap]::FromFile($expectedShellIconPath)
+        try {
+          $actualShellHash = Get-BitmapPixelHash $shellBitmap
+          $expectedShellHash = Get-BitmapPixelHash $expectedShellBitmap
+          if ($shellBitmap.Width -ne $expectedShellBitmap.Width -or
+              $shellBitmap.Height -ne $expectedShellBitmap.Height -or
+              $actualShellHash -ne $expectedShellHash) {
+            throw "Windows Shell extracted the wrong shortcut icon. path=$shortcutPath size=$($shellBitmap.Width)x$($shellBitmap.Height) actual=$actualShellHash expected=$expectedShellHash"
+          }
+          $shortcutShellIcons += "$shortcutPath=$($shellBitmap.Width)x$($shellBitmap.Height):$actualShellHash"
+        }
+        finally { $expectedShellBitmap.Dispose() }
+      }
+      finally { $shellBitmap.Dispose() }
+    }
+    finally { $shellIcon.Dispose() }
     $shortcut.TargetPath
   }
 
@@ -372,6 +400,7 @@ try {
     BridgeCompanionPresent = $bridgeCompanionPresent
     ShortcutTargets = $shortcutTargets -join '; '
     ShortcutIconLocations = $shortcutIconLocations -join '; '
+    ShortcutShellIcons = $shortcutShellIcons -join '; '
     ShortcutsVerified = $shortcutTargets.Count -eq 2
     DatabaseHashBefore = $beforeHash
     DatabaseHashAfter = $afterHash

@@ -66,6 +66,8 @@ $whatsAppLabelChipSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Pa
 $whatsAppTranslationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppTranslationService.cs')
 $whatsAppTranslationModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\WhatsAppTranslationModels.cs')
 $emailInboxXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\EmailInboxView.xaml')
+$emailPresentationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\EmailMessagePresentationPolicy.cs')
+$htmlPreviewSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\HtmlPreviewWindow.xaml.cs')
 $bridgeSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\index.mjs')
 $bridgeConnectionBootstrapSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\connection-bootstrap.mjs')
 $bridgeMessageSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\message-content.mjs')
@@ -178,8 +180,11 @@ if ($desktopProjectSource -notmatch [regex]::Escape('<ApplicationIcon>Assets\AI-
     $taskbarIdentitySource -match [regex]::Escape('SendMessage(windowHandle, WmSetIcon, new IntPtr(IconSmall2), _smallIcon);') -or
     $desktopShortcutSource -notmatch [regex]::Escape('var iconPath = WindowsTaskbarIdentity.ResolveIconPath(targetPath);') -or
     $desktopShortcutSource -notmatch [regex]::Escape('SetShortcutProperty(shortcutType, shortcut, "IconLocation", $"{iconPath},0");') -or
+    $desktopShortcutSource -notmatch [regex]::Escape('NotifyShellShortcutChanged(shortcutPath, iconPath);') -or
+    $desktopShortcutSource -notmatch [regex]::Escape('SHChangeNotify(ShellChangeUpdateItem') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('[WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('Test-WindowIconMatchesBrand') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('[Drawing.Icon]::ExtractAssociatedIcon($shortcutPath)') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('MaterializedBrandIconSha256')) {
   throw 'Windows executable, live taskbar window, relaunch identity and shortcuts must use the same protected brand icon.'
 }
@@ -259,6 +264,14 @@ if (-not ($domainModelsSource.Contains('BusinessRoleProfile BusinessRoleProfile'
     -not ($appXaml.Contains('<Trigger Property="IsEditable" Value="True">')) -or
     -not ($appXaml.Contains('<Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="DropDownToggle" Property="BorderBrush" Value="{DynamicResource Primary}"/></Trigger>')) -or
     -not ($settingsSource.Contains('_settings.BusinessRoleProfile = BusinessRoleProfile.Normalize')) -or
+    -not ($businessRoleContextPolicySource.Contains('BuildAssistantIdentity')) -or
+    -not ($businessRoleContextPolicySource.Contains('ApplyWorkspaceProfile')) -or
+    -not ($customerSuccessAgentSource.Contains('BusinessRoleContextPolicy.ApplyWorkspaceProfile')) -or
+    -not ($customerSuccessAgentSource.Contains('BusinessRoleContextPolicy.SynchronizeAssistantIdentity')) -or
+    -not ($whatsAppInboxSource.Contains('BusinessRoleContextPolicy.BuildAssistantIdentity')) -or
+    -not ($whatsAppInboxSource.Contains('_workspaceProfile = snapshot.WorkspaceProfile')) -or
+    -not ($whatsAppInboxSource.Contains('context?.WorkspaceProfile ?? _workspaceProfile')) -or
+    $whatsAppInboxXaml.Contains('Customer Success Agent') -or
     -not ($guideCatalogSource.Contains('设置公司与工作角色'))) {
   throw 'Company and role Skill settings must persist and enter every structured AI request through a guarded, platform-neutral workspace profile.'
 }
@@ -1300,10 +1313,28 @@ if ($emailInboxXaml -notmatch [regex]::Escape('Visibility="{Binding UnreadVisibi
     $emailInboxSource -notmatch [regex]::Escape('class EmailConversationItem') -or
     $emailInboxSource -notmatch [regex]::Escape('Unread > 99 ? "99+"') -or
     $emailInboxSource -notmatch [regex]::Escape('item.MarkRead(DateTimeOffset.Now)') -or
-    $emailInboxSource -notmatch [regex]::Escape('MarkEmailConversationReadAsync(conversation.Id)')) {
+    $emailInboxSource -notmatch [regex]::Escape('PersistReadStateAsync(conversation.Id)')) {
   throw 'Email Inbox must show a per-conversation unread badge, cap it at 99+, and clear it immediately with the durable read cursor.'
 }
 Write-Host 'PASS  Email Inbox per-conversation unread badge and immediate read-state contract'
+
+if ($emailInboxXaml -notmatch [regex]::Escape('Content="查看原邮件"') -or
+    $emailInboxXaml -match [regex]::Escape('ItemsSource="{Binding HtmlLinks}"') -or
+    $emailInboxXaml -notmatch [regex]::Escape('Text="{Binding DisplayBody}"') -or
+    $emailInboxXaml -notmatch [regex]::Escape('VirtualizingPanel.VirtualizationMode="Recycling"') -or
+    $emailInboxXaml -notmatch [regex]::Escape('x:Name="MessageLoadState"') -or
+    $emailInboxXaml -notmatch [regex]::Escape('IsTabStop="False"') -or
+    $emailInboxSource -notmatch [regex]::Escape('message.PrepareForDisplay();') -or
+    $emailInboxSource -notmatch [regex]::Escape('CancelConversationLoad();') -or
+    $emailInboxSource -notmatch [regex]::Escape('邮件会话加载失败，请重试。') -or
+    $localRepositorySource -notmatch [regex]::Escape('ORDER BY julianday(timestamp) DESC,id DESC') -or
+    $emailPresentationSource -notmatch [regex]::Escape('HtmlToReadableText') -or
+    $emailPresentationSource -notmatch [regex]::Escape('IsLinkNoise') -or
+    $emailInboxSource -match 'td,th\s*\{\s*border:' -or
+    $htmlPreviewSource -notmatch [regex]::Escape('Title = string.IsNullOrWhiteSpace(subject) ? "原邮件"')) {
+  throw 'Email Inbox must render a cached readable projection, keep links in the original email, avoid injected table borders, interleave absolute timestamps and virtualize long threads.'
+}
+Write-Host 'PASS  readable original-email, chronological timeline and virtualized Inbox contract'
 
 if ($emailInboxXaml -notmatch 'x:Name="NewEmailButton"' -or
     $emailInboxXaml -notmatch 'x:Name="RecipientBox"' -or

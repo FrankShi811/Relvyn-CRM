@@ -1,12 +1,10 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
-using System.Windows.Documents;
 using Microsoft.Win32;
 using WAFlow.Core;
 using WAFlow.Core.Domain;
@@ -47,6 +45,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
     private Task _activeRefresh = Task.CompletedTask;
     private bool _refreshRequestedAgain;
     private CancellationTokenSource? _synchronizationRefreshDebounce;
+    private CancellationTokenSource? _conversationLoadCancellation;
 
     public event EventHandler? DataChanged;
 
@@ -186,11 +185,13 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         ConversationList.SelectedItem = null;
         _suppressSelectionChanged = false;
         ++_conversationSelectionGeneration;
+        CancelConversationLoad();
         _isNewEmail = true;
         _conversationLoading = false;
         _conversation = null;
         _lead = null;
         _messages.Clear();
+        SetMessageLoadState("", false);
         _emailDraft = null;
         ConversationTitle.Text = "新建邮件";
         ConversationSubtitle.Text = $"发件账号：{account.EmailAddress}";
@@ -274,6 +275,10 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         if (_suppressSelectionChanged) return;
         if (ConversationList.SelectedItem is not EmailConversationItem item) { ClearConversation(); return; }
         var selectionGeneration = ++_conversationSelectionGeneration;
+        CancelConversationLoad();
+        var loadCancellation = new CancellationTokenSource();
+        _conversationLoadCancellation = loadCancellation;
+        var cancellationToken = loadCancellation.Token;
         var conversation = item.Conversation;
         var accountId = conversation.AccountId;
         var recipient = NormalizeEmailTarget(conversation.PeerEmail);
@@ -282,6 +287,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         _lead = null;
         _conversationLoading = true;
         _messages.Clear();
+        SetMessageLoadState("正在加载邮件…", true);
         ResetEmailAssistantResult();
         ResetCustomerIntelligenceSummary();
         ConversationTitle.Text = conversation.DisplayName;
@@ -293,22 +299,29 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         try
         {
             var wasUnread = IsVisible && item.Unread > 0;
-            if (wasUnread)
+            if (wasUnread) item.MarkRead(DateTimeOffset.Now);
+            var messagesTask = Task.Run(async () =>
             {
-                item.MarkRead(DateTimeOffset.Now);
-                await _services.Repository.MarkEmailConversationReadAsync(conversation.Id);
-                if (!IsCurrentEmailTarget(selectionGeneration, accountId, conversation.Id, recipient, false)) return;
-                DataChanged?.Invoke(this, EventArgs.Empty);
-            }
-            var messages = await Task.Run(async () =>
-                await _services.Repository.GetEmailMessagesAsync(conversation.Id));
+                var loaded = await _services.Repository.GetEmailMessagesAsync(conversation.Id, cancellationToken: cancellationToken);
+                foreach (var message in loaded) message.PrepareForDisplay();
+                return loaded;
+            }, cancellationToken);
+            var leadTask = ResolveEmailLeadAsync(conversation, recipient, cancellationToken);
+            var messages = await messagesTask;
             if (!IsCurrentEmailTarget(selectionGeneration, accountId, conversation.Id, recipient, false)) return;
-            var lead = await ResolveEmailLeadAsync(conversation, recipient);
+            var lead = await leadTask;
             if (!IsCurrentEmailTarget(selectionGeneration, accountId, conversation.Id, recipient, false)) return;
             _messages.ReplaceAll(messages);
+            SetMessageLoadState(
+                messages.Count == 0 ? "此会话暂无邮件。" : "",
+                messages.Count == 0);
             _lead = lead;
+            if (_messages.Count > 0)
+                await Dispatcher.InvokeAsync(() => MessageList.ScrollIntoView(_messages[^1]));
             if (wasUnread)
             {
+                _ = PersistReadStateAsync(conversation.Id);
+                DataChanged?.Invoke(this, EventArgs.Empty);
                 // Propagate the read state back to the mail server (best-effort,
                 // never blocks the conversation UI).
                 var seenIds = messages
@@ -328,7 +341,18 @@ public partial class EmailInboxView : UserControl, IRefreshableView
             UpdateLeadIntelligenceSummary(_lead);
             await UpdateCustomerBrainSummaryAsync(_lead);
             if (!IsCurrentEmailTarget(selectionGeneration, accountId, conversation.Id, recipient, false)) return;
-            await Dispatcher.InvokeAsync(() => MessageScroll.ScrollToEnd());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A newer conversation selection owns the UI.
+        }
+        catch (Exception)
+        {
+            if (IsCurrentEmailTarget(selectionGeneration, accountId, conversation.Id, recipient, false))
+            {
+                _messages.Clear();
+                SetMessageLoadState("邮件会话加载失败，请重试。", true);
+            }
         }
         finally
         {
@@ -337,7 +361,18 @@ public partial class EmailInboxView : UserControl, IRefreshableView
                 _conversationLoading = false;
                 UpdateComposerState();
             }
+            if (ReferenceEquals(_conversationLoadCancellation, loadCancellation))
+            {
+                _conversationLoadCancellation = null;
+                loadCancellation.Dispose();
+            }
         }
+    }
+
+    private async Task PersistReadStateAsync(string conversationId)
+    {
+        try { await _services.Repository.MarkEmailConversationReadAsync(conversationId); }
+        catch { /* The local visual read state remains responsive; the next refresh can retry persistence. */ }
     }
 
     private bool IsCurrentEmailTarget(
@@ -362,15 +397,18 @@ public partial class EmailInboxView : UserControl, IRefreshableView
                _conversation.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<Lead?> ResolveEmailLeadAsync(EmailConversation? conversation, string recipient)
+    private async Task<Lead?> ResolveEmailLeadAsync(
+        EmailConversation? conversation,
+        string recipient,
+        CancellationToken cancellationToken = default)
     {
         if (conversation is not null)
         {
-            var persisted = await _services.Repository.GetEmailConversationAsync(conversation.Id);
+            var persisted = await _services.Repository.GetEmailConversationAsync(conversation.Id, cancellationToken);
             if (!string.IsNullOrWhiteSpace(persisted?.LeadId))
-                return await _services.Repository.GetLeadAsync(persisted.LeadId);
+                return await _services.Repository.GetLeadAsync(persisted.LeadId, cancellationToken);
         }
-        return await _services.Repository.GetLeadByEmailAsync(recipient);
+        return await _services.Repository.GetLeadByEmailAsync(recipient, cancellationToken);
     }
 
     private static string NormalizeEmailTarget(string? value) => (value ?? "").Trim().ToLowerInvariant();
@@ -554,13 +592,30 @@ public partial class EmailInboxView : UserControl, IRefreshableView
     private void ClearConversation()
     {
         ++_conversationSelectionGeneration;
+        CancelConversationLoad();
         _conversationLoading = false;
-        _isNewEmail = false; _conversation = null; _lead = null; _emailDraft = null; _messages.Clear(); ConversationTitle.Text = "选择邮件会话"; ConversationSubtitle.Text = "";
+        _isNewEmail = false; _conversation = null; _lead = null; _emailDraft = null; _messages.Clear(); SetMessageLoadState("", false); ConversationTitle.Text = "选择邮件会话"; ConversationSubtitle.Text = "";
         RecipientBox.Clear(); RecipientBox.IsReadOnly = true; SubjectBox.Clear(); ComposerBox.Clear(); EmailAiInstructionBox.Clear();
         NameBox.Clear(); CustomerEmailBox.Clear(); CountryBox.Clear(); OwnerBox.Clear(); TagsBox.Clear(); NotesBox.Clear(); LinkStateText.Text = "按邮箱自动匹配客户";
         ResetEmailAssistantResult();
         ResetCustomerIntelligenceSummary();
         UpdateComposerState();
+    }
+
+    private void SetMessageLoadState(string text, bool visible)
+    {
+        MessageLoadStateText.Text = text;
+        MessageLoadState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void CancelConversationLoad()
+    {
+        var cancellation = _conversationLoadCancellation;
+        _conversationLoadCancellation = null;
+        if (cancellation is null) return;
+        try { cancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
+        cancellation.Dispose();
     }
 
     private async void RecipientBox_LostFocus(object sender, RoutedEventArgs e)
@@ -1053,17 +1108,6 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         }
     }
 
-    private void HtmlLink_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Hyperlink { CommandParameter: string url }
-            && Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
-        {
-            try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
-            catch { }
-        }
-    }
-
     private void HtmlPreview_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: EmailMessage message } || string.IsNullOrWhiteSpace(message.HtmlBody)) return;
@@ -1077,7 +1121,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         }
         catch (Exception error)
         {
-            MessageBox.Show($"无法打开邮件原格式预览：{error.Message}", "邮件预览", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show($"无法打开原邮件：{error.Message}", "原邮件", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -1103,15 +1147,22 @@ public partial class EmailInboxView : UserControl, IRefreshableView
                 }
             }
         }
-        return """
-            <!DOCTYPE html><html><head><meta charset="utf-8">
-            <style>
-              body{background:#fff;color:#1f2328;font-family:'Segoe UI',Arial,sans-serif;font-size:13px;line-height:1.55;margin:18px;word-wrap:break-word;}
-              table{border-collapse:collapse;} td,th{border:1px solid #d0d7de;padding:5px 8px;text-align:left;}
-              a{color:#1a73e8;} img{max-width:100%;height:auto;} pre{white-space:pre-wrap;}
-              button, .button, input[type=submit], input[type=button]{font-family:inherit;}
-            </style></head><body>
-            """ + html + "</body></html>";
+        const string presentationStyle = """
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style id="ai-sales-os-original-email-style">
+              html{background:#fff;max-width:100%;}
+              body{background:#fff;color:#1f2328;margin:18px;max-width:100%;overflow-wrap:anywhere;}
+              table{max-width:100%;} img{max-width:100%;height:auto;border:0;outline:0;} pre{white-space:pre-wrap;}
+              a{cursor:pointer;}
+            </style>
+            """;
+        var headIndex = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase);
+        if (headIndex >= 0)
+        {
+            var headClose = html.IndexOf('>', headIndex);
+            if (headClose >= 0) return html.Insert(headClose + 1, presentationStyle);
+        }
+        return "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" + presentationStyle + "</head><body>" + html + "</body></html>";
     }
 
     private sealed class EmailConversationItem(EmailConversation conversation) : INotifyPropertyChanged

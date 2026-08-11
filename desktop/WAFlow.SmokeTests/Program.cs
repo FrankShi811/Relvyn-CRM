@@ -2055,6 +2055,67 @@ Check(
     "email arriving after the read cursor increments the global unread badge");
 await repository.MarkEmailConversationReadAsync(emailUnreadConversation.Id);
 
+var timezoneConversationId = $"{emailAccount.Id}:timezone-order@example.com";
+await repository.UpsertEmailConversationAsync(new EmailConversation
+{
+    Id=timezoneConversationId, AccountId=emailAccount.Id, PeerEmail="timezone-order@example.com",
+    PeerName="Timezone Support", Subject="Support thread", LastMessage="Reply at 09:37",
+    LastMessageAt=new DateTimeOffset(2026, 8, 10, 21, 37, 0, TimeSpan.FromHours(-4))
+});
+var timezoneMessages = new[]
+{
+    new EmailMessage
+    {
+        Id="timezone-outgoing-0931", ProviderMessageId="timezone-outgoing-0931", AccountId=emailAccount.Id,
+        ConversationId=timezoneConversationId, Direction=EmailMessageDirection.Outgoing, Status=EmailMessageStatus.Sent,
+        Subject="Support thread", TextBody="Sent at 09:31", Timestamp=new DateTimeOffset(2026, 8, 11, 9, 31, 0, TimeSpan.FromHours(8))
+    },
+    new EmailMessage
+    {
+        Id="timezone-incoming-0932", ProviderMessageId="timezone-incoming-0932", AccountId=emailAccount.Id,
+        ConversationId=timezoneConversationId, Direction=EmailMessageDirection.Incoming, Status=EmailMessageStatus.Received,
+        Subject="Support thread", TextBody="Reply at 09:32", Timestamp=new DateTimeOffset(2026, 8, 10, 21, 32, 0, TimeSpan.FromHours(-4))
+    },
+    new EmailMessage
+    {
+        Id="timezone-outgoing-0936", ProviderMessageId="timezone-outgoing-0936", AccountId=emailAccount.Id,
+        ConversationId=timezoneConversationId, Direction=EmailMessageDirection.Outgoing, Status=EmailMessageStatus.Sent,
+        Subject="Support thread", TextBody="Sent at 09:36", Timestamp=new DateTimeOffset(2026, 8, 11, 9, 36, 0, TimeSpan.FromHours(8))
+    },
+    new EmailMessage
+    {
+        Id="timezone-incoming-0937", ProviderMessageId="timezone-incoming-0937", AccountId=emailAccount.Id,
+        ConversationId=timezoneConversationId, Direction=EmailMessageDirection.Incoming, Status=EmailMessageStatus.Received,
+        Subject="Support thread", TextBody="Reply at 09:37", Timestamp=new DateTimeOffset(2026, 8, 10, 21, 37, 0, TimeSpan.FromHours(-4))
+    }
+};
+foreach (var message in timezoneMessages.Reverse())
+    await repository.UpsertEmailMessageAsync(message);
+var chronologicalEmailMessages = await repository.GetEmailMessagesAsync(timezoneConversationId);
+Check(
+    chronologicalEmailMessages.Select(message => message.Id).SequenceEqual(
+        ["timezone-outgoing-0931", "timezone-incoming-0932", "timezone-outgoing-0936", "timezone-incoming-0937"]),
+    "email conversation messages are interleaved by absolute time across sender timezone offsets");
+
+var richEmail = new EmailMessage
+{
+    TextBody="utm_source=newsletter\nhttps://tracking.example/click?id=1\n50% off",
+    HtmlBody="""
+        <html><head><style>table{width:100%}</style></head><body>
+        <h1>New arrivals</h1><table><tr><td><a href="https://tracking.example/image"><img src="hero.jpg"></a></td></tr></table>
+        <p>Save 50% today.</p><a href="https://shop.example/?utm_source=newsletter">Shop now</a>
+        </body></html>
+        """
+};
+richEmail.PrepareForDisplay();
+Check(
+    richEmail.DisplayBody.Contains("New arrivals", StringComparison.Ordinal)
+    && richEmail.DisplayBody.Contains("Save 50% today.", StringComparison.Ordinal)
+    && richEmail.DisplayBody.Contains("Shop now", StringComparison.Ordinal)
+    && !richEmail.DisplayBody.Contains("https://", StringComparison.OrdinalIgnoreCase)
+    && !richEmail.DisplayBody.Contains("utm_source", StringComparison.OrdinalIgnoreCase),
+    "rich email conversation projection keeps readable content while links remain in the original email viewer");
+
 var digestRoot = Path.Combine(root, "dashboard-unread-digest");
 var digestRepository = new LocalRepository(Path.Combine(digestRoot, "digest.db"));
 await digestRepository.InitializeAsync();
@@ -2909,6 +2970,19 @@ Check(
     && businessRoleContext.GetProperty("role_skill").GetString()?.Contains("人工确认", StringComparison.Ordinal) == true
     && BusinessRoleContextPolicy.ApplyInstructions("Return JSON.").Contains("Never assume a marketplace", StringComparison.Ordinal),
     "business role context is attached as guarded descriptive data instead of overriding AI contracts");
+var workspacePersona = BusinessRoleContextPolicy.ApplyWorkspaceProfile(
+    new AccountPersona(),
+    persistedProviderSettings.BusinessRoleProfile);
+var workspaceAgentState = new ConversationAgentState { AssistantIdentity="Customer Success Agent" };
+BusinessRoleContextPolicy.SynchronizeAssistantIdentity(
+    workspaceAgentState,
+    persistedProviderSettings.BusinessRoleProfile);
+Check(
+    workspacePersona.RoleName == "商务拓展 AI 助手"
+    && workspacePersona.Introduction.Contains("Northstar Advisory", StringComparison.Ordinal)
+    && workspacePersona.Introduction.Contains("商务拓展", StringComparison.Ordinal)
+    && workspaceAgentState.AssistantIdentity == "商务拓展 AI 助手",
+    "workspace company and primary role project into the default WhatsApp persona and visible agent identity");
 
 var settingsWindowRouteSnapshot = AiModulePreferencePersistence.CreateSnapshot(
     AiModuleKeys.Configurable.Select(moduleKey => new AiModulePreferenceSelection(

@@ -3355,13 +3355,15 @@ public sealed partial class LocalRepository
         var items = new List<EmailMessage>();
         await using var db = Open(); await db.OpenAsync(cancellationToken);
         await using var command = db.CreateCommand();
-        command.CommandText = "SELECT data_json FROM email_messages WHERE conversation_id=$conversation ORDER BY timestamp DESC LIMIT $limit";
+        command.CommandText = "SELECT data_json FROM email_messages WHERE conversation_id=$conversation ORDER BY julianday(timestamp) DESC,id DESC LIMIT $limit";
         command.Parameters.AddWithValue("$conversation", conversationId); command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 2_000));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             if (Json.Deserialize<EmailMessage>(reader.GetString(0)) is { } item) items.Add(item);
-        items.Reverse();
-        return items;
+        return items
+            .OrderBy(item => item.Timestamp.UtcDateTime)
+            .ThenBy(item => item.Id, StringComparer.Ordinal)
+            .ToList();
     }
 
     public async Task<List<EmailMessage>> GetEmailMessagesForLeadAsync(string leadId, int limit = 100, CancellationToken cancellationToken = default)
@@ -3369,12 +3371,15 @@ public sealed partial class LocalRepository
         var items = new List<EmailMessage>();
         await using var db = Open(); await db.OpenAsync(cancellationToken);
         await using var command = db.CreateCommand();
-        command.CommandText = "SELECT data_json FROM email_messages WHERE lead_id=$lead ORDER BY timestamp DESC LIMIT $limit";
+        command.CommandText = "SELECT data_json FROM email_messages WHERE lead_id=$lead ORDER BY julianday(timestamp) DESC,id DESC LIMIT $limit";
         command.Parameters.AddWithValue("$lead", leadId); command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 20_000));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             if (Json.Deserialize<EmailMessage>(reader.GetString(0)) is { } item) items.Add(item);
-        return items;
+        return items
+            .OrderByDescending(item => item.Timestamp.UtcDateTime)
+            .ThenByDescending(item => item.Id, StringComparer.Ordinal)
+            .ToList();
     }
 
     public async Task<List<WhatsAppCampaign>> GetCampaignsAsync(string? accountId = "primary", CancellationToken cancellationToken = default)
