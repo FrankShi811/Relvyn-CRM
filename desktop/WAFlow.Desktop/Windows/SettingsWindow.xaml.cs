@@ -96,6 +96,7 @@ public partial class SettingsWindow : Window
     {
         _hadConfiguredProviderAtLoad = _services.DeepSeek.HasApiKey();
         _settings = await _services.Repository.GetAppSettingsAsync();
+        McpGatewayEnabledBox.IsChecked = _settings.McpAgentGatewayEnabled;
         LoadBusinessRoleProfile();
         await LoadCustomerEnrichmentSettingsAsync();
         _settings.AiModulePreferences ??= new Dictionary<string, AiModuleModelPreference>(StringComparer.OrdinalIgnoreCase);
@@ -809,6 +810,7 @@ public partial class SettingsWindow : Window
             _settings.ThemeMode = (ThemeModeBox.SelectedItem as ThemeOption)?.Value ?? "System";
             _settings.UiScalePercentage = UiScaleManager.Normalize(
                 (UiScaleBox.SelectedItem as UiScaleOption)?.Value ?? 100);
+            _settings.McpAgentGatewayEnabled = McpGatewayEnabledBox.IsChecked == true;
             await _services.Repository.SaveAppSettingsAsync(_settings);
             var persistedSettings = await _services.Repository.GetAppSettingsAsync();
             var routeMismatches = AiModulePreferencePersistence.FindMismatches(
@@ -890,6 +892,9 @@ public partial class SettingsWindow : Window
 
     private void VersionHistory_Click(object sender, RoutedEventArgs e) =>
         new VersionHistoryWindow(_updates) { Owner = this }.ShowDialog();
+
+    private void ManageMcpAgents_Click(object sender, RoutedEventArgs e) =>
+        new McpAgentGatewayWindow(_services) { Owner = this }.ShowDialog();
 
     private async Task RefreshWorkspaceSummaryAsync()
     {

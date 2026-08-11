@@ -30,6 +30,8 @@ public sealed class AppServices
     public WhatsAppTranslationService WhatsAppTranslation { get; }
     public CustomerIdentityService CustomerIdentity { get; }
     public SourcingRequestService SourcingRequests { get; }
+    public McpAgentGatewayService McpAgents { get; }
+    public McpWorkflowIntegrationService McpWorkflow { get; }
     public CustomerSuccessAgentService CustomerSuccessAgent { get; }
     public CustomerSuccessAgentCoordinator CustomerSuccessCoordinator { get; }
     public CustomerBrainService CustomerBrain { get; }
@@ -89,6 +91,11 @@ public sealed class AppServices
         WhatsAppTranslation = new WhatsAppTranslationService(Repository, DeepSeek);
         CustomerIdentity = new CustomerIdentityService(Repository);
         SourcingRequests = new SourcingRequestService(Repository);
+        McpAgents = new McpAgentGatewayService(
+            Repository,
+            SourcingRequests,
+            target => new WindowsCredentialStore(target));
+        McpWorkflow = new McpWorkflowIntegrationService();
         KnowledgeLearning = new KnowledgeLearningService(Repository, SalesLearning);
         CustomerSuccessAgent = new CustomerSuccessAgentService(
             Repository,
@@ -116,6 +123,7 @@ public sealed class AppServices
         // hosting states from the previous process must never resume or send on
         // startup; the user explicitly re-arms after reviewing the latest chat.
         await CustomerSuccessAgent.RecoverAfterRestartAsync(cancellationToken);
+        await McpAgents.InitializeAsync(cancellationToken);
         await CustomerIdentity.RepairOwnedAccountBindingsAsync(cancellationToken);
     }
 }

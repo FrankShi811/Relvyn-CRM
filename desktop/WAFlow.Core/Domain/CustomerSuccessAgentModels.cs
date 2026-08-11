@@ -446,6 +446,7 @@ public sealed class SourcingRequest
     public Dictionary<SourcingFieldKey, SourcingFieldValue> Fields { get; set; } = [];
     public List<SourcingFieldConflict> Conflicts { get; set; } = [];
     public string Summary { get; set; } = "";
+    public int LastSourcingRequirementVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
 
@@ -453,8 +454,17 @@ public sealed class SourcingRequest
     public int Completeness => Fields.Values.Count(value => value.IsStructurallyValid) * 20;
 
     [JsonIgnore]
+    public int CollectedCount => Fields.Values.Count(value => value.IsStructurallyValid);
+
+    [JsonIgnore]
     public IReadOnlyList<SourcingFieldKey> MissingFields =>
         Enum.GetValues<SourcingFieldKey>().Where(field => !Fields.TryGetValue(field, out var value) || !value.IsStructurallyValid).ToList();
+
+    [JsonIgnore]
+    public SourcingReadiness Readiness => SourcingReadinessPolicy.Evaluate(this);
+
+    [JsonIgnore]
+    public RequirementCompleteness RequirementCompleteness => SourcingReadinessPolicy.ToCompleteness(Readiness);
 }
 
 public sealed class HumanHandoffEvent

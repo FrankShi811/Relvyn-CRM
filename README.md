@@ -12,6 +12,19 @@ This browser demo showcases the Relvyn AI Sales OS interface with fictional,
 local-only sample data. The desktop version provides full local automation
 capabilities.
 
+## MCP Agent Gateway
+
+Relvyn can connect to external MCP-compatible agents and tools through a
+vendor-neutral Agent Gateway. The Windows desktop app provides Server and Tool
+discovery, per-context and per-tool permissions, human-reviewed Agent tasks,
+durable audit history, and a partial-requirement product-sourcing workflow.
+
+Product sourcing becomes actionable at 3/5 collected elements when the product
+is identifiable. This only reveals the manual Agent action: the user still
+chooses the Server/Tool, reviews exactly what will be shared, and confirms the
+call. External Agents cannot directly message customers. See
+[`docs/mcp-agent-gateway.md`](docs/mcp-agent-gateway.md).
+
 This repository is the **legacy public source and update-compatibility
 repository** for Relvyn. Active source development, build scripts, and internal
 documentation have moved to a private repository. Future approved installers,

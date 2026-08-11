@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using WAFlow.Core.Domain;
 using WAFlow.Core.Infrastructure;
@@ -19,13 +21,15 @@ public sealed partial class SourcingRequestService
         IEnumerable<CustomerSuccessSourcingProposal> proposals,
         CancellationToken cancellationToken = default)
     {
-        var request = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken) ?? new SourcingRequest
+        var existingRequest = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken);
+        var request = existingRequest ?? new SourcingRequest
         {
             CustomerId = customerId,
             Status = SourcingRequestStatus.Draft
         };
         request.Fields ??= [];
         request.Conflicts ??= [];
+        var beforeFingerprint = Fingerprint(request);
         foreach (var proposal in proposals.GroupBy(item => item.Field).Select(group => group.First()).Take(5))
         {
             var candidate = new SourcingFieldValue
@@ -57,18 +61,26 @@ public sealed partial class SourcingRequestService
             }
             request.Fields[candidate.Field] = candidate;
         }
+        if (existingRequest is not null && !beforeFingerprint.Equals(Fingerprint(request), StringComparison.Ordinal))
+            request.Version++;
         request.Status = request.Conflicts.Any(item => !item.IsResolved)
             ? SourcingRequestStatus.FieldConflict
             : request.Completeness == 100 ? SourcingRequestStatus.Complete
             : request.Completeness > 0 ? SourcingRequestStatus.Collecting : SourcingRequestStatus.Draft;
         request.Summary = BuildSummary(request);
         await _repository.UpsertSourcingRequestAsync(request, cancellationToken);
+        await SyncCustomerBrainStateAsync(request, cancellationToken);
+        var readiness = request.Readiness;
         await _repository.LogEventAsync("sourcing_request_updated", customerId, null, Json.Serialize(new
         {
             request.Id,
             request.Version,
             status = request.Status.ToString(),
             request.Completeness,
+            readiness.CollectedCount,
+            readiness = readiness.Readiness.ToString(),
+            readiness.ProductIdentifiable,
+            readiness.Confidence,
             missing = request.MissingFields.Select(item => item.ToString()),
             conflicts = request.Conflicts.Count(item => !item.IsResolved)
         }), cancellationToken);
@@ -91,10 +103,24 @@ public sealed partial class SourcingRequestService
         request.Fields[field] = selected;
         conflict.IsResolved = true;
         conflict.Resolution = $"{actor} 于 {DateTimeOffset.Now:O} 选择：{selected.Value}";
+        request.Version++;
         request.Status = request.Conflicts.Any(item => !item.IsResolved)
             ? SourcingRequestStatus.FieldConflict
             : request.Completeness == 100 ? SourcingRequestStatus.Complete : SourcingRequestStatus.Collecting;
         request.Summary = BuildSummary(request);
+        await _repository.UpsertSourcingRequestAsync(request, cancellationToken);
+        await SyncCustomerBrainStateAsync(request, cancellationToken);
+        return request;
+    }
+
+    public async Task<SourcingRequest> MarkRequirementVersionUsedAsync(
+        string customerId,
+        int requirementVersion,
+        CancellationToken cancellationToken = default)
+    {
+        var request = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken)
+                      ?? throw new InvalidOperationException("没有可提交的客户需求。");
+        request.LastSourcingRequirementVersion = Math.Max(request.LastSourcingRequirementVersion, requirementVersion);
         await _repository.UpsertSourcingRequestAsync(request, cancellationToken);
         return request;
     }
@@ -107,12 +133,13 @@ public sealed partial class SourcingRequestService
             SourcingFieldKey.ProductImage =>
                 value.HumanConfirmed || LinkRegex().IsMatch(value.Value) ||
                 value.Value.Contains("[image]", StringComparison.OrdinalIgnoreCase) ||
-                value.Value.Contains("图片", StringComparison.OrdinalIgnoreCase),
+                value.Value.Contains("图片", StringComparison.OrdinalIgnoreCase) ||
+                SourcingReadinessPolicy.IsProductIdentifiable(value.Value),
             SourcingFieldKey.Quantity => NumberRegex().IsMatch(value.Value),
             SourcingFieldKey.TargetPrice =>
                 NumberRegex().IsMatch(value.Value) && CurrencyRegex().IsMatch(value.Value),
             SourcingFieldKey.Destination => value.Value.Trim().Length >= 3 &&
-                (PostcodeRegex().IsMatch(value.Value) || value.Value.Split([' ', ',', '，', '/'], StringSplitOptions.RemoveEmptyEntries).Length >= 2),
+                (value.Value.Any(char.IsLetter) || PostcodeRegex().IsMatch(value.Value)),
             SourcingFieldKey.ShippingPreference => ShippingRegex().IsMatch(value.Value),
             _ => false
         };
@@ -129,10 +156,52 @@ public sealed partial class SourcingRequestService
         return trimmed;
     }
 
-    private static string BuildSummary(SourcingRequest request) =>
-        string.Join("；", Enum.GetValues<SourcingFieldKey>().Select(field =>
+    private static string BuildSummary(SourcingRequest request)
+    {
+        var fields = string.Join("；", Enum.GetValues<SourcingFieldKey>().Select(field =>
             request.Fields.TryGetValue(field, out var value) && value.IsStructurallyValid
                 ? $"{field}={value.Value}" : $"{field}=待补充"));
+        var readiness = request.Readiness;
+        return $"{fields}；readiness={readiness.Readiness}；collected={readiness.CollectedCount}/5";
+    }
+
+    private async Task SyncCustomerBrainStateAsync(SourcingRequest request, CancellationToken cancellationToken)
+    {
+        var profile = await _repository.GetCustomerIntelligenceProfileAsync(request.CustomerId, cancellationToken);
+        if (profile is null) return;
+        var readiness = request.Readiness;
+        profile.ProductRequirementState = new ProductRequirementState
+        {
+            Completeness = readiness.CollectedCount,
+            Readiness = readiness.Readiness,
+            MissingElements = [.. readiness.MissingElements],
+            ProductIdentifiable = readiness.ProductIdentifiable,
+            RequirementVersion = request.Version,
+            LastUpdatedAt = request.UpdatedAt
+        };
+        await _repository.SaveCustomerIntelligenceProfileAsync(profile, cancellationToken);
+    }
+
+    private static string Fingerprint(SourcingRequest request)
+    {
+        var value = Json.Serialize(new
+        {
+            fields = request.Fields.OrderBy(item => item.Key).Select(item => new
+            {
+                item.Key,
+                item.Value.NormalizedValue,
+                item.Value.IsStructurallyValid,
+                item.Value.HumanConfirmed
+            }),
+            conflicts = request.Conflicts.Select(item => new
+            {
+                item.Field,
+                item.IsResolved,
+                values = item.Values.Select(value => value.NormalizedValue)
+            })
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
 
     [GeneratedRegex(@"https?://|www\.|\.(jpg|jpeg|png|webp)\b", RegexOptions.IgnoreCase)]
     private static partial Regex LinkRegex();

@@ -28,6 +28,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     private Lead? _currentLead;
     private CustomerIdentityResolution? _currentIdentityResolution;
     private CustomerSuccessContext? _currentCustomerSuccessContext;
+    private AgentTask? _latestSourcingTask;
     private BusinessRoleProfile _workspaceProfile = new();
     private CustomerSuccessAgentDecision? _pendingKnowledgeDecision;
     private bool _connected;
@@ -256,6 +257,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         RestoreLatestQr();
         if (_currentCustomerSuccessContext is null)
             UpdateCustomerSuccessPanel(_currentIdentityResolution, null);
+            _latestSourcingTask = null;
+            RenderSourcingResultPanel();
     }
 
     private async void AccountCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -972,6 +975,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         StageCombo.SelectedItem = (StageCombo.ItemsSource as IEnumerable<StageOption>)?.FirstOrDefault(x => x.Value == (_currentLead?.Stage ?? LeadStage.New));
         UpdateLeadIntelligenceSummary(_currentLead);
         UpdateCustomerSuccessPanel(_currentIdentityResolution, _currentCustomerSuccessContext);
+        await RefreshSourcingTaskPanelAsync();
         await UpdateCustomerBrainSummaryAsync(_currentLead);
     }
 
@@ -1037,6 +1041,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             };
             _currentCustomerSuccessContext = await _services.CustomerSuccessAgent.GetContextAsync(conversation.AccountId, conversation.Id);
             UpdateCustomerSuccessPanel(_currentIdentityResolution, _currentCustomerSuccessContext);
+            await RefreshSourcingTaskPanelAsync();
             await UpdateCustomerBrainSummaryAsync(lead);
             DataChanged?.Invoke(this, EventArgs.Empty);
             MessageBox.Show("客户资料已同步到 AI Sales OS。", "WhatsApp", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2439,19 +2444,41 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             !string.IsNullOrWhiteSpace(state?.LastGeneratedReply);
 
         var sourcing = context?.SourcingRequest;
-        var completeness = sourcing?.Completeness ?? 0;
-        SourcingProgressBar.Value = completeness;
-        SourcingProgressText.Text = $"{completeness}%";
+        var readiness = sourcing?.Readiness ?? new SourcingReadiness();
+        SourcingProgressText.Text = $"{readiness.CollectedCount} / 5";
+        SetSourcingElement(SourcingProductText, sourcing, SourcingFieldKey.ProductImage, "商品");
+        SetSourcingElement(SourcingQuantityText, sourcing, SourcingFieldKey.Quantity, "数量");
+        SetSourcingElement(SourcingPriceText, sourcing, SourcingFieldKey.TargetPrice, "价格");
+        SetSourcingElement(SourcingDestinationText, sourcing, SourcingFieldKey.Destination, "目的地");
+        SetSourcingElement(SourcingLogisticsText, sourcing, SourcingFieldKey.ShippingPreference, "物流");
         SourcingStatusText.Text = sourcing is null
-            ? "尚未整理客户需求"
-            : $"状态：{SourcingStatusLabel(sourcing.Status)} · 版本 V{sourcing.Version}";
-        SourcingFieldsText.Text = sourcing is null || sourcing.MissingFields.Count > 0
-            ? $"缺失：{string.Join("、", (sourcing?.MissingFields ?? Enum.GetValues<SourcingFieldKey>()).Select(SourcingFieldLabel))}"
-            : "关键需求信息已齐全，等待人工复核并推进下一步。";
+            ? "Need more information"
+            : readiness.Readiness switch
+            {
+                SourcingReadinessLevel.HighConfidence => $"Complete · requirement v{sourcing.Version}",
+                SourcingReadinessLevel.AgentAvailable => $"Ready for Agent · requirement v{sourcing.Version}",
+                _ => $"Need more information · requirement v{sourcing.Version}"
+            };
+        SourcingStatusText.SetResourceReference(TextBlock.ForegroundProperty,
+            readiness.CanUseAgent ? "Success" : "Muted");
+        SourcingFieldsText.Text = sourcing is null || readiness.MissingElements.Count > 0
+            ? $"Missing：{string.Join("、", (sourcing is null ? Enum.GetValues<SourcingFieldKey>().Select(SourcingFieldLabel) : readiness.MissingElements.Select(SourcingElementLabel)))}"
+            : "五项需求已完整；5/5 代表更高置信度，不是功能解锁节点。";
         var conflicts = sourcing?.Conflicts.Where(item => !item.IsResolved).Select(item => SourcingFieldLabel(item.Field)).ToList() ?? [];
         SourcingConflictText.Text = conflicts.Count == 0 ? "" : $"冲突待处理：{string.Join("、", conflicts)}";
         PendingQuestionText.Text = context?.PendingQuestions.FirstOrDefault(item => !item.IsResolved) is { } question
             ? $"待确认：{question.Question}（{question.Safety}）" : "待确认：—";
+        FindProductsButton.IsEnabled = sourcing is not null && readiness.CanUseAgent && _currentLead is not null;
+        SourcingActionHelpText.Text = sourcing is null
+            ? "尚未形成采购需求；达到 3/5 且商品可识别后会开放人工 Agent 入口。"
+            : !readiness.ProductIdentifiable && readiness.CollectedCount >= 3
+                ? $"已收集 {readiness.CollectedCount} 项，但仍需可识别的商品名称、型号、SKU、链接、图片或明确描述。"
+                : readiness.CanUseAgent
+                    ? readiness.MissingElements.Count == 0
+                        ? "信息完整。点击后仍需选择 Agent、核对内容并人工确认。"
+                        : $"仍缺 {readiness.MissingElements.Count} 项；可以现在搜索，也可以继续收集。不会自动调用。"
+                    : $"还需至少 {Math.Max(0, 3 - readiness.CollectedCount)} 项有效采购信息，并且商品必须可识别。";
+        RenderSourcingResultPanel();
 
         var handoff = context?.OpenHandoff;
         HandoffPanel.Visibility = handoff is null ? Visibility.Collapsed : Visibility.Visible;
@@ -2519,6 +2546,138 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         ConversationRiskVerificationState.Conflict => "风险信息冲突",
         _ => "无风险事项"
     };
+
+    private void SetSourcingElement(TextBlock text, SourcingRequest? request, SourcingFieldKey key, string label)
+    {
+        var collected = request?.Fields.TryGetValue(key, out var value) == true && value.IsStructurallyValid;
+        text.Text = collected ? $"✓ {label}" : $"○ {label}";
+        text.SetResourceReference(TextBlock.ForegroundProperty, collected ? "Success" : "Muted");
+        text.FontWeight = collected ? FontWeights.SemiBold : FontWeights.Normal;
+    }
+
+    private static string SourcingElementLabel(string value) => value switch
+    {
+        "product" => "商品",
+        "quantity" => "数量",
+        "targetPrice" => "目标价格",
+        "destination" => "目的地",
+        "logisticsPreference" => "物流要求",
+        _ => value
+    };
+
+    private async Task RefreshSourcingTaskPanelAsync()
+    {
+        var customerId = _currentLead?.Id;
+        if (string.IsNullOrWhiteSpace(customerId))
+        {
+            _latestSourcingTask = null;
+            RenderSourcingResultPanel();
+            return;
+        }
+        _latestSourcingTask = (await _services.McpAgents.GetTasksAsync(customerId, 50))
+            .FirstOrDefault(task => task.Type.Equals("product_sourcing", StringComparison.OrdinalIgnoreCase)
+                                    && task.Status is McpTaskStatus.Completed or McpTaskStatus.NeedsInformation);
+        RenderSourcingResultPanel();
+    }
+
+    private void RenderSourcingResultPanel()
+    {
+        var task = _latestSourcingTask;
+        if (task is null || _currentLead is null
+            || !task.Source.CustomerId.Equals(_currentLead.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            SourcingResultPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+        SourcingResultPanel.Visibility = Visibility.Visible;
+        SourcingResultText.Text = task.Status == McpTaskStatus.NeedsInformation
+            ? $"Agent needs more information · {task.Result?.Summary}"
+            : task.Result?.Summary ?? "Agent 已返回结果。";
+        var metadata = task.Result?.Metadata;
+        SourcingResultBasisText.Text = metadata is null
+            ? $"Based on requirement v{task.RequirementVersionUsed}"
+            : $"Based on v{metadata.RequirementVersionUsed} · {metadata.RequirementCollectedCount}/5 at search time · Missing: {string.Join("、", metadata.MissingAtExecution.Select(SourcingElementLabel).DefaultIfEmpty("无"))}";
+        var missing = task.Result?.ProductSourcing?.MissingInformation ?? [];
+        AskCustomerButton.IsEnabled = missing.Count > 0;
+        RefineSearchButton.IsEnabled = _currentCustomerSuccessContext?.SourcingRequest is { } request
+                                       && request.Version > task.RequirementVersionUsed
+                                       && request.Readiness.CanUseAgent;
+        RefineSearchButton.ToolTip = RefineSearchButton.IsEnabled
+            ? $"检测到更新的 requirement v{_currentCustomerSuccessContext!.SourcingRequest!.Version}"
+            : "客户提供新的有效采购信息后可再次人工 Refine。";
+    }
+
+    private async void FindProducts_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentLead is null
+            || _currentCustomerSuccessContext?.SourcingRequest is not { } requirement
+            || ConversationList.SelectedItem is not ConversationItem conversation)
+            return;
+        var settings = await _services.Repository.GetAppSettingsAsync();
+        if (!settings.McpAgentGatewayEnabled)
+        {
+            MessageBox.Show("请先在设置中启用“MCP 与外部智能体”。", "Find Products", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var window = new ProductSourcingReviewWindow(
+            _services,
+            requirement,
+            new AgentTaskSource
+            {
+                Module = "whatsapp_inbox",
+                CustomerId = _currentLead.Id,
+                ConversationId = conversation.Id,
+                AccountId = conversation.AccountId
+            },
+            _currentLead.DisplayName) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() != true || window.CompletedTask is null) return;
+        _latestSourcingTask = window.CompletedTask;
+        RenderSourcingResultPanel();
+        new AgentTaskDetailsWindow(window.CompletedTask) { Owner = Window.GetWindow(this) }.ShowDialog();
+    }
+
+    private void ViewSourcingResult_Click(object sender, RoutedEventArgs e)
+    {
+        if (_latestSourcingTask is null) return;
+        new AgentTaskDetailsWindow(_latestSourcingTask) { Owner = Window.GetWindow(this) }.ShowDialog();
+    }
+
+    private void AskSourcingQuestion_Click(object sender, RoutedEventArgs e)
+    {
+        var missing = _latestSourcingTask?.Result?.ProductSourcing?.MissingInformation ?? [];
+        if (missing.Count == 0) return;
+        ComposerBox.Text = "To improve the product search, could you please confirm:\n" +
+                           string.Join("\n", missing.Select(item => $"• {SourcingElementLabel(item)}"));
+        ComposerBox.CaretIndex = ComposerBox.Text.Length;
+        ComposerBox.Focus();
+        MessageBox.Show("建议问题已填入输入框，但尚未发送。请修改并人工确认后再发送给客户。", "Ask Customer", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void RefineSourcing_Click(object sender, RoutedEventArgs e)
+    {
+        if (_latestSourcingTask is null
+            || _currentLead is null
+            || _currentCustomerSuccessContext?.SourcingRequest is not { } requirement
+            || requirement.Version <= _latestSourcingTask.RequirementVersionUsed
+            || ConversationList.SelectedItem is not ConversationItem conversation)
+            return;
+        var window = new ProductSourcingReviewWindow(
+            _services,
+            requirement,
+            new AgentTaskSource
+            {
+                Module = "whatsapp_inbox_refine",
+                CustomerId = _currentLead.Id,
+                ConversationId = conversation.Id,
+                AccountId = conversation.AccountId
+            },
+            _currentLead.DisplayName,
+            _latestSourcingTask) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() != true || window.CompletedTask is null) return;
+        _latestSourcingTask = window.CompletedTask;
+        RenderSourcingResultPanel();
+        new AgentTaskDetailsWindow(window.CompletedTask) { Owner = Window.GetWindow(this) }.ShowDialog();
+    }
 
     private static string SourcingFieldLabel(SourcingFieldKey value) => value switch
     {

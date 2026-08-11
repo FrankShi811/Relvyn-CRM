@@ -122,19 +122,23 @@ public sealed class TodayBriefService
             });
         }
 
-        var sourcingComplete = sourcingRequests
-            .Where(item => item.Status == SourcingRequestStatus.Complete)
+        var sourcingReady = sourcingRequests
+            .Where(item => item.Readiness.CanUseAgent)
+            .Where(item => item.Version > item.LastSourcingRequirementVersion)
             .ToList();
         foreach (var handoff in handoffs.Take(8))
             items.Insert(0, BuildSpecialItem(handoff.CustomerId, await ResolveCustomerNameAsync(handoff.CustomerId, handoff.ConversationId),
                 "handoff", "打开对应 WhatsApp 会话，完成人工处理并记录结果",
                 handoff.Reason, FollowUpPriority.Urgent, handoff.AccountId, handoff.ConversationId, now));
-        foreach (var sourcing in sourcingComplete.Take(8))
+        foreach (var sourcing in sourcingReady.Take(8))
         {
             var source = sourcing.Fields.Values.OrderByDescending(item => item.ObservedAt).FirstOrDefault();
             items.Add(BuildSpecialItem(sourcing.CustomerId, await ResolveCustomerNameAsync(sourcing.CustomerId, source?.SourceConversationId ?? ""),
-                "sourcing_complete", "复核客户需求信息，确认无误后推进下一步",
-                "图片、数量、目标价、目的地和运输偏好已收齐。", FollowUpPriority.High,
+                "sourcing_ready", "客户已提供足够信息，可以人工选择外部 Agent 开始搜品",
+                sourcing.Readiness.Readiness == SourcingReadinessLevel.HighConfidence
+                    ? "采购需求 5/5，信息完整。仍需人工选择 Agent 并确认发送内容。"
+                    : $"采购需求 {sourcing.CollectedCount}/5，部分完整但可执行；仍缺 {string.Join("、", sourcing.Readiness.MissingElements)}。",
+                FollowUpPriority.High,
                 source?.SourceAccountId ?? "", source?.SourceConversationId ?? "", now));
         }
         foreach (var document in knowledgeDocuments
@@ -185,7 +189,7 @@ public sealed class TodayBriefService
             DueTodayCount = activeTasks.Count(item => item.DueAt.Date == now.Date),
             InProgressCount = activeTasks.Count(item => item.Status == FollowUpTaskStatus.InProgress),
             HumanHandoffCount = handoffs.Count,
-            SourcingCompleteCount = sourcingComplete.Count,
+            SourcingCompleteCount = sourcingReady.Count,
             CrossAccountFollowUpCount = 0,
             KnowledgeReviewCount = knowledgeDocuments.Count(item => item.Status is KnowledgeDocumentStatus.ReadyForReview or KnowledgeDocumentStatus.Outdated),
             KnowledgeConflictCount = knowledgeDocuments.Count(item => item.Status == KnowledgeDocumentStatus.Conflicted),

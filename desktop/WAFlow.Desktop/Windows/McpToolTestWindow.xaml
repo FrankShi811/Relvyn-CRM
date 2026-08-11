@@ -1,0 +1,38 @@
+<Window x:Class="WAFlow.Desktop.Windows.McpToolTestWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI Sales OS · MCP Tool Explorer" Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"
+        Width="760" Height="700" MinWidth="640" MinHeight="560"
+        WindowStartupLocation="CenterOwner" WindowStyle="SingleBorderWindow" ResizeMode="CanResize">
+    <Grid Background="{DynamicResource Canvas}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="24,19">
+            <StackPanel><TextBlock Text="MCP TOOL EXPLORER" Style="{StaticResource PageEyebrow}"/><TextBlock x:Name="ToolTitleText" FontSize="22" FontWeight="Bold" Margin="0,5,0,0"/><TextBlock x:Name="ToolMetaText" Foreground="{DynamicResource Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/></StackPanel>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,20">
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Input form · generated from JSON Schema" Style="{StaticResource SectionTitle}"/>
+                        <ItemsControl x:Name="FieldItems" Margin="0,10,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,4"><Grid.ColumnDefinitions><ColumnDefinition Width="210"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding Label}" FontWeight="SemiBold"/><TextBlock Text="{Binding TypeLabel}" Foreground="{DynamicResource Muted}" FontSize="9"/></StackPanel><TextBox Grid.Column="1" Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{Binding Label}"/></Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock x:Name="NoFieldsText" Text="该 Tool 未声明顶层 properties。可以直接编辑下方 JSON。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,8,0,0"/>
+                        <Button Content="从表单生成 JSON" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left" Padding="10,6" Margin="0,10,0,0" Click="BuildJson_Click"/>
+                        <TextBlock Text="Arguments JSON" Style="{StaticResource LabelText}" Margin="0,12,0,0"/>
+                        <TextBox x:Name="ArgumentsBox" Text="{}" AcceptsReturn="True" FontFamily="Consolas" FontSize="10" MinHeight="130" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,5,0,0" AutomationProperties.Name="MCP Tool Arguments JSON"/>
+                        <CheckBox x:Name="ConfirmBox" Content="我确认这是一次可能访问外部系统的真实 Tool 调用" Margin="0,11,0,0" Checked="Confirm_Changed" Unchecked="Confirm_Changed"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel><Grid><TextBlock Text="Result" Style="{StaticResource SectionTitle}"/><TextBlock x:Name="ExecutionTimeText" HorizontalAlignment="Right" Foreground="{DynamicResource Muted}"/></Grid><TextBox x:Name="ResultBox" Text="尚未执行。" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="10" MinHeight="170" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,10,0,0" AutomationProperties.Name="MCP Tool 执行结果"/><TextBlock Text="结果按不可信外部数据处理，不会成为系统指令，也不会自动写入 Customer Brain。" Foreground="{DynamicResource Warning}" FontSize="9.5" Margin="0,8,0,0" TextWrapping="Wrap"/></StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <Border Grid.Row="2" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="24,14"><Grid><TextBlock x:Name="StatusText" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="关闭" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" Click="Close_Click"/><Button x:Name="RunButton" Content="Run Tool" Style="{StaticResource PrimaryButton}" IsEnabled="False" Click="Run_Click"/></StackPanel></Grid></Border>
+    </Grid>
+</Window>

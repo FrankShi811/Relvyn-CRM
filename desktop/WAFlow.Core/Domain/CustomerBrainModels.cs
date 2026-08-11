@@ -198,6 +198,7 @@ public sealed class CustomerIntelligenceProfile
     public CustomerIntelligenceCoverage Coverage { get; set; } = new();
     public List<CustomerIntelligenceStatement> Statements { get; set; } = [];
     public CustomerConversationContext ConversationContext { get; set; } = new();
+    public ProductRequirementState ProductRequirementState { get; set; } = new();
     public string KnowledgeRetrievalId { get; set; } = "";
     public List<KnowledgeRetrievalHit> KnowledgeReferences { get; set; } = [];
     public string SourceSnapshotHash { get; set; } = "";
@@ -427,6 +428,7 @@ public sealed class TodayBriefItem
     [JsonIgnore] public string CategoryLabel => Category switch
     {
         "handoff" => "人工接管",
+        "sourcing_ready" => "搜品已就绪",
         "sourcing_complete" => "客户需求完整",
         "cross_account" => "跨账号跟进",
         "knowledge_review" => "知识待审核",
@@ -490,6 +492,7 @@ public sealed class TodayBriefSnapshot
     public int InProgressCount { get; set; }
     public int HumanHandoffCount { get; set; }
     public int SourcingCompleteCount { get; set; }
+    [JsonIgnore] public int SourcingReadyCount => SourcingCompleteCount;
     public int CrossAccountFollowUpCount { get; set; }
     public int KnowledgeReviewCount { get; set; }
     public int KnowledgeConflictCount { get; set; }

@@ -1,0 +1,105 @@
+<Window x:Class="WAFlow.Desktop.Windows.McpServerEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI Sales OS · MCP Server" Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico"
+        Width="720" Height="690" MinWidth="620" MinHeight="560"
+        WindowStartupLocation="CenterOwner" WindowStyle="SingleBorderWindow" ResizeMode="CanResize">
+    <Grid Background="{DynamicResource Canvas}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="24,19">
+            <StackPanel>
+                <TextBlock Text="MCP SERVER REGISTRY" Style="{StaticResource PageEyebrow}"/>
+                <TextBlock Text="连接设置" FontSize="22" FontWeight="Bold" Margin="0,5,0,0"/>
+                <TextBlock Text="命令参数与凭据分开保存；不通过 shell 执行，也不会继承当前进程中的其他环境密钥。" Foreground="{DynamicResource Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,20">
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,10,0"><TextBlock Text="名称" Style="{StaticResource LabelText}"/><TextBox x:Name="NameBox" Margin="0,5,0,0" MaxLength="120" AutomationProperties.Name="MCP Server 名称"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Transport" Style="{StaticResource LabelText}"/><ComboBox x:Name="TransportBox" Margin="0,5,0,0" SelectionChanged="TransportBox_SelectionChanged" AutomationProperties.Name="MCP Transport"/></StackPanel>
+                        </Grid>
+                        <TextBlock Text="说明（可选）" Style="{StaticResource LabelText}" Margin="0,12,0,0"/>
+                        <TextBox x:Name="DescriptionBox" Margin="0,5,0,0" MaxLength="500" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="54" AutomationProperties.Name="MCP Server 说明"/>
+                        <CheckBox x:Name="EnabledBox" Content="启用此 Server" Margin="0,12,0,0"/>
+                        <CheckBox x:Name="AutoConnectBox" Content="Relvyn 启动后尝试连接（失败不会阻止程序启动）" Margin="0,7,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Allowed Data / Context Permission" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock Text="Allow 直接允许；Ask 仍需在任务复核中由人工勾选；Deny 即使任务要求也会被 Gateway 拒绝。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                        <UniformGrid Columns="2" Margin="0,10,0,0">
+                            <Grid Margin="0,4,8,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Customer basic info" VerticalAlignment="Center"/><ComboBox x:Name="CustomerPermissionBox" Grid.Column="1" AutomationProperties.Name="Customer basic info 权限"/></Grid>
+                            <Grid Margin="8,4,0,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Product requirement" VerticalAlignment="Center"/><ComboBox x:Name="ProductPermissionBox" Grid.Column="1" AutomationProperties.Name="Product requirement 权限"/></Grid>
+                            <Grid Margin="0,4,8,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Current conversation" VerticalAlignment="Center"/><ComboBox x:Name="ConversationPermissionBox" Grid.Column="1" AutomationProperties.Name="Current conversation 权限"/></Grid>
+                            <Grid Margin="8,4,0,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Full conversation history" VerticalAlignment="Center"/><ComboBox x:Name="HistoryPermissionBox" Grid.Column="1" AutomationProperties.Name="Full conversation history 权限"/></Grid>
+                            <Grid Margin="0,4,8,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Attachments" VerticalAlignment="Center"/><ComboBox x:Name="AttachmentsPermissionBox" Grid.Column="1" AutomationProperties.Name="Attachments 权限"/></Grid>
+                            <Grid Margin="8,4,0,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Knowledge Base" VerticalAlignment="Center"/><ComboBox x:Name="KnowledgePermissionBox" Grid.Column="1" AutomationProperties.Name="Knowledge Base 权限"/></Grid>
+                            <Grid Margin="0,4,8,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Opportunity data" VerticalAlignment="Center"/><ComboBox x:Name="OpportunityPermissionBox" Grid.Column="1" AutomationProperties.Name="Opportunity data 权限"/></Grid>
+                            <Grid Margin="8,4,0,4"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="115"/></Grid.ColumnDefinitions><TextBlock Text="Internal notes" VerticalAlignment="Center"/><ComboBox x:Name="NotesPermissionBox" Grid.Column="1" AutomationProperties.Name="Internal notes 权限"/></Grid>
+                        </UniformGrid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock x:Name="TransportTitleText" Text="HTTP Endpoint" Style="{StaticResource SectionTitle}"/>
+                        <TextBlock x:Name="TransportHelpText" Text="远程 Server 必须使用 HTTPS；HTTP 只允许本机 loopback。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        <StackPanel x:Name="HttpPanel" Margin="0,12,0,0">
+                            <TextBlock Text="Endpoint" Style="{StaticResource LabelText}"/>
+                            <TextBox x:Name="EndpointBox" Margin="0,5,0,0" AutomationProperties.Name="MCP HTTP Endpoint"/>
+                        </StackPanel>
+                        <StackPanel x:Name="StdioPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                            <TextBlock Text="Executable / Command" Style="{StaticResource LabelText}"/>
+                            <TextBox x:Name="CommandBox" Margin="0,5,0,0" AutomationProperties.Name="MCP stdio 可执行命令"/>
+                            <TextBlock Text="Arguments（每行一个参数）" Style="{StaticResource LabelText}" Margin="0,11,0,0"/>
+                            <TextBox x:Name="ArgumentsBox" Margin="0,5,0,0" AcceptsReturn="True" MinHeight="70" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="MCP stdio 参数列表"/>
+                            <TextBlock Text="Working directory（可选）" Style="{StaticResource LabelText}" Margin="0,11,0,0"/>
+                            <TextBox x:Name="WorkingDirectoryBox" Margin="0,5,0,0" AutomationProperties.Name="MCP Server 工作目录"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="认证与运行边界" Style="{StaticResource SectionTitle}"/>
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,10,0"><TextBlock Text="认证方式" Style="{StaticResource LabelText}"/><ComboBox x:Name="AuthTypeBox" Margin="0,5,0,0" SelectionChanged="AuthTypeBox_SelectionChanged" AutomationProperties.Name="MCP Server 认证方式"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock x:Name="CredentialLabelText" Text="Credential" Style="{StaticResource LabelText}"/><PasswordBox x:Name="CredentialBox" Margin="0,5,0,0" AutomationProperties.Name="MCP Server 凭据"/><TextBlock Text="留空会保留已保存的凭据。OAuth 此版本接收已签发的 access token。" Foreground="{DynamicResource Muted}" FontSize="9" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                        <Grid x:Name="ApiKeyHeaderPanel" Margin="0,11,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="API Key header" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="ApiKeyHeaderBox" Grid.Column="1" Margin="0,0,0,0" AutomationProperties.Name="API Key Header 名称"/>
+                        </Grid>
+                        <Grid x:Name="SecretEnvironmentPanel" Margin="0,11,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="stdio credential env" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="SecretEnvironmentBox" Grid.Column="1" AutomationProperties.Name="stdio 凭据环境变量名称"/>
+                        </Grid>
+                        <Grid Margin="0,11,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="单次超时（秒）" Style="{StaticResource LabelText}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="TimeoutBox" Grid.Column="1" AutomationProperties.Name="单次 MCP 调用超时秒数"/>
+                        </Grid>
+                        <Border Background="{DynamicResource WarningSoft}" CornerRadius="8" Padding="10,8" Margin="0,12,0,0">
+                            <TextBlock Text="默认只共享本次商品寻源要求；完整聊天、内部备注、知识库与附件都不会自动发送。附件必须在任务复核时逐项勾选。" Foreground="{DynamicResource Warning}" FontSize="9.5" TextWrapping="Wrap"/>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+        <Border Grid.Row="2" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="24,14">
+            <Grid>
+                <Button Content="取消" Style="{StaticResource SecondaryButton}" HorizontalAlignment="Right" Margin="0,0,92,0" Click="Cancel_Click"/>
+                <Button Content="保存" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right" Click="Save_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

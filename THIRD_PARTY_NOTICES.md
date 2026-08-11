@@ -1,6 +1,6 @@
 # Relvyn Third-Party Notices
 
-Snapshot date: 2026-08-10. This file is generated from the resolved production dependency graphs and manually reviewed build contents. It is not legal advice. Third-party copyrights remain with their respective owners.
+Snapshot date: 2026-08-11. This file is generated from the resolved production dependency graphs and manually reviewed build contents. It is not legal advice. Third-party copyrights remain with their respective owners.
 
 The Relvyn proprietary `LICENSE` does not apply to the components listed here. When a package contains a more specific notice, that package notice controls. Complete unmodified license snapshots are under [`licenses/third-party/`](licenses/third-party/).
 
@@ -25,6 +25,7 @@ The release compliance gate fails if the Bridge is embedded into `AISalesOS.exe`
 | [`BLUEOAK-LRU-CACHE-11.5.2.md`](licenses/third-party/BLUEOAK-LRU-CACHE-11.5.2.md) | lru-cache BlueOak-1.0.0 text |
 | [`0BSD-TSLIB-2.8.1.txt`](licenses/third-party/0BSD-TSLIB-2.8.1.txt) | tslib 0BSD text |
 | [`NOTO-SANS-CJK-SIL-OFL-1.1.txt`](licenses/third-party/NOTO-SANS-CJK-SIL-OFL-1.1.txt) | Embedded Noto Sans CJK fonts |
+| [`MODEL-CONTEXT-PROTOCOL-CSHARP-SDK-1.4.1-LICENSE.txt`](licenses/third-party/MODEL-CONTEXT-PROTOCOL-CSHARP-SDK-1.4.1-LICENSE.txt) | Official MCP C# SDK 1.4.1 transitional Apache-2.0 / MIT license notice |
 | [`MIT-REACT-18.3.1.txt`](licenses/third-party/MIT-REACT-18.3.1.txt), [`ISC-IDB-8.0.3.txt`](licenses/third-party/ISC-IDB-8.0.3.txt), [`APACHE-2.0-XLSX-0.20.3.txt`](licenses/third-party/APACHE-2.0-XLSX-0.20.3.txt) | Representative exact PWA production license texts |
 
 ## Windows desktop and shared .NET components
@@ -45,6 +46,11 @@ Unless a row says otherwise, these libraries are linked into the self-contained 
 | Microsoft.Data.Sqlite, Microsoft.Data.Sqlite.Core | 8.0.19 | https://github.com/dotnet/efcore | MIT | .NET Foundation and contributors | SQLite access | Yes | Retain MIT notice; compatible |
 | Microsoft.Extensions.DependencyInjection.Abstractions | 8.0.2 | https://github.com/dotnet/runtime | MIT | .NET Foundation and contributors | Dependency injection abstractions | Yes | Retain MIT/runtime notices; compatible |
 | Microsoft.Extensions.Logging.Abstractions | 8.0.3 | https://github.com/dotnet/runtime | MIT | .NET Foundation and contributors | Logging abstractions | Yes | Retain MIT/runtime notices; compatible |
+| ModelContextProtocol.Core | 1.4.1 | https://github.com/modelcontextprotocol/csharp-sdk | Apache-2.0 / MIT transitional | Model Context Protocol, a Series of LF Projects, LLC and contributors | Vendor-neutral MCP client, stdio/Streamable HTTP/SSE transports, capability discovery and tool invocation | Yes | Retain the exact SDK transitional license; compatible with proprietary distribution under the stated terms |
+| Microsoft.Extensions.AI.Abstractions | 10.5.2 | https://github.com/dotnet/extensions | MIT | .NET Foundation and contributors | MCP SDK function abstractions | Yes | Retain MIT notice; compatible |
+| Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions | 10.0.7 | https://github.com/dotnet/runtime | MIT | .NET Foundation and contributors | MCP SDK runtime abstractions | Yes | Retain Microsoft/.NET MIT and bundled notices |
+| System.Diagnostics.DiagnosticSource, System.IO.Pipelines, System.Net.ServerSentEvents | 10.0.7 | https://github.com/dotnet/runtime | MIT | .NET Foundation and contributors | MCP transport and diagnostics dependencies | Yes | Retain Microsoft/.NET MIT and bundled notices |
+| System.Text.Encodings.Web, System.Text.Json | 10.0.6 | https://github.com/dotnet/runtime | MIT | .NET Foundation and contributors | MCP protocol JSON serialization | Yes | Retain Microsoft/.NET MIT and bundled notices |
 | PdfPig | 0.1.12 | https://github.com/UglyToad/PdfPig | Apache-2.0 | PdfPig contributors | PDF text extraction | Yes | Retain Apache-2.0 license and notices; compatible |
 | PDFsharp | 6.2.4 | https://github.com/empira/PDFsharp | MIT | empira Software GmbH and contributors | PDF report output | Yes | Retain MIT notice; compatible |
 | RBush | 4.0.0 | https://github.com/viceroypenguin/RBush | MIT | RBush contributors | Spatial indexing transitively used by PDF tooling | Yes | Retain MIT notice; compatible |
