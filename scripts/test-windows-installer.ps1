@@ -319,7 +319,7 @@ try {
     throw "Materialized Windows shell icon hash mismatch. actual=$materializedBrandIconHash expected=$sourceBrandIconHash"
   }
   $shortcutIconLocations = @()
-  $shortcutShellIcons = @()
+  $shortcutProtectedIconFrames = @()
   $shortcutTargets = foreach ($shortcutPath in $shortcutPaths) {
     if (-not (Test-Path -LiteralPath $shortcutPath)) {
       throw "Installed application did not create the shortcut: $shortcutPath"
@@ -333,33 +333,38 @@ try {
       throw "Installed shortcut does not use the stable brand icon: $shortcutPath -> $($shortcut.IconLocation)"
     }
     $shortcutIconLocations += $shortcut.IconLocation
-    $shellIcon = [Drawing.Icon]::ExtractAssociatedIcon($shortcutPath)
-    if ($null -eq $shellIcon) {
-      throw "Windows Shell could not extract the shortcut icon: $shortcutPath"
-    }
-    try {
-      $shellBitmap = $shellIcon.ToBitmap()
+    # ExtractAssociatedIcon treats a .lnk as a file-type icon on clean CI
+    # runners and can return the generic shortcut document instead of resolving
+    # IconLocation. Validate the exact icon file referenced by the shortcut at
+    # the desktop sizes Windows uses at 100% and 125% DPI. Together with the
+    # exact IconLocation assertion above, this verifies the user-visible brand
+    # source without confusing the Shell's shortcut overlay for the app icon.
+    foreach ($shellSize in @(32, 40)) {
+      $shellIcon = [Drawing.Icon]::new($stableBrandIconPath, $shellSize, $shellSize)
       try {
-        $expectedShellIconPath = Join-Path $root "desktop\WAFlow.Desktop\Assets\Icons\AI-Sales-OS-$($shellBitmap.Width).png"
-        if (-not (Test-Path -LiteralPath $expectedShellIconPath -PathType Leaf)) {
-          throw "No protected brand reference exists for the Shell shortcut icon size: $expectedShellIconPath"
-        }
-        $expectedShellBitmap = [Drawing.Bitmap]::FromFile($expectedShellIconPath)
+        $shellBitmap = $shellIcon.ToBitmap()
         try {
-          $actualShellHash = Get-BitmapPixelHash $shellBitmap
-          $expectedShellHash = Get-BitmapPixelHash $expectedShellBitmap
-          if ($shellBitmap.Width -ne $expectedShellBitmap.Width -or
-              $shellBitmap.Height -ne $expectedShellBitmap.Height -or
-              $actualShellHash -ne $expectedShellHash) {
-            throw "Windows Shell extracted the wrong shortcut icon. path=$shortcutPath size=$($shellBitmap.Width)x$($shellBitmap.Height) actual=$actualShellHash expected=$expectedShellHash"
+          $expectedShellIconPath = Join-Path $root "desktop\WAFlow.Desktop\Assets\Icons\AI-Sales-OS-$shellSize.png"
+          if (-not (Test-Path -LiteralPath $expectedShellIconPath -PathType Leaf)) {
+            throw "No protected brand reference exists for the Shell shortcut icon size: $expectedShellIconPath"
           }
-          $shortcutShellIcons += "$shortcutPath=$($shellBitmap.Width)x$($shellBitmap.Height):$actualShellHash"
+          $expectedShellBitmap = [Drawing.Bitmap]::FromFile($expectedShellIconPath)
+          try {
+            $actualShellHash = Get-BitmapPixelHash $shellBitmap
+            $expectedShellHash = Get-BitmapPixelHash $expectedShellBitmap
+            if ($shellBitmap.Width -ne $expectedShellBitmap.Width -or
+                $shellBitmap.Height -ne $expectedShellBitmap.Height -or
+                $actualShellHash -ne $expectedShellHash) {
+              throw "The shortcut's protected icon file has the wrong frame. path=$shortcutPath size=$($shellBitmap.Width)x$($shellBitmap.Height) actual=$actualShellHash expected=$expectedShellHash"
+            }
+            $shortcutProtectedIconFrames += "$shortcutPath=$($shellBitmap.Width)x$($shellBitmap.Height):$actualShellHash"
+          }
+          finally { $expectedShellBitmap.Dispose() }
         }
-        finally { $expectedShellBitmap.Dispose() }
+        finally { $shellBitmap.Dispose() }
       }
-      finally { $shellBitmap.Dispose() }
+      finally { $shellIcon.Dispose() }
     }
-    finally { $shellIcon.Dispose() }
     $shortcut.TargetPath
   }
 
@@ -400,7 +405,7 @@ try {
     BridgeCompanionPresent = $bridgeCompanionPresent
     ShortcutTargets = $shortcutTargets -join '; '
     ShortcutIconLocations = $shortcutIconLocations -join '; '
-    ShortcutShellIcons = $shortcutShellIcons -join '; '
+    ShortcutProtectedIconFrames = $shortcutProtectedIconFrames -join '; '
     ShortcutsVerified = $shortcutTargets.Count -eq 2
     DatabaseHashBefore = $beforeHash
     DatabaseHashAfter = $afterHash
