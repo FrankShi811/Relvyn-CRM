@@ -48,6 +48,8 @@ $customerEnrichmentRepositorySource = Get-Content -Raw -Encoding utf8 -LiteralPa
 $appServicesSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\AppServices.cs')
 $campaignsXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\CampaignsView.xaml')
 $campaignsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\CampaignsView.xaml.cs')
+$campaignPreviewXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CampaignPreviewWindow.xaml')
+$campaignPreviewSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CampaignPreviewWindow.xaml.cs')
 $todayBriefSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\TodayBriefService.cs')
 $customerBrainModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\CustomerBrainModels.cs')
 $leadIntelligenceXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\LeadIntelligenceView.xaml')
@@ -735,10 +737,34 @@ if ($customerDimensionSource -notmatch [regex]::Escape('PrimaryCategoryPreferenc
     $campaignsXaml -notmatch 'x:Name="CustomerCategoryPreferenceFilterBox"' -or
     $campaignsXaml -notmatch 'Header="一级品类偏好" Binding="\{Binding PrimaryCategoryPreference\}"' -or
     $campaignsSource -notmatch [regex]::Escape('row.PrimaryCategoryPreference.Equals(category') -or
-    $guideCatalogSource -notmatch [regex]::Escape('["broadcast"] = ModuleGuideVersion + 2')) {
+    $guideCatalogSource -notmatch [regex]::Escape('["broadcast"] = ModuleGuideVersion + 3')) {
   throw 'Customer List and Automation Campaigns must share one primary-category preference resolver, column and filter without duplicating the dynamic source field.'
 }
 Write-Host 'PASS  shared primary-category preference display and filtering contract'
+
+if ($campaignsXaml -match 'x:Name="SelectedPreviewText"' -or
+    $campaignsXaml -match '当前客户个性化预览' -or
+    $campaignsXaml -notmatch 'AutomationProperties\.Name="预览所有已选客户的个性化话术"' -or
+    $campaignsXaml -notmatch '<TextBlock Text="任务状态"' -or
+    $campaignsSource -notmatch [regex]::Escape('new CampaignPreviewWindow(campaign, audience)') -or
+    $campaignsSource -notmatch [regex]::Escape('PreviewButton.Content = selected == 0') -or
+    $campaignPreviewXaml -notmatch 'x:Name="PreviewList"' -or
+    $campaignPreviewXaml -notmatch 'x:Name="SearchBox"' -or
+    $campaignPreviewXaml -notmatch 'Target="\{Binding ElementName=SearchBox\}"' -or
+    $campaignPreviewXaml -notmatch 'VirtualizingPanel\.VirtualizationMode="Recycling"' -or
+    $campaignPreviewXaml -notmatch 'x:Name="FilterEmptyPanel"' -or
+    $campaignPreviewXaml -notmatch 'x:Name="NoPreviewPanel"' -or
+    $campaignPreviewXaml -notmatch 'DataContext="\{Binding SelectedItem, ElementName=PreviewList\}"' -or
+    $campaignPreviewXaml -notmatch 'AutomationProperties\.Name="当前客户个性化话术正文"' -or
+    $campaignPreviewXaml -notmatch 'AutomationProperties\.Name="当前客户个性化邮件主题"' -or
+    $campaignPreviewSource -notmatch [regex]::Escape('audience.Select(item => new CampaignPreviewItem(') -or
+    $campaignPreviewSource -notmatch [regex]::Escape('PreviewList.ItemsSource = _view;') -or
+    $campaignPreviewSource -notmatch [regex]::Escape('private void ClearSearch_Click') -or
+    $campaignPreviewSource -notmatch [regex]::Escape('private void UpdateSearchState()') -or
+    $campaignPreviewSource -notmatch [regex]::Escape('CampaignAutomationService.RenderTemplate(campaign.EmailSubjectTemplate, item.Lead)')) {
+  throw 'Campaign previews must live behind the left preview action and expose every selected customer in one searchable, keyboard-accessible review window without a duplicate right-side preview.'
+}
+Write-Host 'PASS  consolidated all-customer campaign preview and accessibility contract'
 
 if (-not ($leadAutomationSource.Contains('public event EventHandler<LeadBulkAnalysisProgress>? BulkAnalysisProgressChanged;')) -or
     -not ($leadAutomationSource.Contains('public bool IsBulkAnalysisRunning')) -or
@@ -1296,7 +1322,7 @@ if ($emailInboxXaml -notmatch 'x:Name="NewEmailButton"' -or
     $guideCatalogSource -match 'Ctrl\+1 . Ctrl\+8' -or
     $guideCatalogSource -notmatch [regex]::Escape('["customers"] = ModuleGuideVersion + 6') -or
     $guideCatalogSource -notmatch [regex]::Escape('["customer-enrichment"] = ModuleGuideVersion + 1') -or
-    $guideCatalogSource -notmatch [regex]::Escape('["broadcast"] = ModuleGuideVersion + 2') -or
+    $guideCatalogSource -notmatch [regex]::Escape('["broadcast"] = ModuleGuideVersion + 3') -or
     $guideCatalogSource -notmatch [regex]::Escape('["analytics"] = ModuleGuideVersion + 2') -or
     $guideCatalogSource -notmatch [regex]::Escape('["settings"] = ModuleGuideVersion + 9')) {
   throw 'Email Inbox must support new-message composition, CRM/Customer Brain-aware AI drafting, manual-send safety and current module guidance.'

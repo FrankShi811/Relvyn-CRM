@@ -8,6 +8,7 @@ using WAFlow.Core;
 using WAFlow.Core.Domain;
 using WAFlow.Core.Imports;
 using WAFlow.Core.Services;
+using WAFlow.Desktop.Windows;
 
 namespace WAFlow.Desktop.Pages;
 
@@ -173,7 +174,6 @@ public partial class CampaignsView : UserControl, IRefreshableView
         UpdateCategoryPreferenceFilter();
         ApplyAudienceFilter();
         UpdateSelectionSummary();
-        SelectedPreviewText.Text = "选择表格中的客户可查看字段替换结果。";
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
@@ -192,7 +192,10 @@ public partial class CampaignsView : UserControl, IRefreshableView
             }
             var eligible = audience.Count(item => item.Eligible);
             PreviewSummaryText.Text = $"已选 {audience.Count} 人 · 可发送 {eligible} · 排除 {audience.Count - eligible}";
-            SelectedPreviewText.Text = audience.FirstOrDefault(item => item.Eligible)?.PreviewMessage ?? audience[0].PreviewMessage;
+            new CampaignPreviewWindow(campaign, audience)
+            {
+                Owner = Window.GetWindow(this)
+            }.ShowDialog();
         }
         catch (Exception error) { ShowError(error, "预览失败"); }
     }
@@ -376,7 +379,8 @@ public partial class CampaignsView : UserControl, IRefreshableView
         _rows.Clear();
         PreviewSummaryText.Text = "请勾选一位或多位客户";
         EligibleCountText.Text = "已选 0";
-        SelectedPreviewText.Text = "选择表格中的客户可查看字段替换结果。";
+        PreviewButton.Content = "预览个性化话术";
+        System.Windows.Automation.AutomationProperties.SetName(PreviewButton, "预览所有已选客户的个性化话术");
         CampaignStateText.Text = "新草稿";
         PauseReasonText.Text = "";
         _loading = false;
@@ -496,11 +500,6 @@ public partial class CampaignsView : UserControl, IRefreshableView
 
     private void AudienceCheck_Click(object sender, RoutedEventArgs e) => UpdateSelectionSummary();
 
-    private void AudienceGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (AudienceGrid.SelectedItem is AudienceRow row) SelectedPreviewText.Text = CampaignAutomationService.RenderTemplate(TemplateBox.Text, row.Lead);
-    }
-
     private async void HistoryGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (HistoryGrid.SelectedItem is not CampaignExecutionSummary summary) return;
@@ -515,6 +514,10 @@ public partial class CampaignsView : UserControl, IRefreshableView
         var selected = _rows.Count(row => row.IsSelected);
         var eligible = _rows.Count(row => row.IsSelected && row.Eligible);
         EligibleCountText.Text = selected == eligible ? $"已选 {selected}" : $"已选 {selected} · 可发 {eligible}";
+        PreviewButton.Content = selected == 0 ? "预览个性化话术" : $"预览个性化话术（{selected}）";
+        System.Windows.Automation.AutomationProperties.SetName(
+            PreviewButton,
+            selected == 0 ? "预览所有已选客户的个性化话术" : $"预览 {selected} 位已选客户的个性化话术");
     }
 
     private void UpdateConnectionState()
