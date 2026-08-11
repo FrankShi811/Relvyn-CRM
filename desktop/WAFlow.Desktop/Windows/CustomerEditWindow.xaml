@@ -166,15 +166,17 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="AI 建议历史" Style="{StaticResource LabelText}" Margin="0,0,0,5"/>
-                                <ListBox x:Name="BrainRecommendationItems" DisplayMemberPath="DisplayText" MinHeight="70" MaxHeight="150"/>
-                                <WrapPanel Margin="0,7,0,0">
-                                    <Button Content="接受" Tag="accept" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
-                                    <Button Content="延期 24h" Tag="defer" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
-                                    <Button Content="开始" Tag="start" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
-                                    <Button Content="完成" Tag="complete" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
-                                    <Button Content="失败" Tag="fail" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
-                                    <Button Content="忽略" Tag="dismiss" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5"/>
+                                <ListBox x:Name="BrainRecommendationItems" DisplayMemberPath="DisplayText" MinHeight="70" MaxHeight="150"
+                                         SelectionChanged="BrainRecommendationItems_SelectionChanged"/>
+                                <WrapPanel x:Name="RecommendationActionPanel" Margin="0,7,0,0" IsEnabled="False">
+                                    <Button x:Name="AcceptRecommendationButton" Content="接受建议" Tag="accept" Click="RecommendationAction_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
+                                    <Button x:Name="DeferRecommendationButton" Content="延期 24 小时" Tag="defer" Click="RecommendationAction_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
+                                    <Button x:Name="StartRecommendationButton" Content="开始执行" Tag="start" Click="RecommendationAction_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
+                                    <Button x:Name="CompleteRecommendationButton" Content="标记完成" Tag="complete" Click="RecommendationAction_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
+                                    <Button x:Name="FailRecommendationButton" Content="记录失败" Tag="fail" Click="RecommendationAction_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
+                                    <Button x:Name="DismissRecommendationButton" Content="忽略建议" Tag="dismiss" Click="RecommendationAction_Click" Style="{StaticResource GhostButton}" Margin="0,0,5,5" Visibility="Collapsed"/>
                                 </WrapPanel>
+                                <TextBlock x:Name="RecommendationActionHintText" Text="选择建议后显示当前可执行操作" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,4,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
                             </StackPanel>
                             <StackPanel Grid.Column="2">
                                 <TextBlock Text="待办任务" Style="{StaticResource LabelText}" Margin="0,0,0,5"/>

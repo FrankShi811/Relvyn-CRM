@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -37,6 +38,9 @@ public partial class SettingsWindow : Window
     private bool _loaded;
     private bool _updatingRoutingUi;
     private bool _hadConfiguredProviderAtLoad;
+    private bool _trackingChanges;
+    private bool _hasUnsavedChanges;
+    private bool _allowClose;
     private OnboardingState _onboardingState = new();
     private string _lastPresetRoleSkill = BusinessRoleProfile.DefaultRoleSkillDescription;
 
@@ -74,6 +78,11 @@ public partial class SettingsWindow : Window
         SettingsGuide.AllowGlobalLink = false;
         SettingsGuide.CloseRequested += SettingsGuide_CloseRequested;
         SettingsGuide.FinishedRequested += SettingsGuide_FinishedRequested;
+        AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler(SettingsInput_Changed));
+        AddHandler(Selector.SelectionChangedEvent, new SelectionChangedEventHandler(SettingsInput_Changed));
+        AddHandler(ToggleButton.CheckedEvent, new RoutedEventHandler(SettingsInput_Changed));
+        AddHandler(ToggleButton.UncheckedEvent, new RoutedEventHandler(SettingsInput_Changed));
+        AddHandler(PasswordBox.PasswordChangedEvent, new RoutedEventHandler(SettingsInput_Changed));
         Loaded += SettingsWindow_Loaded;
         Closed += (_, _) =>
         {
@@ -139,8 +148,26 @@ public partial class SettingsWindow : Window
                 },
                 DispatcherPriority.ContextIdle);
         }
-        else if (!GuideCatalog.IsSeen(_onboardingState, "settings"))
-            SettingsGuide.ShowGuide(GuideCatalog.ForModule("settings"));
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                SetDirtyState(false);
+                _trackingChanges = true;
+            },
+            DispatcherPriority.ApplicationIdle);
+    }
+
+    private void SettingsInput_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_trackingChanges) SetDirtyState(true);
+    }
+
+    private void SetDirtyState(bool dirty)
+    {
+        _hasUnsavedChanges = dirty;
+        SettingsStatusText.Text = dirty ? "有尚未保存的更改" : "尚未保存的更改不会应用";
+        SettingsStatusText.Foreground = (System.Windows.Media.Brush)FindResource(dirty ? "Warning" : "Muted");
+        SaveButton.IsEnabled = dirty;
     }
 
     private void LoadBusinessRoleProfile()
@@ -799,6 +826,8 @@ public partial class SettingsWindow : Window
             ThemeManager.Apply(_settings.ThemeMode);
             if (!_hadConfiguredProviderAtLoad && !string.IsNullOrWhiteSpace(activeKey))
                 _ = ResumeQueuedLeadAnalysisAsync();
+            SetDirtyState(false);
+            _allowClose = true;
             DialogResult = true;
         }
         catch (Exception error)
@@ -835,7 +864,29 @@ public partial class SettingsWindow : Window
         }
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmDiscardChanges()) return;
+        _allowClose = true;
+        DialogResult = false;
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!_allowClose && !ConfirmDiscardChanges())
+        {
+            e.Cancel = true;
+            return;
+        }
+        base.OnClosing(e);
+    }
+
+    private bool ConfirmDiscardChanges() => !_hasUnsavedChanges || MessageBox.Show(
+        "当前设置尚未保存。放弃这些更改并关闭窗口吗？",
+        "放弃尚未保存的更改",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
 
     private void VersionHistory_Click(object sender, RoutedEventArgs e) =>
         new VersionHistoryWindow(_updates) { Owner = this }.ShowDialog();

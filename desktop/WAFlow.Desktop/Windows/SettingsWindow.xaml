@@ -297,10 +297,11 @@
             <Grid>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="版本与更新" Style="{StaticResource SecondaryButton}" Click="VersionHistory_Click" Padding="12,7" MinHeight="34" Margin="0,0,12,0"/>
-                    <TextBlock Text="更改保存后立即生效" Foreground="{DynamicResource Muted}" FontSize="9.5" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="SettingsStatusText" Text="尚未保存的更改不会应用" Foreground="{DynamicResource Muted}" FontSize="9.5" VerticalAlignment="Center"
+                               AutomationProperties.LiveSetting="Polite"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="取消" IsCancel="True" Style="{StaticResource SecondaryButton}" Click="Cancel_Click" Margin="0,0,8,0"/>
+                    <Button Content="放弃更改" Style="{StaticResource SecondaryButton}" Click="Cancel_Click" Margin="0,0,8,0"/>
                     <Button x:Name="SaveButton" Content="保存并应用" Style="{StaticResource PrimaryButton}" Click="Save_Click"/>
                 </StackPanel>
             </Grid>

@@ -127,9 +127,14 @@ $buyerIdentitySource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $
 $customerIdentitySource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\CustomerIdentityService.cs')
 $importModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Imports\ImportModels.cs')
 $importServiceSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Imports\ImportService.cs')
+$importWindowXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\ImportWindow.xaml')
+$importWindowSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\ImportWindow.xaml.cs')
 $customerDimensionSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Imports\CustomerDimensionCatalog.cs')
 $customerEditXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CustomerEditWindow.xaml')
 $customerEditSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CustomerEditWindow.xaml.cs')
+$analyticsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\AnalyticsView.xaml.cs')
+$reportComparisonXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CustomerReportComparisonWindow.xaml')
+$reportComparisonSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CustomerReportComparisonWindow.xaml.cs')
 $knowledgeProcessingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\KnowledgeProcessingComponents.cs')
 $velopackBuildSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'scripts\build-velopack-release.ps1')
 $coreProjectSource = Get-Content -Raw -Encoding utf8 -LiteralPath $coreProject
@@ -730,7 +735,6 @@ if ($mainWindowSource -notmatch [regex]::Escape('_updates.StartMonitoring();') -
     $mainWindowSource -notmatch [regex]::Escape('ApplyAndRestart();') -or
     $mainWindowSource -notmatch [regex]::Escape('已下载 · 点击更新并重启') -or
     $mainWindowSource -match [regex]::Escape('现在关闭 AI Sales OS、安装更新并自动重启吗？') -or
-    $mainWindowSource -match [regex]::Escape('MessageBoxButton.YesNo') -or
     $updateStateSource -notmatch 'IAsyncDisposable' -or
     $updateStateSource -notmatch [regex]::Escape('void StartMonitoring();') -or
     $updateServiceSource -notmatch [regex]::Escape('TimeSpan.FromMinutes(2)') -or
@@ -1349,7 +1353,7 @@ if ($emailInboxXaml -notmatch 'x:Name="NewEmailButton"' -or
     $emailAssistantSource -notmatch [regex]::Escape('CompleteStructuredAsync<EmailAssistantResult>') -or
     $settingsSource -notmatch [regex]::Escape('Email Sales Copilot') -or
     $guideCatalogSource -notmatch [regex]::Escape('Email Sales Copilot') -or
-    $guideCatalogSource -notmatch [regex]::Escape('GlobalGuideVersion = 10') -or
+    $guideCatalogSource -notmatch [regex]::Escape('GlobalGuideVersion = 11') -or
     $guideCatalogSource -notmatch 'Ctrl\+1 . Ctrl\+9' -or
     $guideCatalogSource -match 'Ctrl\+1 . Ctrl\+8' -or
     $guideCatalogSource -notmatch [regex]::Escape('["customers"] = ModuleGuideVersion + 6') -or
@@ -1597,6 +1601,70 @@ if ($todayBriefSource.Contains('"cross_account"') -or
   throw 'Today Brief must treat one customer appearing in multiple WhatsApp accounts as normal unified customer context, not a follow-up task.'
 }
 Write-Host 'PASS  unified cross-account customer context without duplicate-responsibility reminders'
+
+$humanWorkflowUxFailures = @()
+if ($importWindowXaml -notmatch 'x:Name="MappingGrid"' -or
+    $importWindowXaml -notmatch 'x:Name="PreviewGrid"' -or
+    $importWindowXaml -notmatch 'x:Name="AllowOwnerChangeBox"[^>]*IsChecked="False"' -or
+    $importWindowXaml -notmatch 'x:Name="AllowStageChangeBox"[^>]*IsChecked="False"' -or
+    $importWindowSource -notmatch [regex]::Escape('BuildPreviewAsync(sheet, _mapping') -or
+    $importWindowSource -notmatch [regex]::Escape('ShowStep(2)')) {
+  $humanWorkflowUxFailures += 'import_preview_mapping_and_protected_commit'
+}
+if ($guideCatalogSource -notmatch [regex]::Escape('用三个步骤认识完整销售工作流') -or
+    ([regex]::Matches($mainWindowSource, [regex]::Escape('GuideCatalog.ForModule(_currentPage)')).Count -ne 1) -or
+    $mainWindowSource -match 'ShowModuleGuideIfNeededAsync' -or
+    $settingsSource -match 'SettingsWindow_Loaded[\s\S]{0,1600}SettingsGuide\.ShowGuide') {
+  $humanWorkflowUxFailures += 'single_first_run_guide_and_manual_module_help'
+}
+if ($mainWindowXaml -notmatch 'x:Name="DemoDataBanner"' -or
+    $mainWindowXaml -notmatch 'Content="清空演示数据"' -or
+    $mainWindowSource -notmatch [regex]::Escape('RefreshDemoDataBannerAsync') -or
+    $localRepositorySource -notmatch [regex]::Escape('GetDemoLeadCountAsync') -or
+    $localRepositorySource -notmatch [regex]::Escape('RemoveDemoLeadsAsync')) {
+  $humanWorkflowUxFailures += 'global_demo_data_disclosure_and_cleanup'
+}
+if ($settingsXaml -notmatch 'x:Name="SettingsStatusText"' -or
+    $settingsXaml -notmatch 'Content="放弃更改"' -or
+    $settingsSource -notmatch [regex]::Escape('ConfirmDiscardChanges') -or
+    $settingsSource -notmatch [regex]::Escape('protected override void OnClosing') -or
+    $settingsSource -notmatch [regex]::Escape('SetDirtyState(true)')) {
+  $humanWorkflowUxFailures += 'settings_dirty_tracking_and_close_guard'
+}
+if ($customerEditXaml -notmatch 'SelectionChanged="BrainRecommendationItems_SelectionChanged"' -or
+    $customerEditXaml -notmatch 'x:Name="RecommendationActionPanel"' -or
+    $customerEditSource -notmatch 'case AiRecommendationStatus\.Proposed:' -or
+    $customerEditSource -notmatch 'case AiRecommendationStatus\.InProgress:' -or
+    $customerEditSource -notmatch [regex]::Escape('RecommendationActionPanel.IsEnabled = enabled')) {
+  $humanWorkflowUxFailures += 'state_dependent_ai_recommendation_actions'
+}
+if ($whatsAppInboxXaml -notmatch 'x:Name="AccountActionsButton"' -or
+    $whatsAppInboxXaml -notmatch 'Header="断开当前连接（保留登录）"' -or
+    $whatsAppInboxXaml -notmatch 'Header="退出并清除此电脑登录"' -or
+    $whatsAppInboxXaml -match 'x:Name="Runtime(?:StopAgent|HumanTakeover|ViewAgentLog)Button"') {
+  $humanWorkflowUxFailures += 'single_whatsapp_account_and_runtime_control_surface'
+}
+if ($customersXaml -notmatch 'FrozenColumnCount="3"') {
+  $humanWorkflowUxFailures += 'frozen_customer_identity_columns'
+}
+if ($analyticsSource -notmatch [regex]::Escape('new CustomerReportComparisonWindow(previous, _currentReport)') -or
+    $reportComparisonXaml -notmatch 'Text="客户情报版本对比"' -or
+    $reportComparisonXaml -notmatch 'Style="\{StaticResource SelectableReportText\}"' -or
+    $reportComparisonSource -notmatch [regex]::Escape('CustomerReportComparisonViewModel.Create')) {
+  $humanWorkflowUxFailures += 'scrollable_selectable_side_by_side_report_comparison'
+}
+if ($campaignsXaml -notmatch 'x:Name="StartDatePicker"' -or
+    $campaignsXaml -notmatch 'x:Name="StartTimeBox"' -or
+    $campaignsXaml -notmatch 'x:Name="StartAtValidationText"' -or
+    $campaignsXaml -match 'x:Name="StartAtBox"' -or
+    $campaignsSource -notmatch [regex]::Escape('TryParseBeijing(StartDatePicker.SelectedDate, StartTimeBox.Text') -or
+    $campaignsSource -notmatch [regex]::Escape('开始时间必须晚于当前时间')) {
+  $humanWorkflowUxFailures += 'structured_campaign_schedule_with_inline_validation'
+}
+if ($humanWorkflowUxFailures.Count -gt 0) {
+  throw "Nine approved human-workflow UX improvements must remain implemented. missing=$($humanWorkflowUxFailures -join ',')"
+}
+Write-Host 'PASS  nine human-workflow UX improvements contract'
 
 & $dotnet build (Join-Path $root 'desktop\WAFlow.sln') -c Release
 if ($LASTEXITCODE -ne 0) { throw 'WAFlow desktop build failed.' }

@@ -23,8 +23,16 @@
                 <Button Content="＋ 账号" Style="{StaticResource SecondaryButton}" Click="AddAccount_Click" Margin="0,0,8,0"/>
                 <Border x:Name="ConnectionStateBorder" Background="{DynamicResource WarningSoft}" CornerRadius="13" Padding="10,6" Margin="0,0,10,0"><TextBlock x:Name="ConnectionStateText" Text="未连接" Foreground="{DynamicResource Warning}" FontSize="10.5" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite"/></Border>
                 <Button x:Name="ConnectButton" Content="连接 / 显示二维码" Style="{StaticResource PrimaryButton}" Click="Connect_Click"/>
-                <Button x:Name="DisconnectButton" Content="断开" Style="{StaticResource SecondaryButton}" Click="Disconnect_Click" Margin="8,0,0,0" IsEnabled="False"/>
-                <Button x:Name="LogoutButton" Content="退出账号" Style="{StaticResource SecondaryButton}" Click="Logout_Click" Margin="8,0,0,0" IsEnabled="False"/>
+                <Button x:Name="AccountActionsButton" Content="账号操作 ▾" Style="{StaticResource SecondaryButton}" Click="AccountActions_Click" Margin="8,0,0,0" IsEnabled="False"
+                        ToolTip="断开连接会保留登录；退出账号会清除此电脑的登录会话">
+                    <Button.ContextMenu>
+                        <ContextMenu Placement="Bottom">
+                            <MenuItem x:Name="DisconnectMenuItem" Header="断开当前连接（保留登录）" Click="Disconnect_Click" IsEnabled="False"/>
+                            <Separator/>
+                            <MenuItem x:Name="LogoutMenuItem" Header="退出并清除此电脑登录" Click="Logout_Click" IsEnabled="False"/>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
             </StackPanel>
         </Grid>
 
@@ -365,11 +373,8 @@
                                 <Border x:Name="AgentPauseReasonPanel" Visibility="Collapsed" Background="{DynamicResource WarningSoft}" BorderBrush="{DynamicResource Warning}" BorderThickness="1" CornerRadius="8" Padding="9" Margin="0,9,0,0">
                                     <TextBlock x:Name="AgentPauseReasonText" Text="暂停原因：未记录" Foreground="{DynamicResource Warning}" FontSize="10.5" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
                                 </Border>
-                                <WrapPanel Margin="0,9,0,0">
-                                    <Button x:Name="RuntimeStopAgentButton" Content="停止托管" Style="{StaticResource SecondaryButton}" Click="StopAgent_Click" Padding="9,4" Margin="0,0,6,5" Visibility="Collapsed" AutomationProperties.Name="停止当前会话托管"/>
-                                    <Button x:Name="RuntimeHumanTakeoverButton" Content="人工接管" Style="{StaticResource SecondaryButton}" Click="HumanTakeover_Click" Padding="9,4" Margin="0,0,6,5" Visibility="Collapsed" AutomationProperties.Name="人工接管当前会话"/>
-                                    <Button x:Name="RuntimeViewAgentLogButton" Content="查看完整日志" Style="{StaticResource GhostButton}" Click="ViewAgentLog_Click" Padding="9,4" Margin="0,0,6,5" IsEnabled="False" AutomationProperties.Name="查看当前会话完整 AI 协作助手日志"/>
-                                </WrapPanel>
+                                <TextBlock Text="托管控制与日志入口集中在会话标题栏，避免同一操作在页面重复出现。"
+                                           Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,9,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
                         <Border Background="{DynamicResource SurfaceAlt}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,13">

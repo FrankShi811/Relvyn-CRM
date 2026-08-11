@@ -1322,6 +1322,33 @@ public sealed partial class LocalRepository
         return removed;
     }
 
+    public async Task<int> GetDemoLeadCountAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM leads WHERE id IN ({string.Join(',', DemoLeadIds.Select((_, index) => $"$demo{index}"))})";
+        for (var index = 0; index < DemoLeadIds.Length; index++)
+            command.Parameters.AddWithValue($"$demo{index}", DemoLeadIds[index]);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+    }
+
+    public async Task<int> RemoveDemoLeadsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var transaction = await db.BeginTransactionAsync(cancellationToken);
+        var removed = 0;
+        foreach (var leadId in DemoLeadIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await DeleteLeadInternalAsync(db, transaction as SqliteTransaction, leadId, "demo_customer_removed", cancellationToken))
+                removed++;
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return removed;
+    }
+
     private static async Task<int> RemoveDemoLeadsIfRealDataExistsInternalAsync(SqliteConnection db, SqliteTransaction? transaction, CancellationToken cancellationToken)
     {
         await using var count = db.CreateCommand();

@@ -53,9 +53,10 @@ public sealed class ImportPreviewRow
     public string Changes { get; set; } = "";
     public List<string> Errors { get; set; } = [];
     public List<string> Warnings { get; set; } = [];
-    public string StatusLabel => Errors.Count > 0 ? "错误" : IsDuplicate ? "重复·待更新" : PhoneValid ? "可导入" : "号码风险";
+    public string StatusLabel => Errors.Count > 0 ? "已阻止" : IsDuplicate || DuplicateRowNumber is not null ? "更新已有客户" : "新增客户";
     public string WarningsLabel => string.Join("；", Warnings);
     public string ErrorsLabel => string.Join("；", Errors);
+    public string ReviewMessage => Errors.Count > 0 ? ErrorsLabel : WarningsLabel;
 }
 
 public sealed record ImportCommitResult(int Total, int Created, int Updated, int InvalidPhones, int PendingWhatsAppChecks, int Failed);

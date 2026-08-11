@@ -1,0 +1,78 @@
+<Window x:Class="WAFlow.Desktop.Windows.CustomerReportComparisonWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI Sales OS · 客户情报版本对比" Width="1040" Height="760" MinWidth="820" MinHeight="600"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize" ShowInTaskbar="False"
+        Icon="/AISalesOS;component/Assets/AI-Sales-OS.ico">
+    <Window.Resources>
+        <Style x:Key="SelectableReportText" TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="IsTabStop" Value="True"/>
+        </Style>
+    </Window.Resources>
+    <Grid Background="{DynamicResource Canvas}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="28,21">
+            <StackPanel>
+                <TextBlock Text="CUSTOMER INTELLIGENCE DIFF" Style="{StaticResource PageEyebrow}"/>
+                <TextBlock Text="客户情报版本对比" FontSize="24" FontWeight="Bold" Margin="0,5,0,0"/>
+                <TextBlock Text="并排检查结论变化；正文可选择复制，滚动位置相互独立。" Foreground="{DynamicResource Muted}" Margin="0,5,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="28,18,28,0">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Border Style="{StaticResource MetricCard}" Margin="0,0,8,0"><StackPanel><TextBlock Text="等级变化" Style="{StaticResource LabelText}"/><TextBlock Text="{Binding GradeDelta}" FontSize="18" FontWeight="Bold" Margin="0,5,0,0"/></StackPanel></Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCard}" Margin="4,0"><StackPanel><TextBlock Text="AI 评分变化" Style="{StaticResource LabelText}"/><TextBlock Text="{Binding ScoreDelta}" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Primary}" Margin="0,5,0,0"/></StackPanel></Border>
+            <Border Grid.Column="2" Style="{StaticResource MetricCard}" Margin="8,0,0,0"><StackPanel><TextBlock Text="成交概率变化" Style="{StaticResource LabelText}"/><TextBlock Text="{Binding ProbabilityDelta}" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Info}" Margin="0,5,0,0"/></StackPanel></Border>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="28,16,28,18">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Border Style="{StaticResource Card}" Padding="0">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Border Padding="18,15" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+                        <StackPanel><TextBlock Text="上一成功版本" Foreground="{DynamicResource Muted}" FontSize="10.5"/><TextBlock Text="{Binding Previous.VersionLabel}" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel>
+                    </Border>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="18,15">
+                        <StackPanel>
+                            <TextBlock Text="客户定位" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.Positioning}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="上一版本客户定位"/>
+                            <TextBlock Text="客户类型 / 阶段" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.TypeAndStage}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="上一版本客户类型和阶段"/>
+                            <TextBlock Text="总体价值判断" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.ValueJudgment}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="上一版本总体价值判断"/>
+                            <TextBlock Text="当前销售建议" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.SalesRecommendation}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="上一版本销售建议"/>
+                            <TextBlock Text="正向因素" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.PositiveFactors}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="上一版本正向因素"/>
+                            <TextBlock Text="负向因素" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Previous.NegativeFactors}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,0" AutomationProperties.Name="上一版本负向因素"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="0" BorderBrush="{DynamicResource Primary}">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Border Padding="18,15" Background="{DynamicResource PrimarySoft}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+                        <StackPanel><TextBlock Text="当前版本" Foreground="{DynamicResource PrimaryDark}" FontSize="10.5"/><TextBlock Text="{Binding Current.VersionLabel}" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,0"/></StackPanel>
+                    </Border>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="18,15">
+                        <StackPanel>
+                            <TextBlock Text="客户定位" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.Positioning}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="当前版本客户定位"/>
+                            <TextBlock Text="客户类型 / 阶段" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.TypeAndStage}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="当前版本客户类型和阶段"/>
+                            <TextBlock Text="总体价值判断" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.ValueJudgment}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="当前版本总体价值判断"/>
+                            <TextBlock Text="当前销售建议" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.SalesRecommendation}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="当前版本销售建议"/>
+                            <TextBlock Text="正向因素" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.PositiveFactors}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,13" AutomationProperties.Name="当前版本正向因素"/>
+                            <TextBlock Text="负向因素" Style="{StaticResource LabelText}"/><TextBox Text="{Binding Current.NegativeFactors}" Style="{StaticResource SelectableReportText}" Margin="0,5,0,0" AutomationProperties.Name="当前版本负向因素"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="28,14">
+            <Button Content="关闭" IsCancel="True" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right" Click="Close_Click"/>
+        </Border>
+    </Grid>
+</Window>

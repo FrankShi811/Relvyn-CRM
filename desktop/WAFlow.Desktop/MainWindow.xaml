@@ -238,7 +238,7 @@
 
         <!-- Product canvas -->
         <Grid Grid.Column="1">
-            <Grid.RowDefinitions><RowDefinition Height="72"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="72"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
                 <Grid Margin="28,0,26,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -263,7 +263,22 @@
                     </StackPanel>
                 </Grid>
             </Border>
-            <ContentControl x:Name="ContentHost" Grid.Row="1" RenderTransformOrigin="0.5,0.5">
+            <Border x:Name="DemoDataBanner" Grid.Row="1" Visibility="Collapsed"
+                    Background="{DynamicResource InfoSoft}" BorderBrush="{DynamicResource Info}" BorderThickness="0,0,0,1"
+                    Padding="28,9" AutomationProperties.LiveSetting="Polite">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="演示数据" Foreground="{DynamicResource Info}" FontWeight="SemiBold" Margin="0,0,10,0"/>
+                        <TextBlock x:Name="DemoDataText" Text="当前工作区包含演示客户；它们只用于熟悉界面，不是真实客户数据。"
+                                   Foreground="{DynamicResource Ink}" FontSize="10.5" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="清空演示数据" Style="{StaticResource SecondaryButton}" Padding="12,6"
+                            ToolTip="只删除内置演示客户，保留真实客户及邮件、WhatsApp 历史"
+                            AutomationProperties.Name="清空内置演示客户" Click="RemoveDemoData_Click"/>
+                </Grid>
+            </Border>
+            <ContentControl x:Name="ContentHost" Grid.Row="2" RenderTransformOrigin="0.5,0.5">
                 <ContentControl.RenderTransform><TranslateTransform x:Name="ContentHostTranslate"/></ContentControl.RenderTransform>
             </ContentControl>
         </Grid>

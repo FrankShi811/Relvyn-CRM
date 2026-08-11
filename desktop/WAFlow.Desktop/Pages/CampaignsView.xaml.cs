@@ -142,7 +142,7 @@ public partial class CampaignsView : UserControl, IRefreshableView
             SavedTemplateBox.SelectedItem = _currentTemplate;
             TemplateNameBox.Text = _currentTemplate?.Name ?? "";
             ScheduleModeBox.SelectedItem = ScheduleModeBox.Items.Cast<Choice<CampaignScheduleMode>>().First(item => item.Value == campaign.ScheduleMode);
-            StartAtBox.Text = FormatBeijing(campaign.StartsAt);
+            SetBeijingStart(campaign.StartsAt);
             IntervalBox.Text = campaign.EffectiveIntervalValue.ToString(CultureInfo.InvariantCulture);
             IntervalUnitBox.SelectedItem = IntervalUnitBox.Items.Cast<Choice<CampaignIntervalUnit>>().First(item => item.Value == campaign.IntervalUnit);
             DailyLimitBox.Text = campaign.DailyLimit.ToString(CultureInfo.InvariantCulture);
@@ -344,7 +344,9 @@ public partial class CampaignsView : UserControl, IRefreshableView
         campaign.EmailSubjectTemplate = EmailSubjectBox.Text.Trim();
         campaign.SelectedLeadIds = _rows.Where(row => row.IsSelected).Select(row => row.Lead.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         campaign.ScheduleMode = (ScheduleModeBox.SelectedItem as Choice<CampaignScheduleMode>)?.Value ?? CampaignScheduleMode.Scheduled;
-        campaign.StartsAt = campaign.ScheduleMode == CampaignScheduleMode.Scheduled ? ParseBeijing(StartAtBox.Text) : DateTimeOffset.Now;
+        campaign.StartsAt = campaign.ScheduleMode == CampaignScheduleMode.Scheduled
+            ? ParseBeijing(StartDatePicker.SelectedDate, StartTimeBox.Text)
+            : DateTimeOffset.Now;
         if (!int.TryParse(IntervalBox.Text, out var interval)) throw new InvalidOperationException("发送间隔必须是整数。");
         campaign.IntervalValue = interval;
         campaign.IntervalUnit = (IntervalUnitBox.SelectedItem as Choice<CampaignIntervalUnit>)?.Value ?? CampaignIntervalUnit.Minutes;
@@ -368,7 +370,7 @@ public partial class CampaignsView : UserControl, IRefreshableView
         ApplyChannelSelection(CampaignChannel.WhatsApp, _services.WhatsApp.ActiveAccountId);
         NameBox.Text = _current.Name;
         ScheduleModeBox.SelectedItem = ScheduleModeBox.Items.Cast<Choice<CampaignScheduleMode>>().First(item => item.Value == CampaignScheduleMode.Scheduled);
-        StartAtBox.Text = FormatBeijing(_current.StartsAt);
+        SetBeijingStart(_current.StartsAt);
         IntervalBox.Text = "5";
         IntervalUnitBox.SelectedItem = IntervalUnitBox.Items.Cast<Choice<CampaignIntervalUnit>>().First(item => item.Value == CampaignIntervalUnit.Minutes);
         DailyLimitBox.Text = "50";
@@ -391,7 +393,7 @@ public partial class CampaignsView : UserControl, IRefreshableView
     private void ApplyState(WhatsAppCampaign campaign)
     {
         var editable = campaign.Status == CampaignStatus.Draft;
-        foreach (var control in new Control[] { ChannelBox, AccountBox, NameBox, SavedTemplateBox, TemplateNameBox, TemplateBox, EmailSubjectBox, FieldBox, SaveTemplateButton, DeleteTemplateButton, ScheduleModeBox, StartAtBox, IntervalBox, IntervalUnitBox, DailyLimitBox }) control.IsEnabled = editable;
+        foreach (var control in new Control[] { ChannelBox, AccountBox, NameBox, SavedTemplateBox, TemplateNameBox, TemplateBox, EmailSubjectBox, FieldBox, SaveTemplateButton, DeleteTemplateButton, ScheduleModeBox, StartDatePicker, StartTimeBox, IntervalBox, IntervalUnitBox, DailyLimitBox }) control.IsEnabled = editable;
         AudienceGrid.IsEnabled = editable;
         PreviewButton.IsEnabled = editable;
         SaveButton.IsEnabled = editable;
@@ -406,6 +408,10 @@ public partial class CampaignsView : UserControl, IRefreshableView
     }
 
     private void ScheduleModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateScheduleMode();
+
+    private void ScheduleDateTime_Changed(object sender, SelectionChangedEventArgs e) => UpdateScheduleValidation();
+
+    private void ScheduleTime_TextChanged(object sender, TextChangedEventArgs e) => UpdateScheduleValidation();
 
     private async void ChannelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -445,7 +451,36 @@ public partial class CampaignsView : UserControl, IRefreshableView
         if (StartAtPanel is null) return;
         var scheduled = (ScheduleModeBox.SelectedItem as Choice<CampaignScheduleMode>)?.Value != CampaignScheduleMode.Immediate;
         StartAtPanel.Opacity = scheduled ? 1 : .45;
-        StartAtBox.IsEnabled = scheduled && (_current?.Status ?? CampaignStatus.Draft) == CampaignStatus.Draft;
+        var editable = (_current?.Status ?? CampaignStatus.Draft) == CampaignStatus.Draft;
+        StartDatePicker.IsEnabled = scheduled && editable;
+        StartTimeBox.IsEnabled = scheduled && editable;
+        UpdateScheduleValidation();
+    }
+
+    private void UpdateScheduleValidation()
+    {
+        if (StartAtValidationText is null || SaveButton is null || ApproveButton is null) return;
+        var scheduled = (ScheduleModeBox.SelectedItem as Choice<CampaignScheduleMode>)?.Value != CampaignScheduleMode.Immediate;
+        var editable = (_current?.Status ?? CampaignStatus.Draft) == CampaignStatus.Draft;
+        if (!scheduled)
+        {
+            StartAtValidationText.Visibility = Visibility.Collapsed;
+            SaveButton.IsEnabled = editable;
+            ApproveButton.IsEnabled = editable;
+            return;
+        }
+
+        StartAtValidationText.Visibility = Visibility.Visible;
+        var valid = TryParseBeijing(StartDatePicker.SelectedDate, StartTimeBox.Text, out var value, out var error);
+        if (valid && value <= DateTimeOffset.Now)
+        {
+            valid = false;
+            error = "开始时间必须晚于当前时间。";
+        }
+        StartAtValidationText.Text = valid ? $"将于 {FormatBeijing(value)} 开始" : error;
+        StartAtValidationText.Foreground = (System.Windows.Media.Brush)FindResource(valid ? "Success" : "Warning");
+        SaveButton.IsEnabled = editable && valid;
+        ApproveButton.IsEnabled = editable && valid;
     }
 
     private void AudienceFilter_Changed(object sender, RoutedEventArgs e)
@@ -531,13 +566,40 @@ public partial class CampaignsView : UserControl, IRefreshableView
         ConnectionText.Foreground = (System.Windows.Media.Brush)FindResource(connected ? "Success" : "Warning");
     }
 
-    private static DateTimeOffset ParseBeijing(string value)
+    private void SetBeijingStart(DateTimeOffset value)
     {
-        if (!DateTime.TryParse(value.Trim(), CultureInfo.CurrentCulture, DateTimeStyles.AllowWhiteSpaces, out var local) && !DateTime.TryParse(value.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out local))
-            throw new InvalidOperationException("开始时间格式无效，请填写例如 2026-07-20 18:30。");
-        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        var local = TimeZoneInfo.ConvertTime(value, BeijingZone());
+        StartDatePicker.SelectedDate = local.Date;
+        StartTimeBox.Text = local.ToString("HH:mm", CultureInfo.InvariantCulture);
+    }
+
+    private static DateTimeOffset ParseBeijing(DateTime? date, string time)
+    {
+        if (!TryParseBeijing(date, time, out var value, out var error))
+            throw new InvalidOperationException(error);
+        if (value <= DateTimeOffset.Now)
+            throw new InvalidOperationException("开始时间必须晚于当前时间。");
+        return value;
+    }
+
+    private static bool TryParseBeijing(DateTime? date, string time, out DateTimeOffset value, out string error)
+    {
+        value = default;
+        if (date is null)
+        {
+            error = "请选择开始日期。";
+            return false;
+        }
+        if (!DateTime.TryParseExact(time.Trim(), ["H:mm", "HH:mm"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
+        {
+            error = "时间请使用 24 小时制，例如 18:30。";
+            return false;
+        }
+        var local = DateTime.SpecifyKind(date.Value.Date.Add(parsedTime.TimeOfDay), DateTimeKind.Unspecified);
         var zone = BeijingZone();
-        return new DateTimeOffset(local, zone.GetUtcOffset(local));
+        value = new DateTimeOffset(local, zone.GetUtcOffset(local));
+        error = "";
+        return true;
     }
 
     private static string FormatBeijing(DateTimeOffset value) => TimeZoneInfo.ConvertTime(value, BeijingZone()).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);

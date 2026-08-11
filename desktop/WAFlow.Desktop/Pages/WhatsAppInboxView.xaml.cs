@@ -370,6 +370,13 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         }
     }
 
+    private void AccountActions_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { ContextMenu: { } menu } button) return;
+        menu.PlacementTarget = button;
+        menu.IsOpen = true;
+    }
+
     private async void Disconnect_Click(object sender, RoutedEventArgs e)
     {
         if (_connectionActionInProgress) return;
@@ -620,8 +627,10 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             var requiresHistoryRepair = Bool(e.Data, "requiresHistoryRepair");
             SetConnectionText(connection switch { "connected" => "已连接", "connecting" => "连接中", "retrying" => "自动重试中", "logged_out" => "登录已失效", _ => "已断开" }, _connected);
             var canStop = _connected || connection is "connecting" or "retrying";
-            DisconnectButton.IsEnabled = !_connectionActionInProgress && canStop;
-            LogoutButton.IsEnabled = !_connectionActionInProgress && (canStop || _services.WhatsApp.HasStoredSession(CurrentAccountId));
+            var canLogout = canStop || _services.WhatsApp.HasStoredSession(CurrentAccountId);
+            AccountActionsButton.IsEnabled = !_connectionActionInProgress && (canStop || canLogout);
+            DisconnectMenuItem.IsEnabled = !_connectionActionInProgress && canStop;
+            LogoutMenuItem.IsEnabled = !_connectionActionInProgress && canLogout;
             ConnectButton.IsEnabled = !_connectionActionInProgress && !canStop;
             UpdateComposerState();
             SyncButton.IsEnabled = _connected;
@@ -2388,18 +2397,13 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                               ConversationAgentRunState.PausedRisk or
                               ConversationAgentRunState.PausedError);
         StopAgentButton.Visibility = canStopRuntime ? Visibility.Visible : Visibility.Collapsed;
-        RuntimeStopAgentButton.Visibility = canStopRuntime ? Visibility.Visible : Visibility.Collapsed;
         StopAgentButton.Content = state?.Mode == ConversationAgentMode.CopilotActive ? "停止协作" : "停止托管";
-        RuntimeStopAgentButton.Content = StopAgentButton.Content;
         var stopAutomationName = state?.Mode == ConversationAgentMode.CopilotActive
             ? "停止当前会话协作"
             : "停止当前会话托管";
         System.Windows.Automation.AutomationProperties.SetName(StopAgentButton, stopAutomationName);
-        System.Windows.Automation.AutomationProperties.SetName(RuntimeStopAgentButton, stopAutomationName);
         HeaderHumanTakeoverButton.Visibility = canTakeOver ? Visibility.Visible : Visibility.Collapsed;
-        RuntimeHumanTakeoverButton.Visibility = canTakeOver ? Visibility.Visible : Visibility.Collapsed;
         ViewAgentLogButton.IsEnabled = state is not null;
-        RuntimeViewAgentLogButton.IsEnabled = state is not null;
         ApplyAgentRunStateVisual(state?.RunState ?? ConversationAgentRunState.SuggestReady);
         RefreshAgentPrimaryButton();
 
@@ -3004,9 +3008,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         var state = _services.WhatsApp.ConnectionStateFor(CurrentAccountId);
         SetConnectionText(state switch { "connected" => "已连接", "connecting" => "连接中", "retrying" => "自动重试中", "logged_out" => "登录已失效", _ => "未连接" }, state == "connected");
         var canStop = state is "connected" or "connecting" or "retrying";
+        var canLogout = canStop || _services.WhatsApp.HasStoredSession(CurrentAccountId);
         ConnectButton.IsEnabled = !_connectionActionInProgress && !canStop;
-        DisconnectButton.IsEnabled = !_connectionActionInProgress && canStop;
-        LogoutButton.IsEnabled = !_connectionActionInProgress && (canStop || _services.WhatsApp.HasStoredSession(CurrentAccountId));
+        AccountActionsButton.IsEnabled = !_connectionActionInProgress && (canStop || canLogout);
+        DisconnectMenuItem.IsEnabled = !_connectionActionInProgress && canStop;
+        LogoutMenuItem.IsEnabled = !_connectionActionInProgress && canLogout;
         SyncButton.IsEnabled = !_connectionActionInProgress && state == "connected";
         CreateGroupButton.IsEnabled = !_connectionActionInProgress && state == "connected";
         UpdateComposerState();
