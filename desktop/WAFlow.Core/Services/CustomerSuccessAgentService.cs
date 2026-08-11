@@ -167,12 +167,16 @@ public sealed partial class CustomerSuccessAgentService
         var brainCandidate = _customerBrain is null
             ? await _repository.GetCustomerIntelligenceProfileAsync(customerId, cancellationToken)
             : await _customerBrain.GetAsync(customerId, cancellationToken);
+        var workspaceProfile = BusinessRoleProfile.Normalize(
+            (await _repository.GetAppSettingsAsync(cancellationToken)).BusinessRoleProfile);
         var persona = await _repository.GetAccountPersonaAsync(accountId, cancellationToken) ??
                       new AccountPersona { AccountId = accountId };
         NormalizeLegacyBuiltInPersona(persona);
+        BusinessRoleContextPolicy.ApplyWorkspaceProfile(persona, workspaceProfile);
         var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken);
         if (state is not null)
         {
+            BusinessRoleContextPolicy.SynchronizeAssistantIdentity(state, workspaceProfile);
             state.OpportunityId = opportunity?.LeadId ?? "";
             state.ContextNamespace = ConversationAgentStateMachine.BuildContextNamespace(
                 state.TenantId,
@@ -187,6 +191,7 @@ public sealed partial class CustomerSuccessAgentService
             Customer = await _repository.GetLeadAsync(customerId, cancellationToken),
             Identity = await _repository.GetGlobalCustomerIdentityAsync(customerId, cancellationToken),
             Persona = persona,
+            WorkspaceProfile = workspaceProfile,
             AccountRelationship = await _repository.GetAccountRelationshipMemoryAsync(customerId, accountId, cancellationToken),
             GlobalRelationship = await _repository.GetRelationshipMemoryAsync(customerId, cancellationToken),
             Brain = brainCandidate?.HasCurrentDecision == true ? brainCandidate : null,
@@ -254,6 +259,7 @@ public sealed partial class CustomerSuccessAgentService
             Mode = ConversationAgentMode.SuggestOnly
         };
         state = ConversationAgentStateMachine.NormalizeLegacyState(state);
+        BusinessRoleContextPolicy.SynchronizeAssistantIdentity(state, context.WorkspaceProfile);
         state.CustomerId = context.CustomerId;
         state.AccountId = accountId;
         state.ConversationId = conversationId;
@@ -1351,7 +1357,7 @@ public sealed partial class CustomerSuccessAgentService
         CancellationToken cancellationToken)
     {
         var state = await _repository.GetConversationAgentStateAsync(accountId, conversationId, cancellationToken)
-                    ?? throw new InvalidOperationException("请先配置当前会话的 Customer Success Agent 模式。" );
+                    ?? throw new InvalidOperationException("请先配置当前会话的 AI 协作助手模式。" );
         state = ConversationAgentStateMachine.NormalizeLegacyState(state);
         if (!state.CustomerId.Equals(customerId, StringComparison.OrdinalIgnoreCase) ||
             !state.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase) ||
@@ -1424,8 +1430,8 @@ public sealed partial class CustomerSuccessAgentService
             "model_configured",
             "AI 模型",
             _provider.HasApiKey(AiModuleKeys.WhatsAppInbox),
-            "Customer Success Agent 模型已配置。",
-            "Customer Success Agent 模型或 API Key 尚未配置。" );
+            "AI 协作助手模型已配置。",
+            "AI 协作助手模型或 API Key 尚未配置。" );
 
         var conversation = (await _repository.GetWhatsAppConversationsAsync(state.AccountId, cancellationToken))
             .FirstOrDefault(item => item.Id.Equals(state.ConversationId, StringComparison.OrdinalIgnoreCase));

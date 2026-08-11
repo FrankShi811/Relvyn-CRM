@@ -16,6 +16,9 @@ namespace WAFlow.Desktop;
 internal static class DesktopShortcutService
 {
     private const string ShortcutFileName = "AI Sales OS.lnk";
+    private const uint ShellChangeUpdateItem = 0x00002000;
+    private const uint ShellChangeNotifyPathUnicode = 0x0005;
+    private const uint ShellChangeNotifyFlushNoWait = 0x2000;
 
     internal static void EnsureForInstalledApp()
     {
@@ -77,6 +80,7 @@ internal static class DesktopShortcutService
                 CreateWindowsShortcut(shortcutPath, targetPath, iconPath);
                 if (!File.Exists(shortcutPath))
                     throw new IOException($"Windows did not create the shortcut: {shortcutPath}");
+                NotifyShellShortcutChanged(shortcutPath, iconPath);
             }
             catch (Exception error)
             {
@@ -90,6 +94,9 @@ internal static class DesktopShortcutService
     private static void CreateWindowsShortcut(string shortcutPath, string targetPath, string iconPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(shortcutPath)!);
+        var temporaryShortcutPath = Path.Combine(
+            Path.GetDirectoryName(shortcutPath)!,
+            $"{Path.GetFileNameWithoutExtension(shortcutPath)}.{Guid.NewGuid():N}.lnk");
         var shellType = Type.GetTypeFromProgID("WScript.Shell")
             ?? throw new PlatformNotSupportedException("Windows Script Host is unavailable.");
         object? shell = null;
@@ -103,7 +110,7 @@ internal static class DesktopShortcutService
                 BindingFlags.InvokeMethod,
                 binder: null,
                 target: shell,
-                args: [shortcutPath]);
+                args: [temporaryShortcutPath]);
             if (shortcut is null)
                 throw new InvalidOperationException("Windows returned an empty shortcut object.");
 
@@ -118,6 +125,7 @@ internal static class DesktopShortcutService
                 binder: null,
                 target: shortcut,
                 args: null);
+            File.Move(temporaryShortcutPath, shortcutPath, overwrite: true);
         }
         finally
         {
@@ -125,7 +133,16 @@ internal static class DesktopShortcutService
                 Marshal.FinalReleaseComObject(shortcut);
             if (shell is not null && Marshal.IsComObject(shell))
                 Marshal.FinalReleaseComObject(shell);
+            try { if (File.Exists(temporaryShortcutPath)) File.Delete(temporaryShortcutPath); }
+            catch { }
         }
+    }
+
+    private static void NotifyShellShortcutChanged(string shortcutPath, string iconPath)
+    {
+        const uint flags = ShellChangeNotifyPathUnicode | ShellChangeNotifyFlushNoWait;
+        SHChangeNotify(ShellChangeUpdateItem, flags, shortcutPath, null);
+        SHChangeNotify(ShellChangeUpdateItem, flags, iconPath, null);
     }
 
     private static void SetShortcutProperty(Type shortcutType, object shortcut, string name, string value) =>
@@ -135,4 +152,11 @@ internal static class DesktopShortcutService
             binder: null,
             target: shortcut,
             args: [value]);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern void SHChangeNotify(
+        uint eventId,
+        uint flags,
+        string? item1,
+        string? item2);
 }

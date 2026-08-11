@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using WAFlow.Core.Services;
 
 namespace WAFlow.Core.Domain;
 
@@ -287,7 +288,7 @@ public sealed class ConversationAgentState
     public string ConversationId { get; set; } = "";
     public string OpportunityId { get; set; } = "";
     public string ContextNamespace { get; set; } = "";
-    public string AssistantIdentity { get; set; } = "Customer Success Agent";
+    public string AssistantIdentity { get; set; } = BusinessRoleContextPolicy.DefaultAssistantIdentity;
     public ConversationAgentMode Mode { get; set; } = ConversationAgentMode.SuggestOnly;
     public ConversationAgentRunState RunState { get; set; } = ConversationAgentRunState.SuggestReady;
     public ConversationTopicState TopicState { get; set; } = ConversationTopicState.Unknown;
@@ -551,6 +552,7 @@ public sealed class CustomerSuccessContext
     public Lead? Customer { get; set; }
     public GlobalCustomerIdentity? Identity { get; set; }
     public AccountPersona? Persona { get; set; }
+    public BusinessRoleProfile WorkspaceProfile { get; set; } = new();
     public AccountRelationshipMemory? AccountRelationship { get; set; }
     public RelationshipMemory? GlobalRelationship { get; set; }
     public CustomerIntelligenceProfile? Brain { get; set; }

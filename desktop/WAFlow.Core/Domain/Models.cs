@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using WAFlow.Core.Services;
 
 namespace WAFlow.Core.Domain;
 
@@ -436,6 +437,9 @@ public sealed record EmailLink(string Text, string Url);
 
 public sealed class EmailMessage
 {
+    private string? _displayBody;
+    private List<EmailAttachment>? _visibleAttachments;
+    private List<EmailAttachment>? _visibleInlineImages;
     public string Id { get; set; } = "";
     public string ProviderMessageId { get; set; } = "";
     public string AccountId { get; set; } = "";
@@ -451,10 +455,17 @@ public sealed class EmailMessage
     public string TextBody { get; set; } = "";
     public string HtmlBody { get; set; } = "";
     public List<EmailAttachment>? Attachments { get; set; }
-    [JsonIgnore] public List<EmailAttachment> VisibleAttachments => Attachments?.Where(attachment => !attachment.IsInline).ToList() ?? [];
+    [JsonIgnore] public List<EmailAttachment> VisibleAttachments => _visibleAttachments ??= Attachments?.Where(attachment => !attachment.IsInline).ToList() ?? [];
     [JsonIgnore] public string HasVisibleAttachments => VisibleAttachments.Count > 0 ? "Visible" : "Collapsed";
-    [JsonIgnore] public List<EmailAttachment> VisibleInlineImages => Attachments?.Where(attachment => attachment.IsInline && !string.IsNullOrWhiteSpace(attachment.LocalPath) && File.Exists(attachment.LocalPath)).ToList() ?? [];
+    [JsonIgnore] public List<EmailAttachment> VisibleInlineImages => _visibleInlineImages ??= Attachments?
+        .Where(attachment => attachment.IsInline && !string.IsNullOrWhiteSpace(attachment.LocalPath) && File.Exists(attachment.LocalPath))
+        .Take(4)
+        .ToList() ?? [];
     [JsonIgnore] public string HasInlineImages => VisibleInlineImages.Count > 0 ? "Visible" : "Collapsed";
+    [JsonIgnore] public int HiddenInlineImageCount => Math.Max(0, (Attachments?.Count(attachment => attachment.IsInline) ?? 0) - VisibleInlineImages.Count);
+    [JsonIgnore] public string InlineImageOverflowLabel => $"另有 {HiddenInlineImageCount} 张图片，请在原邮件中查看。";
+    [JsonIgnore] public string HasHiddenInlineImages => HiddenInlineImageCount > 0 ? "Visible" : "Collapsed";
+    [JsonIgnore] public string DisplayBody => _displayBody ??= EmailMessagePresentationPolicy.FormatConversationBody(TextBody, HtmlBody);
 
     [JsonIgnore]
     public List<EmailLink> HtmlLinks
@@ -490,6 +501,14 @@ public sealed class EmailMessage
     }
     [JsonIgnore] public string HasHtmlLinks => HtmlLinks.Count > 0 ? "Visible" : "Collapsed";
     [JsonIgnore] public string HasHtmlBody => string.IsNullOrWhiteSpace(HtmlBody) ? "Collapsed" : "Visible";
+
+    public void PrepareForDisplay()
+    {
+        _ = DisplayBody;
+        _ = VisibleAttachments;
+        _ = VisibleInlineImages;
+        _ = HiddenInlineImageCount;
+    }
 
     public string InReplyTo { get; set; } = "";
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.Now;

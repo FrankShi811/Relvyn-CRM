@@ -18,7 +18,7 @@ public static class ConversationAgentStateMachine
             ? BuildContextNamespace(state.TenantId, state.UserId, state.CustomerId, state.AccountId, state.ConversationId)
             : state.ContextNamespace;
         state.AssistantIdentity = string.IsNullOrWhiteSpace(state.AssistantIdentity)
-            ? "Customer Success Agent"
+            ? BusinessRoleContextPolicy.DefaultAssistantIdentity
             : state.AssistantIdentity;
         state.MaxAutomaticTurns = Math.Clamp(state.MaxAutomaticTurns <= 0 ? 8 : state.MaxAutomaticTurns, 1, 32);
         state.LastSourceMessageIds ??= [];

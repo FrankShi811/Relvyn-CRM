@@ -500,7 +500,7 @@ public partial class SettingsWindow : Window
         {
             new ModuleDefinition(AiModuleKeys.LeadIntelligence, "Command Center · 商机智能", "客户价值、成交可能性、证据、风险与下一步的结构化分析；查看列表和筛选不耗 Token。"),
             new ModuleDefinition(AiModuleKeys.Customers, "Command Center · 客户列表", "Customer Brain 人工分析；查看、编辑和同步客户资料不耗 Token。"),
-            new ModuleDefinition(AiModuleKeys.WhatsAppInbox, "Customer Operations · WhatsApp", "AI 会话助理与 Customer Success Agent；普通消息同步不耗 Token。"),
+            new ModuleDefinition(AiModuleKeys.WhatsAppInbox, "Customer Operations · WhatsApp", "AI 会话助理与按主要角色联动的协作助手；普通消息同步不耗 Token。"),
             new ModuleDefinition(AiModuleKeys.EmailInbox, "Customer Operations · 邮件箱", "Email Sales Copilot 根据 CRM、Customer Brain、邮件上下文和你的写信意图生成新邮件或回复草稿；同步和手写收发不耗 Token。"),
             new ModuleDefinition(AiModuleKeys.Campaigns, "Customer Operations · 自动化群发", "AI 触达话术生成；普通群发、排期和投递本身不耗 Token。"),
             new ModuleDefinition(AiModuleKeys.CustomerEnrichment, "Customer Operations · 客户外部调查", "公开来源的主体匹配与证据事实提取；查看缓存、来源和人工审核不耗 Token。"),

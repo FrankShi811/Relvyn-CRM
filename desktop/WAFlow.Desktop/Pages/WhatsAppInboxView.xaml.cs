@@ -28,6 +28,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     private Lead? _currentLead;
     private CustomerIdentityResolution? _currentIdentityResolution;
     private CustomerSuccessContext? _currentCustomerSuccessContext;
+    private BusinessRoleProfile _workspaceProfile = new();
     private CustomerSuccessAgentDecision? _pendingKnowledgeDecision;
     private bool _connected;
     private bool _switchingAccount;
@@ -138,6 +139,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         var runLeadLink = !_initialLeadLinkCompleted;
         var snapshot = await Task.Run(async () =>
         {
+            var workspaceProfile = BusinessRoleProfile.Normalize(
+                (await _services.Repository.GetAppSettingsAsync()).BusinessRoleProfile);
             var accounts = await _services.Repository.GetWhatsAppAccountsAsync();
             var selectedAccount = accounts.FirstOrDefault(item =>
                 item.Id.Equals(selectedAccountId, StringComparison.OrdinalIgnoreCase))
@@ -221,6 +224,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             }
 
             return new WhatsAppInboxSnapshot(
+                workspaceProfile,
                 accounts,
                 leads,
                 accountId,
@@ -230,6 +234,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 runLeadLink);
         });
 
+        _workspaceProfile = snapshot.WorkspaceProfile;
         _switchingAccount = true;
         _accounts.ReplaceAll(snapshot.Accounts);
         AccountCombo.SelectedItem = _accounts.FirstOrDefault(item =>
@@ -249,6 +254,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         ConversationList.SelectedItem = _conversations.FirstOrDefault(item => item.Id == selectedConversationId);
         UpdateConnectionControls();
         RestoreLatestQr();
+        if (_currentCustomerSuccessContext is null)
+            UpdateCustomerSuccessPanel(_currentIdentityResolution, null);
     }
 
     private async void AccountCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1073,7 +1080,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 if (!IsCurrentTarget()) return;
                 MessageBox.Show(
                     string.IsNullOrWhiteSpace(result.BlockReason) ? "当前会话暂不允许 AI 自动处理。" : result.BlockReason,
-                    "Customer Success Agent", MessageBoxButton.OK, MessageBoxImage.Information);
+                    "AI 协作助手", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -2084,7 +2091,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         }
         catch (Exception error)
         {
-            MessageBox.Show(error.Message, "Customer Success Agent", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(error.Message, "AI 协作助手", MessageBoxButton.OK, MessageBoxImage.Warning);
             await LoadLeadAsync(conversation);
         }
     }
@@ -2098,7 +2105,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 state.Mode == ConversationAgentMode.CopilotActive
                     ? "停止当前会话协作？已生成但未发送的草稿会失效。"
                     : "停止当前会话托管？已生成但未发送的草稿会失效，之后不会自动恢复。",
-                "确认停止 Customer Success Agent",
+                "确认停止 AI 协作助手",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
@@ -2164,7 +2171,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             };
             System.Windows.Automation.AutomationProperties.SetName(
                 table,
-                "Customer Success Agent 会话审计事件列表");
+                "AI 协作助手会话审计事件列表");
             table.Columns.Add(new DataGridTextColumn { Header = "时间", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.CreatedAt)) { StringFormat = "MM-dd HH:mm:ss" }, Width = 125 });
             table.Columns.Add(new DataGridTextColumn { Header = "动作", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.Action)), Width = 150 });
             table.Columns.Add(new DataGridTextColumn { Header = "运行状态", Binding = new System.Windows.Data.Binding(nameof(ConversationAgentAuditEvent.StateAfter)), Width = 120 });
@@ -2181,7 +2188,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             };
             System.Windows.Automation.AutomationProperties.SetName(
                 detail,
-                "所选 Customer Success Agent 审计事件详情");
+                "所选 AI 协作助手审计事件详情");
             System.Windows.Automation.AutomationProperties.SetLiveSetting(
                 detail,
                 System.Windows.Automation.AutomationLiveSetting.Polite);
@@ -2196,7 +2203,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             grid.Children.Add(detail);
             new Window
             {
-                Title = $"Customer Success Agent 审计日志 · {conversation.DisplayName}",
+                Title = $"AI 协作助手审计日志 · {conversation.DisplayName}",
                 Owner = Window.GetWindow(this),
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Width = 960,
@@ -2219,7 +2226,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             .Distinct(StringComparer.CurrentCultureIgnoreCase);
         MessageBox.Show(
             $"模式：{CustomerSuccessAgentLabels.Mode(state.Mode)}\n运行：{CustomerSuccessAgentLabels.RunState(state.RunState)}\n话题：{AgentTopicStateLabel(state.TopicState)}\n风险：{AgentRiskStateLabel(state.RiskState)}\n\n{string.Join("\n", detail)}",
-            "Customer Success Agent 当前状态",
+            "AI 协作助手当前状态",
             MessageBoxButton.OK,
             state.RunState is ConversationAgentRunState.PausedError or ConversationAgentRunState.PausedRisk
                 ? MessageBoxImage.Warning
@@ -2306,9 +2313,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         CustomerIdentityText.Text = identity is null
             ? "等待会话身份"
             : $"{CustomerSuccessAgentLabels.Match(identity.Result)} · 置信度 {identity.Confidence:P0} · {identity.Reason}";
+        var assistantIdentity = context?.AgentState?.AssistantIdentity
+            ?? BusinessRoleContextPolicy.BuildAssistantIdentity(context?.WorkspaceProfile ?? _workspaceProfile);
         var accountRoleName = context?.Persona?.RoleName;
         AgentRoleNameText.Text = string.IsNullOrWhiteSpace(accountRoleName)
-            ? "AI 协作助手"
+            ? assistantIdentity
             : accountRoleName;
         var state = context?.AgentState;
         AgentModeBadgeText.Text = CustomerSuccessAgentLabels.Mode(state?.Mode ?? ConversationAgentMode.SuggestOnly);
@@ -2327,13 +2336,13 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         ChatAgentModeText.Text = CustomerSuccessAgentLabels.Mode(selectableMode);
         ChatAgentRunStateText.Text = CustomerSuccessAgentLabels.RunState(
             state?.RunState ?? ConversationAgentRunState.SuggestReady);
-        ChatAgentIdentityText.Text = state?.AssistantIdentity ?? "Customer Success Agent";
+        ChatAgentIdentityText.Text = assistantIdentity;
         ChatAgentCustomerText.Text = context?.Customer is null
             ? "等待客户身份"
             : $"{context.Customer.Name} · {context.Customer.Id}";
         AgentRuntimeIdentityText.Text = context?.Customer is null
-            ? "Customer Success Agent · 等待客户身份"
-            : $"{state?.AssistantIdentity ?? "Customer Success Agent"} · {context.Customer.Name}";
+            ? $"{assistantIdentity} · 等待客户身份"
+            : $"{assistantIdentity} · {context.Customer.Name}";
         AgentRunStateBadgeText.Text = CustomerSuccessAgentLabels.RunState(
             state?.RunState ?? ConversationAgentRunState.SuggestReady);
         AgentRiskStateBadgeText.Text = AgentRiskStateLabel(
@@ -2461,7 +2470,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             : $"{CustomerSuccessAgentLabels.Mode(state.Mode)} · {CustomerSuccessAgentLabels.RunState(state.RunState)}");
         System.Windows.Automation.AutomationProperties.SetName(
             AiAssistantButton,
-            $"Customer Success Agent：{visibleLabel}");
+            $"AI 协作助手：{visibleLabel}");
     }
 
     private void ApplyAgentRunStateVisual(ConversationAgentRunState runState)
@@ -3139,6 +3148,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     private sealed record LabelFilterOption(string Id, string Name);
     private sealed record KnowledgeReferenceRow(string Citation, string Preview, KnowledgeRetrievalHit Hit);
     private sealed record WhatsAppInboxSnapshot(
+        BusinessRoleProfile WorkspaceProfile,
         IReadOnlyList<WhatsAppAccount> Accounts,
         IReadOnlyList<Lead> Leads,
         string SelectedAccountId,

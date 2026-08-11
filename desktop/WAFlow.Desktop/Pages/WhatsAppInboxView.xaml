@@ -108,7 +108,7 @@
                             <Border x:Name="ChatAgentTrack" Grid.Row="1" Visibility="Collapsed"
                                     Background="{DynamicResource SurfaceMuted}" BorderBrush="{DynamicResource Line}"
                                     BorderThickness="1" CornerRadius="9" Padding="10,8" Margin="0,10,0,0"
-                                    AutomationProperties.Name="Customer Success Agent 会话状态轨道">
+                                    AutomationProperties.Name="AI 协作助手会话状态轨道">
                                 <StackPanel>
                                     <WrapPanel>
                                         <Border Background="{DynamicResource PrimarySurface}" CornerRadius="7" Padding="7,3" Margin="0,0,6,4">
@@ -117,14 +117,14 @@
                                         <Border x:Name="ChatAgentRunStateBorder" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="7" Padding="7,3" Margin="0,0,8,4">
                                             <TextBlock x:Name="ChatAgentRunStateText" Text="可生成建议" Foreground="{DynamicResource InkSecondary}" FontSize="10.5" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite"/>
                                         </Border>
-                                        <TextBlock x:Name="ChatAgentIdentityText" Text="Customer Success Agent" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBlock x:Name="ChatAgentIdentityText" Text="AI 协作助手" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,4"/>
                                         <TextBlock x:Name="ChatAgentCustomerText" Text="等待客户身份" Foreground="{DynamicResource Muted}" FontSize="10.5" VerticalAlignment="Center" Margin="0,0,0,4" TextTrimming="CharacterEllipsis"/>
                                     </WrapPanel>
                                     <DockPanel LastChildFill="True" Margin="0,3,0,0">
                                         <WrapPanel DockPanel.Dock="Right" Margin="10,0,0,0">
                                             <Button x:Name="StopAgentButton" Content="停止托管" Style="{StaticResource SecondaryButton}" Click="StopAgent_Click" Padding="9,4" Margin="0,0,6,0" Visibility="Collapsed" AutomationProperties.Name="停止当前会话托管"/>
                                             <Button x:Name="HeaderHumanTakeoverButton" Content="人工接管" Style="{StaticResource SecondaryButton}" Click="HumanTakeover_Click" Padding="9,4" Margin="0,0,6,0" Visibility="Collapsed" AutomationProperties.Name="人工接管当前会话"/>
-                                            <Button x:Name="ViewAgentLogButton" Content="查看日志" Style="{StaticResource GhostButton}" Click="ViewAgentLog_Click" Padding="9,4" IsEnabled="False" AutomationProperties.Name="查看当前会话 Customer Success Agent 日志"/>
+                                            <Button x:Name="ViewAgentLogButton" Content="查看日志" Style="{StaticResource GhostButton}" Click="ViewAgentLog_Click" Padding="9,4" IsEnabled="False" AutomationProperties.Name="查看当前会话 AI 协作助手日志"/>
                                         </WrapPanel>
                                         <TextBlock x:Name="ChatAgentRuntimeMetaText" Text="尚未开始运行" Foreground="{DynamicResource Muted}" FontSize="10.5" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
                                     </DockPanel>
@@ -241,7 +241,7 @@
                     </Grid>
                     <Border Grid.Row="4" Padding="14" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0">
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <Button x:Name="AiAssistantButton" Content="生成建议" ToolTip="按当前 Agent 模式和运行状态执行会话操作" Style="{StaticResource AiButton}" Click="AgentPrimaryAction_Click" MinWidth="104" Height="54" Padding="12,0" FontSize="12" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Focusable="True" Margin="0,0,8,0" IsEnabled="False" AutomationProperties.Name="生成 Customer Success Agent 建议" AutomationProperties.HelpText="按钮会随模式和会话状态变为启用 AI、生成建议、开始协作、开始托管、托管中、已暂停、已结束、重新托管或托管异常。" AutomationProperties.LiveSetting="Polite"/>
+                            <Button x:Name="AiAssistantButton" Content="生成建议" ToolTip="按当前 Agent 模式和运行状态执行会话操作" Style="{StaticResource AiButton}" Click="AgentPrimaryAction_Click" MinWidth="104" Height="54" Padding="12,0" FontSize="12" FontWeight="Bold" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Focusable="True" Margin="0,0,8,0" IsEnabled="False" AutomationProperties.Name="生成 AI 协作助手建议" AutomationProperties.HelpText="按钮会随模式和会话状态变为启用 AI、生成建议、开始协作、开始托管、托管中、已暂停、已结束、重新托管或托管异常。" AutomationProperties.LiveSetting="Polite"/>
                             <Button x:Name="AttachButton" Grid.Column="1" Content="＋" ToolTip="添加图片、视频、音频或文件" Style="{StaticResource SecondaryButton}" Click="Attach_Click" Width="54" Height="54" Padding="0" FontSize="25" FontWeight="SemiBold" FontFamily="Segoe UI Symbol" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Focusable="True" Margin="0,0,12,0" IsEnabled="False" AutomationProperties.Name="添加 WhatsApp 附件" AutomationProperties.HelpText="添加图片、视频、音频或文件。"/>
                              <Button x:Name="TranslateDraftButton" Grid.Column="2" Content="译成客户语言"
                                      ToolTip="按本机语言写消息，翻译成当前客户主流语言；只生成预览，不会自动发送。"
@@ -316,8 +316,8 @@
                                 </Grid>
                                 <Grid Margin="0,9,0,0">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="AgentModeCombo" DisplayMemberPath="Label" MinHeight="30" SelectionChanged="AgentModeCombo_SelectionChanged" AutomationProperties.Name="Customer Success Agent 模式配置" AutomationProperties.HelpText="选择模式只保存策略，不会开始托管或自动发送。"/>
-                                    <Button Grid.Column="1" Content="应用" Style="{StaticResource SecondaryButton}" Click="ApplyAgentMode_Click" Padding="10,4" Margin="7,0,0,0" AutomationProperties.Name="应用 Customer Success Agent 模式配置"/>
+                                    <ComboBox x:Name="AgentModeCombo" DisplayMemberPath="Label" MinHeight="30" SelectionChanged="AgentModeCombo_SelectionChanged" AutomationProperties.Name="AI 协作助手模式配置" AutomationProperties.HelpText="选择模式只保存策略，不会开始托管或自动发送。"/>
+                                    <Button Grid.Column="1" Content="应用" Style="{StaticResource SecondaryButton}" Click="ApplyAgentMode_Click" Padding="10,4" Margin="7,0,0,0" AutomationProperties.Name="应用 AI 协作助手模式配置"/>
                                 </Grid>
                                 <Border Background="{DynamicResource AiSoft}" BorderBrush="{DynamicResource AiAccent}" BorderThickness="1" CornerRadius="8" Padding="9" Margin="0,8,0,0">
                                     <StackPanel>
@@ -331,13 +331,13 @@
                                 <TextBlock x:Name="AgentStateReasonText" Text="选择客户后可设置" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,7,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
-                        <Border x:Name="AgentRuntimePanel" Background="{DynamicResource SurfaceAlt}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,13" AutomationProperties.Name="Customer Success Agent 当前会话运行状态">
+                        <Border x:Name="AgentRuntimePanel" Background="{DynamicResource SurfaceAlt}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,13" AutomationProperties.Name="AI 协作助手当前会话运行状态">
                             <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="会话状态轨道" FontWeight="SemiBold" FontSize="12"/>
-                                        <TextBlock x:Name="AgentRuntimeIdentityText" Text="Customer Success Agent · 等待客户身份" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,3,8,0" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AgentRuntimeIdentityText" Text="AI 协作助手 · 等待客户身份" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,3,8,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <WrapPanel Grid.Column="1" HorizontalAlignment="Right">
                                         <Border x:Name="AgentRunStateBadgeBorder" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource LineStrong}" BorderThickness="1" CornerRadius="7" Padding="7,3" Margin="0,0,5,0">
@@ -368,7 +368,7 @@
                                 <WrapPanel Margin="0,9,0,0">
                                     <Button x:Name="RuntimeStopAgentButton" Content="停止托管" Style="{StaticResource SecondaryButton}" Click="StopAgent_Click" Padding="9,4" Margin="0,0,6,5" Visibility="Collapsed" AutomationProperties.Name="停止当前会话托管"/>
                                     <Button x:Name="RuntimeHumanTakeoverButton" Content="人工接管" Style="{StaticResource SecondaryButton}" Click="HumanTakeover_Click" Padding="9,4" Margin="0,0,6,5" Visibility="Collapsed" AutomationProperties.Name="人工接管当前会话"/>
-                                    <Button x:Name="RuntimeViewAgentLogButton" Content="查看完整日志" Style="{StaticResource GhostButton}" Click="ViewAgentLog_Click" Padding="9,4" Margin="0,0,6,5" IsEnabled="False" AutomationProperties.Name="查看当前会话完整 Customer Success Agent 日志"/>
+                                    <Button x:Name="RuntimeViewAgentLogButton" Content="查看完整日志" Style="{StaticResource GhostButton}" Click="ViewAgentLog_Click" Padding="9,4" Margin="0,0,6,5" IsEnabled="False" AutomationProperties.Name="查看当前会话完整 AI 协作助手日志"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
