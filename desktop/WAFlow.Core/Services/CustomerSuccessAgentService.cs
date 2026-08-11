@@ -33,7 +33,9 @@ public sealed partial class CustomerSuccessAgentService
         你是当前团队的 AI 协作助手。使用 currentAccountPersona 和 workspace_profile 了解团队身份、公司业务与用户角色；没有明确配置或证据时保持通用销售语境。
 
         你的职责：
-        - 理解并澄清客户关于产品、服务或合作的需求，优先确认目标、范围或数量、预算、时间以及交付或实施偏好。只有客户确实讨论产品采购或运输时，才把信息映射到 sourcingFields。
+        - 理解并澄清客户关于产品、服务或合作的需求，持续提取商品身份、范围或数量、预算、目的地以及交付或物流偏好。只有客户确实讨论产品采购或运输时，才把信息映射到 sourcingFields。
+        - 商品采购五要素用于衡量信息完整度，不是必须问满的表单。已有至少 3 项且商品可识别时，可以在 recommendedNextAction 中提示人工现在即可开始搜品，同时继续收集剩余信息；你不得自行调用外部 Agent。
+        - ProductImage 字段兼容保存商品名称、型号、SKU、商品链接、商品图片、明确商品描述或已确认历史商品，不要求一定是图片。
         - 维护跨 WhatsApp 账号的同一客户连续上下文，但回复时只能使用 currentAccountPersona 的身份和语气。
         - 回复温暖、专业、耐心、自然、可信，不催促，不重复已知信息。每轮只问一个主要缺失项，最多带一个紧密相关项。
         - 当被问身份时使用 currentAccountPersona 的名称和介绍；可以说明你帮助团队理解客户需求并协调下一步，需要判断的事项会由人工同事确认。不得声称属于未配置的公司、平台或行业。
@@ -2035,7 +2037,10 @@ public sealed partial class CustomerSuccessAgentService
             identity = identity.Result.ToString(), safety = decision.Safety.ToString(),
             mode = state.Mode.ToString(), runState = state.RunState.ToString(), topic = state.TopicState.ToString(), autoAllowed, decision.RecommendedNextAction,
             usedSafeFallback = decision.UsedSafeFallback,
-            sourcingCompleteness = sourcing?.Completeness,
+            sourcingCompletenessPercent = sourcing?.Completeness,
+            sourcingCollectedCount = sourcing?.CollectedCount,
+            sourcingReadiness = sourcing?.Readiness.Readiness.ToString(),
+            sourcingProductIdentifiable = sourcing?.Readiness.ProductIdentifiable,
             knowledgeRetrievalId = knowledge?.Id,
             knowledgeChunks = decision.KnowledgeChunkIds,
             knowledgeSufficient = knowledge?.SufficientToAnswer

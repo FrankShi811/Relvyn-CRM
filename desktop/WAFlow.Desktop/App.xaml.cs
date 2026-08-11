@@ -226,6 +226,7 @@ public partial class App : Application
                 DisposeForExit("whatsapp-number-validation", () => Services.WhatsAppNumberValidation.DisposeAsync());
                 DisposeForExit("email", () => Services.Email.DisposeAsync());
                 DisposeForExit("whatsapp", () => Services.WhatsApp.DisposeAsync());
+                DisposeForExit("mcp-agents", () => Services.McpAgents.DisposeAsync());
             }
         }
         finally

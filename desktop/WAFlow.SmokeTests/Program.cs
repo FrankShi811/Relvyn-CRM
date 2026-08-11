@@ -4610,11 +4610,11 @@ Check(todayBrief.HumanHandoffCount == 1
     && todayBrief.SourcingCompleteCount >= 2
     && todayBrief.CrossAccountFollowUpCount == 0
     && todayBrief.Items.Any(item => item.Category == "handoff")
-    && todayBrief.Items.Any(item => item.Category == "sourcing_complete")
+    && todayBrief.Items.Any(item => item.Category == "sourcing_ready")
     && todayBrief.Items.All(item => item.Category != "cross_account")
     && todayBrief.Items.All(item => item.Category != "identity"),
-    "Today Brief surfaces known-customer handoff and completed sourcing without identity or normal cross-account tasks");
-var specialBriefItems = todayBrief.Items.Where(item => item.Category is "handoff" or "sourcing_complete").ToList();
+    "Today Brief surfaces known-customer handoff and sourcing-ready requirements without identity or normal cross-account tasks");
+var specialBriefItems = todayBrief.Items.Where(item => item.Category is "handoff" or "sourcing_ready").ToList();
 Check(specialBriefItems.Count > 0
     && specialBriefItems.All(item => !string.IsNullOrWhiteSpace(item.CustomerName)
         && !item.CustomerName.Equals(item.CustomerId, StringComparison.OrdinalIgnoreCase)
@@ -7966,6 +7966,314 @@ Check(automationDefaults.OfflineBacklogGateEnabled
     && automationDefaults.NormalizedGraceMinutes() == 10
     && automationDefaults.NormalizedDraftLimit() == 50,
     "offline backlog is gated by default, with a ten minute grace and a fifty conversation draft budget");
+
+SourcingRequest SourcingRequirement(int version, params (SourcingFieldKey Key, string Value)[] values)
+{
+    var request = new SourcingRequest { CustomerId = "mcp-sourcing-customer", Version = version };
+    foreach (var value in values)
+    {
+        request.Fields[value.Key] = new SourcingFieldValue
+        {
+            Field = value.Key,
+            Value = value.Value,
+            NormalizedValue = value.Value.ToLowerInvariant(),
+            HumanConfirmed = true,
+            IsStructurallyValid = true,
+            EvidenceQuote = value.Value,
+            SourceMessageId = $"mcp-{value.Key}"
+        };
+    }
+    return request;
+}
+
+var sourcingTwo = SourcingRequirement(1,
+    (SourcingFieldKey.ProductImage, "Bluetooth earbuds model T18"),
+    (SourcingFieldKey.Quantity, "5000 pcs"));
+var sourcingThree = SourcingRequirement(1,
+    (SourcingFieldKey.ProductImage, "Bluetooth earbuds model T18"),
+    (SourcingFieldKey.Quantity, "5000 pcs"),
+    (SourcingFieldKey.Destination, "Los Angeles, USA"));
+var sourcingThreeNoProduct = SourcingRequirement(1,
+    (SourcingFieldKey.Quantity, "5000 pcs"),
+    (SourcingFieldKey.TargetPrice, "USD 4.50"),
+    (SourcingFieldKey.Destination, "Los Angeles, USA"));
+var sourcingFour = SourcingRequirement(2,
+    (SourcingFieldKey.ProductImage, "Bluetooth earbuds model T18"),
+    (SourcingFieldKey.Quantity, "5000 pcs"),
+    (SourcingFieldKey.TargetPrice, "USD 4.50"),
+    (SourcingFieldKey.Destination, "Los Angeles, USA"));
+var sourcingFive = SourcingRequirement(3,
+    (SourcingFieldKey.ProductImage, "Bluetooth earbuds model T18"),
+    (SourcingFieldKey.Quantity, "5000 pcs"),
+    (SourcingFieldKey.TargetPrice, "USD 4.50"),
+    (SourcingFieldKey.Destination, "Los Angeles, USA"),
+    (SourcingFieldKey.ShippingPreference, "sea freight"));
+Check(!sourcingTwo.Readiness.CanUseAgent && sourcingTwo.Readiness.CollectedCount == 2,
+    "2/5 keeps the Product Sourcing Agent button disabled");
+Check(sourcingThree.Readiness.CanUseAgent && sourcingThree.Readiness.Readiness == SourcingReadinessLevel.AgentAvailable
+    && Math.Abs(sourcingThree.Readiness.Confidence - .6d) < .0001,
+    "3/5 plus identifiable product becomes Ready for Agent with deterministic medium confidence");
+Check(!sourcingThreeNoProduct.Readiness.CanUseAgent && !sourcingThreeNoProduct.Readiness.ProductIdentifiable,
+    "3/5 without identifiable product stays blocked with a distinct readiness reason");
+Check(sourcingFour.Readiness.CanUseAgent && sourcingFour.Readiness.MissingElements.SequenceEqual(["logisticsPreference"]),
+    "4/5 allows sourcing without forcing the remaining logistics question");
+Check(sourcingFive.Readiness.CanUseAgent && sourcingFive.Readiness.Readiness == SourcingReadinessLevel.HighConfidence
+    && sourcingFive.Readiness.Confidence == 1,
+    "5/5 is Complete and high confidence but follows the same human-reviewed Agent path");
+Check(SourcingReadinessPolicy.IsProductIdentifiable("[image]")
+    && SourcingReadinessPolicy.IsProductIdentifiable("SKU AB-123")
+    && SourcingReadinessPolicy.IsProductIdentifiable("https://example.com/product/42")
+    && !SourcingReadinessPolicy.IsProductIdentifiable("product"),
+    "product identity accepts image, SKU, link, or clear description but rejects vague placeholders");
+
+await repository.UpsertLeadAsync(new Lead
+{
+    Id = sourcingThree.CustomerId,
+    Name = "MCP sourcing smoke customer",
+    PhoneE164 = "+8613900099999",
+    PhoneValid = true,
+    Source = "mcp-smoke"
+});
+await repository.UpsertSourcingRequestAsync(sourcingThree);
+var fakeServerPath = Path.GetFullPath(Path.Combine(
+    AppContext.BaseDirectory, "..", "..", "..", "..", "test-assets", "fake-mcp-server.mjs"));
+Check(File.Exists(fakeServerPath), "the repository includes a deterministic fake MCP Server for integration tests");
+await using (var mcpConnections = new McpConnectionManager(repository, _ => new FakeSecretStore("")))
+await using (var mcpGateway = new McpAgentGatewayService(
+                 repository,
+                 new SourcingRequestService(repository),
+                 _ => new FakeSecretStore(""),
+                 mcpConnections))
+{
+    var fakeServer = new McpServerConfig
+    {
+        Id = "fake-mcp-server",
+        Name = "Fake Sourcing MCP",
+        Transport = McpTransportKind.Stdio,
+        Command = "node",
+        Args = [fakeServerPath],
+        Enabled = true,
+        TimeoutMs = 4000,
+        RetryPolicy = new McpRetryPolicy { MaxRetries = 0 }
+    };
+    await mcpGateway.SaveServerAsync(fakeServer);
+    var health = await mcpGateway.TestConnectionAsync(fakeServer.Id);
+    Check(health.Success && health.ToolCount == 6 && health.ResourceCount == 1 && health.PromptCount == 1,
+        "stdio MCP handshake discovers tools, resources, prompts, and protocol capabilities without vendor hardcoding");
+    var discoveredTools = await mcpGateway.GetToolsAsync(fakeServer.Id);
+    Check(discoveredTools.Any(tool => tool.Name == "product_search_mock" && tool.ApprovalPolicy == McpApprovalPolicy.AskEveryTime),
+        "discovered MCP tools default to per-tool human approval and persist in the registry");
+    var productTool = discoveredTools.Single(tool => tool.Name == "product_search_mock");
+    productTool.Tags = ["product_sourcing", "recommended"];
+    productTool.PermissionLevel = McpToolPermissionLevel.ReadOnly;
+    await mcpGateway.UpdateToolPolicyAsync(productTool, "permission-review-1");
+    productTool.PermissionLevel = McpToolPermissionLevel.ExternalAction;
+    await mcpGateway.UpdateToolPolicyAsync(productTool, "permission-review-2");
+    var permissionHistory = await repository.GetMcpPermissionAuditAsync(fakeServer.Id, productTool.Name);
+    Check(permissionHistory.Count >= 2
+          && permissionHistory[0].ChangedBy == "permission-review-2"
+          && permissionHistory[1].ChangedBy == "permission-review-1",
+        "MCP tool permission changes retain immutable audit history instead of overwriting the prior decision");
+
+    var draft = new ProductSourcingTaskDraft
+    {
+        Source = new AgentTaskSource
+        {
+            Module = "smoke_test",
+            CustomerId = sourcingThree.CustomerId,
+            ConversationId = "conversation-mcp-1",
+            AccountId = "primary"
+        },
+        Requirement = sourcingThree,
+        Target = new AgentTaskTarget { ServerId = fakeServer.Id, ToolName = productTool.Name },
+        CustomerContextJson = "{}",
+        AdditionalInstructions = "Prefer suppliers with US warehouse.",
+        SharedContextKeys = [McpContextKeys.ProductRequirement]
+    };
+    var awaiting = await mcpGateway.BuildProductSourcingTaskAsync(draft);
+    var partialPayload = Json.Deserialize<ProductSourcingTaskPayload>(awaiting.PayloadJson)!;
+    Check(awaiting.Status == McpTaskStatus.AwaitingApproval && string.IsNullOrWhiteSpace(awaiting.ApprovedBy),
+        "3/5 only creates a reviewable task draft and never auto-invokes MCP");
+    Check(partialPayload.Requirement.TargetPrice is null
+        && partialPayload.Requirement.LogisticsPreference is null
+        && partialPayload.RequirementCompleteness.CollectedCount == 3
+        && partialPayload.RequirementCompleteness.MissingElements.SequenceEqual(["targetPrice", "logisticsPreference"]),
+        "partial Product Sourcing AgentTask explicitly carries missing elements instead of requiring non-null fields");
+    var completed = await mcpGateway.SubmitApprovedAsync(awaiting, "smoke-reviewer");
+    Check(completed.Status == McpTaskStatus.Completed
+        && completed.Result?.ProductSourcing?.Products.Count == 2
+        && completed.Result.ProductSourcing.MissingInformation.Count == 2
+        && completed.Result.ProductSourcing.Assumptions.Count == 2,
+        "human-approved partial task executes best effort and normalizes products, missing information, and assumptions");
+    Check(completed.Result?.Metadata.RequirementCollectedCount == 3
+        && completed.Result.Metadata.MissingAtExecution.SequenceEqual(["targetPrice", "logisticsPreference"])
+        && completed.Result.Metadata.RequirementVersionUsed == 1,
+        "sourcing result records the exact requirement version and missing fields used at execution");
+    var duplicateDraft = await mcpGateway.BuildProductSourcingTaskAsync(draft);
+    var duplicate = await mcpGateway.SubmitApprovedAsync(duplicateDraft, "smoke-reviewer");
+    Check(duplicate.Id == completed.Id,
+        "same requirement version, target, override, and attachments are idempotent and do not launch duplicate searches");
+
+    var unsafeDraft = new ProductSourcingTaskDraft
+    {
+        Source = draft.Source,
+        Requirement = sourcingThree,
+        Target = new AgentTaskTarget { ServerId = fakeServer.Id, ToolName = "send_whatsapp_message" }
+    };
+    try
+    {
+        _ = await mcpGateway.BuildProductSourcingTaskAsync(unsafeDraft);
+        Check(false, "product sourcing cannot target a customer-channel messaging tool");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "CUSTOMER_CHANNEL_FORBIDDEN",
+            "product sourcing hard-denies direct customer-channel tools before creating a task");
+    }
+
+    await repository.UpsertSourcingRequestAsync(sourcingFour);
+    var refineDraft = new ProductSourcingTaskDraft
+    {
+        Source = draft.Source,
+        Requirement = sourcingFour,
+        Target = draft.Target,
+        ParentTaskId = completed.Id,
+        TaskOverrideJson = "{\"taskOverride\":{\"source\":\"human_review\"}}"
+    };
+    var refined = await mcpGateway.RefineProductSourcingAsync(completed, refineDraft, "smoke-reviewer");
+    Check(refined.Status == McpTaskStatus.Completed
+        && refined.ParentTaskId == completed.Id
+        && refined.RequirementVersionUsed == 2
+        && refined.Result?.Metadata.MissingAtExecution.SequenceEqual(["logisticsPreference"]) == true,
+        "newly collected information creates an explicit Refine task linked to the prior result and new requirement version");
+    try
+    {
+        _ = await mcpGateway.RefineProductSourcingAsync(refined, refineDraft, "smoke-reviewer");
+        Check(false, "Refine refuses a requirement version already used by the prior result");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "NO_NEW_REQUIREMENT_INFORMATION",
+            "Refine deduplicates unchanged requirements and waits for genuinely new information");
+    }
+
+    var needsInfoTool = discoveredTools.Single(tool => tool.Name == "needs_information_mock");
+    var needsInfoDraft = new ProductSourcingTaskDraft
+    {
+        Source = new AgentTaskSource { Module = "smoke_test", CustomerId = sourcingFour.CustomerId, ConversationId = "conversation-mcp-2" },
+        Requirement = sourcingFour,
+        Target = new AgentTaskTarget { ServerId = fakeServer.Id, ToolName = needsInfoTool.Name },
+        TaskOverrideJson = "{\"taskOverride\":{\"probe\":\"needs_information\"}}"
+    };
+    var needsInfoTask = await mcpGateway.BuildProductSourcingTaskAsync(needsInfoDraft);
+    needsInfoTask = await mcpGateway.SubmitApprovedAsync(needsInfoTask, "smoke-reviewer");
+    Check(needsInfoTask.Status == McpTaskStatus.NeedsInformation
+        && needsInfoTask.Result?.ProductSourcing?.MissingInformation.SequenceEqual(["Exact product model", "Material"]) == true,
+        "Agent can return needs_information without contacting the customer or treating partial requirements as a failure");
+
+    var interruptedSeed = new AgentTask
+    {
+        Type = "product_sourcing",
+        Title = "restart probe",
+        Source = draft.Source,
+        Target = draft.Target,
+        Status = McpTaskStatus.Running,
+        IdempotencyKey = "mcp-restart-probe"
+    };
+    await repository.UpsertMcpTaskAsync(interruptedSeed);
+    var interrupted = await repository.MarkMcpTasksInterruptedAfterRestartAsync();
+    Check(interrupted.Any(task => task.Id == interruptedSeed.Id)
+        && (await repository.GetMcpTaskAsync(interruptedSeed.Id))?.Status == McpTaskStatus.Interrupted,
+        "active external tasks become reviewable Interrupted records after a crash instead of silently resuming");
+
+    var sanitized = McpGatewaySecurity.BoundAndSanitizeExternalResult(
+        "{\"authorization\":\"Bearer secret-value\",\"path\":\"C:\\\\Users\\\\Alice\\\\private.txt\"}",
+        new McpGatewaySettings());
+    Check(!sanitized.Contains("secret-value", StringComparison.Ordinal)
+        && !sanitized.Contains("C:\\Users", StringComparison.OrdinalIgnoreCase)
+        && sanitized.Contains("[redacted]", StringComparison.Ordinal),
+        "external Agent logs and results redact credentials and local filesystem paths");
+
+    var workflow = new McpWorkflowIntegrationService();
+    var workflowDecision = workflow.EvaluateSourcingReadiness(
+        sourcingThree,
+        new ExternalAgentWorkflowNodeConfig
+        {
+            ServerId = fakeServer.Id,
+            ToolName = productTool.Name,
+            AutomaticExecutionExplicitlyEnabled = false,
+            HumanApprovalRequired = true
+        },
+        new McpGatewaySettings());
+    Check(workflowDecision is
+        { TriggerMatched: true, ShowAgentAction: true, CreateRecommendation: true, MayExecuteAutomatically: false },
+        "workflow readiness creates a recommendation/manual action at 3/5 but never auto-executes by default");
+    var noProductWorkflow = workflow.EvaluateSourcingReadiness(
+        sourcingThreeNoProduct,
+        new ExternalAgentWorkflowNodeConfig(),
+        new McpGatewaySettings());
+    Check(!noProductWorkflow.TriggerMatched && noProductWorkflow.Reason.Contains("product identity", StringComparison.OrdinalIgnoreCase),
+        "workflow trigger distinguishes 3/5 completeness from actual sourcing readiness");
+
+    var exportedConnector = await mcpGateway.ExportConnectorAsync(fakeServer.Id);
+    Check(!exportedConnector.Contains("SecretRef", StringComparison.OrdinalIgnoreCase)
+        && !exportedConnector.Contains("top-secret", StringComparison.OrdinalIgnoreCase)
+        && exportedConnector.Contains("fake-mcp-server.mjs", StringComparison.Ordinal),
+        "connector export retains non-sensitive transport and mapping configuration but never exports credentials or secret references");
+    var importedConnector = await mcpGateway.ImportConnectorAsync(exportedConnector);
+    Check(importedConnector.Id != fakeServer.Id
+        && importedConnector.ConnectionState == McpConnectionState.Disconnected
+        && string.IsNullOrWhiteSpace(importedConnector.SecretRef),
+        "connector import creates a disconnected Server with a fresh identity and requires separately stored credentials");
+
+    var echo = await mcpGateway.TestToolAsync(fakeServer.Id, "echo", "{\"probe\":\"ok\"}", "smoke-reviewer");
+    Check(!echo.IsError && echo.RawJson.Contains("probe", StringComparison.Ordinal),
+        "Tool Explorer can run a schema-validated, human-approved generic MCP tool through the Gateway API");
+    try
+    {
+        _ = await mcpGateway.TestToolAsync(fakeServer.Id, "slow_task", "{}", "smoke-reviewer");
+        Check(false, "Tool Explorer enforces the configured timeout");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "TOOL_TIMEOUT", "Tool Explorer turns a slow MCP response into a readable TIMEOUT error");
+    }
+
+    try
+    {
+        McpConnectionManager.ValidateServer(new McpServerConfig
+        {
+            Name = "unsafe remote",
+            Transport = McpTransportKind.StreamableHttp,
+            Endpoint = "http://agent.example.com/mcp"
+        });
+        Check(false, "remote plaintext HTTP MCP endpoint is rejected");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "INSECURE_ENDPOINT", "remote MCP requires HTTPS while loopback HTTP remains available for development");
+    }
+    try
+    {
+        McpGatewaySecurity.ValidateJson("[1,2,3]", "INVALID_ARGUMENTS", "object required");
+        Check(false, "MCP arguments reject a non-object JSON root");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "INVALID_ARGUMENTS", "malformed MCP input is blocked before a tool invocation");
+    }
+    try
+    {
+        _ = McpGatewaySecurity.BoundAndSanitizeExternalResult(
+            Json.Serialize(new { output = new string('x', 20 * 1024) }),
+            new McpGatewaySettings { RawResponseLimitBytes = 16 * 1024 });
+        Check(false, "oversized MCP output is rejected");
+    }
+    catch (McpGatewayException error)
+    {
+        Check(error.Code == "OUTPUT_TOO_LARGE", "oversized MCP output cannot flood task storage or UI");
+    }
+}
 
 try { File.Delete(database); Directory.Delete(root, true); } catch { }
 Console.WriteLine(failures.Count == 0 ? "\nAI Sales OS native core smoke tests passed." : $"\n{failures.Count} smoke test(s) failed.");

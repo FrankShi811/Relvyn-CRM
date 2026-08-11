@@ -720,6 +720,8 @@ public sealed class AppSettings
     public List<string> AvailableModels { get; set; } = [];
     public string ModelsBaseUrl { get; set; } = "";
     public DateTimeOffset? ModelsFetchedAt { get; set; }
+    public bool McpAgentGatewayEnabled { get; set; } = true;
+    public McpGatewaySettings McpAgentGateway { get; set; } = new();
 
     /// <summary>Account-level send limits enforced by the bridge (PRD v0.4 §6).</summary>
     public OutboundGovernorSettings Outbound { get; set; } = new();

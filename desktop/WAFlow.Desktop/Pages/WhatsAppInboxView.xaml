@@ -401,18 +401,38 @@
                                 <TextBlock Text="仅已明确开始的“自动托管”可能直接发送；“仅建议”和“协作模式”的内容都必须由你确认。" Foreground="{DynamicResource Muted}" FontSize="10.5" TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
-                        <Border Background="{DynamicResource PrimarySurface}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,13">
+                        <Border Background="{DynamicResource PrimarySurface}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,13" AutomationProperties.Name="商品寻源要求就绪度">
                             <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <TextBlock Text="客户需求要点" FontWeight="SemiBold" FontSize="12"/>
-                                    <TextBlock x:Name="SourcingProgressText" Grid.Column="1" Text="0%" Foreground="{DynamicResource Primary}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Sourcing Requirements" FontWeight="SemiBold" FontSize="12"/>
+                                    <TextBlock x:Name="SourcingProgressText" Grid.Column="1" Text="0 / 5" Foreground="{DynamicResource Primary}" FontWeight="SemiBold"/>
                                 </Grid>
-                                <ProgressBar x:Name="SourcingProgressBar" Maximum="100" Height="6" Margin="0,8,0,7"/>
-                                <TextBlock x:Name="SourcingStatusText" Text="尚未整理客户需求" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap"/>
+                                <UniformGrid Columns="5" Margin="0,9,0,7">
+                                    <TextBlock x:Name="SourcingProductText" Text="○ 商品" FontSize="9.5" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="SourcingQuantityText" Text="○ 数量" FontSize="9.5" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="SourcingPriceText" Text="○ 价格" FontSize="9.5" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="SourcingDestinationText" Text="○ 目的地" FontSize="9.5" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="SourcingLogisticsText" Text="○ 物流" FontSize="9.5" TextWrapping="Wrap"/>
+                                </UniformGrid>
+                                <TextBlock x:Name="SourcingStatusText" Text="Need more information" Foreground="{DynamicResource Muted}" FontSize="9.5" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="SourcingFieldsText" Text="缺失：产品/服务资料、范围/数量、预算/目标价格、交付地区、交付偏好" FontSize="9.5" TextWrapping="Wrap" Margin="0,5,0,0"/>
                                 <TextBlock x:Name="SourcingConflictText" Text="" Foreground="{DynamicResource Warning}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                                <TextBlock x:Name="PendingQuestionText" Text="待确认：—" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="PendingQuestionText" Text="待确认：无" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                <Button x:Name="FindProductsButton" Content="Find Products" Style="{StaticResource PrimaryButton}" Margin="0,10,0,0" Padding="10,6" HorizontalAlignment="Left" Click="FindProducts_Click" IsEnabled="False" AutomationProperties.Name="选择外部 Agent 并查找商品"/>
+                                <TextBlock x:Name="SourcingActionHelpText" Text="至少收集 3 项并识别出商品后可用。" Foreground="{DynamicResource Muted}" FontSize="9" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                <Border x:Name="SourcingResultPanel" Visibility="Collapsed" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8" Padding="9" Margin="0,10,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Latest Sourcing Result" FontWeight="SemiBold" FontSize="10.5"/>
+                                        <TextBlock x:Name="SourcingResultText" TextWrapping="Wrap" FontSize="9.5" Margin="0,4,0,0"/>
+                                        <TextBlock x:Name="SourcingResultBasisText" Foreground="{DynamicResource Muted}" FontSize="9" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        <WrapPanel Margin="0,7,0,0">
+                                            <Button Content="查看结果" Style="{StaticResource SecondaryButton}" Padding="8,4" Margin="0,0,5,5" Click="ViewSourcingResult_Click"/>
+                                            <Button x:Name="AskCustomerButton" Content="Ask Customer" Style="{StaticResource SecondaryButton}" Padding="8,4" Margin="0,0,5,5" Click="AskSourcingQuestion_Click"/>
+                                            <Button x:Name="RefineSearchButton" Content="Refine Search" Style="{StaticResource SecondaryButton}" Padding="8,4" Margin="0,0,5,5" Click="RefineSourcing_Click"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </Border>
                         <Border x:Name="KnowledgeReferencePanel" Background="{DynamicResource AiSoft}" BorderBrush="{DynamicResource AiAccent}" BorderThickness="1"

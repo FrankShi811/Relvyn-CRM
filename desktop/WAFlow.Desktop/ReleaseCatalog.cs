@@ -9,10 +9,19 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.20.0";
+            : "5.20.1";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.20.1", "2026-08-11", "接入通用 MCP 外部智能体与渐进式搜品",
+        [
+            "设置页新增 MCP 与外部智能体配置区，可启用 Gateway、查看已配置和已连接的 Server 数量，并进入统一的 Server、Tool、权限、任务和审计管理窗口。支持 stdio、Streamable HTTP 与 SSE，凭据保存在 Windows 凭据管理器。",
+            "商品寻源五要素改为持续完善的完整度模型：达到 3/5 且商品可识别时即可开放 Find Products，5/5 只代表信息完整和更高置信度，不再作为功能解锁门槛。",
+            "每次外部调用都由人工选择 MCP Server 与 Tool，核对客户、字段、附件和共享上下文后确认；第三方 Agent 不能直接向 WhatsApp、邮件或短信客户发送消息。",
+            "Product Sourcing 支持部分需求、缺失信息、假设、引用、Needs Information、需求版本、结果依据和 Refine Search；新增信息不会自动重复搜品，也不会静默覆盖 Customer Brain。",
+            "新增连接权限、工具风险与审批策略、输入输出限制、路径与密钥脱敏、超时、重试、并发、幂等、任务恢复和不可变审计记录，并通过确定性假 MCP Server 覆盖核心回归。",
+            "本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.20.0", "2026-08-11", "重构九项关键操作流程",
         [
             "客户导入改为选择文件、核对可编辑字段映射、确认实际变更三步流程；写入前集中展示新增、更新、提醒和阻止项，已有客户的负责人及销售阶段默认受保护。",
@@ -21,7 +30,7 @@ public static class ReleaseCatalog
             "WhatsApp 连接入口统一到顶部，断开连接与退出并清除本机登录在账号菜单中明确分离；客户列表固定选择列、客户列和 Buyer ID，横向查看时始终保留身份上下文。",
             "客户情报历史比较改为左右并排、独立滚动和可选择复制的窗口；自动化排期改用日期选择器和 24 小时时间输入，无效或已过去的时间会显示行内原因并阻止保存和批准。",
             "已通过 Windows Release 编译、核心回归、隔离数据工作区人工流程验收及界面可访问性门禁。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、图标、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.19.7", "2026-08-11", "修复邮件对话呈现与全局角色联动",
         [
             "邮件箱按真实时间交错显示双方往来，09:31 发出、09:32 收到、09:36 发出、09:37 收到等连续邮件不再按方向分组；正文优先呈现可读内容与少量图片，冗长链接和完整营销排版统一收纳到“查看原邮件”。",

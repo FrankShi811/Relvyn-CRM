@@ -497,6 +497,90 @@ public sealed partial class LocalRepository
               UNIQUE(customer_id, version)
             );
             CREATE INDEX IF NOT EXISTS ix_sourcing_requests_customer ON sourcing_requests(customer_id, version DESC);
+            CREATE TABLE IF NOT EXISTS mcp_servers (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              enabled INTEGER NOT NULL,
+              transport TEXT NOT NULL,
+              connection_state TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_mcp_servers_enabled ON mcp_servers(enabled, name COLLATE NOCASE);
+            CREATE TABLE IF NOT EXISTS mcp_tools_cache (
+              server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+              tool_name TEXT NOT NULL,
+              enabled INTEGER NOT NULL,
+              permission_level TEXT NOT NULL,
+              approval_policy TEXT NOT NULL,
+              discovered_at TEXT NOT NULL,
+              data_json TEXT NOT NULL,
+              PRIMARY KEY(server_id, tool_name)
+            );
+            CREATE TABLE IF NOT EXISTS mcp_capabilities_cache (
+              server_id TEXT PRIMARY KEY REFERENCES mcp_servers(id) ON DELETE CASCADE,
+              expires_at TEXT NOT NULL,
+              discovered_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS mcp_tasks (
+              id TEXT PRIMARY KEY,
+              task_type TEXT NOT NULL,
+              server_id TEXT NOT NULL,
+              tool_name TEXT NOT NULL,
+              customer_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              idempotency_key TEXT NOT NULL UNIQUE,
+              requirement_version INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_mcp_tasks_status ON mcp_tasks(status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS ix_mcp_tasks_customer ON mcp_tasks(customer_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS ix_mcp_tasks_server ON mcp_tasks(server_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS mcp_task_events (
+              id TEXT PRIMARY KEY,
+              task_id TEXT NOT NULL REFERENCES mcp_tasks(id) ON DELETE CASCADE,
+              server_id TEXT NOT NULL,
+              tool_name TEXT NOT NULL,
+              customer_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              error_code TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_mcp_task_events_task ON mcp_task_events(task_id, created_at);
+            CREATE TABLE IF NOT EXISTS mcp_permissions (
+              id TEXT PRIMARY KEY,
+              server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+              scope_type TEXT NOT NULL,
+              scope_key TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              data_json TEXT NOT NULL,
+              UNIQUE(server_id, scope_type, scope_key)
+            );
+            CREATE TABLE IF NOT EXISTS mcp_permission_events (
+              id TEXT PRIMARY KEY,
+              server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+              scope_type TEXT NOT NULL,
+              scope_key TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              data_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_mcp_permission_events_scope
+              ON mcp_permission_events(server_id, scope_type, scope_key, created_at DESC);
+            CREATE TABLE IF NOT EXISTS mcp_mappings (
+              id TEXT PRIMARY KEY,
+              task_type TEXT NOT NULL,
+              server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+              tool_name TEXT NOT NULL,
+              enabled INTEGER NOT NULL,
+              updated_at TEXT NOT NULL,
+              data_json TEXT NOT NULL,
+              UNIQUE(task_type, server_id, tool_name)
+            );
             CREATE TABLE IF NOT EXISTS human_handoff_events (
               id TEXT PRIMARY KEY,
               customer_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,

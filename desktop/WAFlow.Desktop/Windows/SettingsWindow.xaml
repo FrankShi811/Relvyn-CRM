@@ -252,6 +252,23 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource Card}" Margin="0,15,0,0" AutomationProperties.Name="MCP 与外部智能体设置">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Border Width="36" Height="36" Background="{DynamicResource AiSoft}" CornerRadius="10" VerticalAlignment="Top">
+                            <TextBlock Text="↗" Foreground="{DynamicResource Ai}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="0,0,18,0">
+                            <TextBlock Text="MCP 与外部智能体" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="连接可审计的外部 MCP Server，并为每个 Tool 单独设置权限。达到 3/5 且商品可识别时，只显示人工调用入口；系统不会自动把客户信息发给第三方。" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="McpGatewayEnabledBox" Content="在 Windows 桌面端启用 MCP Agent Gateway" Margin="0,12,0,0" AutomationProperties.Name="启用 MCP 外部智能体接入层"/>
+                            <TextBlock x:Name="McpConnectionSummaryText" Text="正在读取 MCP 连接配置…" Foreground="{DynamicResource Info}" FontSize="10" FontWeight="SemiBold" Margin="0,7,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                            <TextBlock Text="发送前仍需选择 Server / Tool、核对字段、附件和共享上下文并人工确认。第三方 Agent 永远不能直接向 WhatsApp、邮件或短信客户发消息。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button Grid.Column="2" Content="配置 MCP 连接" Style="{StaticResource SecondaryButton}" Padding="13,8" VerticalAlignment="Top" Click="ManageMcpAgents_Click" AutomationProperties.Name="配置 MCP Server、Tool、权限与任务"/>
+                    </Grid>
+                </Border>
+
                 <Border Style="{StaticResource Card}" Margin="0,15,0,0">
                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="205"/><ColumnDefinition Width="205"/></Grid.ColumnDefinitions>
                         <StackPanel><TextBlock Text="外观与可读性" Style="{StaticResource SectionTitle}"/><TextBlock Text="主题和缩放会应用到整个主界面；缩小可在低分辨率下展示更多内容，放大可提升文字和控件可读性。" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,5,20,0" TextWrapping="Wrap"/></StackPanel>
