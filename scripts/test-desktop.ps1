@@ -184,7 +184,8 @@ if ($desktopProjectSource -notmatch [regex]::Escape('<ApplicationIcon>Assets\AI-
     $desktopShortcutSource -notmatch [regex]::Escape('SHChangeNotify(ShellChangeUpdateItem') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('[WindowsTaskbarIconProbe]::GetIcon($mainWindowHandle, 2)') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('Test-WindowIconMatchesBrand') -or
-    $windowsInstallerTestSource -notmatch [regex]::Escape('[Drawing.Icon]::ExtractAssociatedIcon($shortcutPath)') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('[Drawing.Icon]::new($stableBrandIconPath, $shellSize, $shellSize)') -or
+    $windowsInstallerTestSource -notmatch [regex]::Escape('ShortcutProtectedIconFrames') -or
     $windowsInstallerTestSource -notmatch [regex]::Escape('MaterializedBrandIconSha256')) {
   throw 'Windows executable, live taskbar window, relaunch identity and shortcuts must use the same protected brand icon.'
 }
