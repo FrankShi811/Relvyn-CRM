@@ -313,7 +313,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         {
             var message = error.Code switch
             {
-                "invalid_group_subject" => "群名称无效，请控制在 1–100 个字符。",
+                "invalid_group_subject" => "群名称无效，请控制在 1-100 个字符。",
                 "invalid_group_participants" or "invalid_group_participant_count" => "群成员无效，请重新选择具有国际区号的 WhatsApp 联系人。",
                 "whatsapp_not_connected" => "WhatsApp 连接已经断开，请重新连接后再建群。",
                 _ => error.Message
@@ -2416,7 +2416,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         AgentRunStatusText.Text = CustomerSuccessAgentLabels.RunStatus(runStatus);
         AgentRunTimeText.Text = state?.LastRunAt is { } runAt
             ? runAt.LocalDateTime.ToString("MM-dd HH:mm")
-            : "—";
+            : "无";
         AgentRunSourceText.Text = string.IsNullOrWhiteSpace(state?.LastSourcePreview)
             ? "客户原话：等待生成"
             : $"客户原话：{state.LastSourcePreview}";
@@ -2426,10 +2426,10 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
                 ? $"托管回复：{state.LastGeneratedReply}"
                 : $"建议回复：{state.LastGeneratedReply}";
         AgentRunSummaryText.Text = string.IsNullOrWhiteSpace(state?.LastRunSummary)
-            ? "分析摘要：—"
+            ? "分析摘要：无"
             : $"分析摘要：{state.LastRunSummary}";
         AgentRunNextActionText.Text = string.IsNullOrWhiteSpace(state?.LastRecommendedAction)
-            ? "下一步：—"
+            ? "下一步：无"
             : $"下一步：{state.LastRecommendedAction}";
         var runDetails = new[] { state?.LastRunDetail, state?.LastRunError }
             .Where(item => !string.IsNullOrWhiteSpace(item));
@@ -2467,7 +2467,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         var conflicts = sourcing?.Conflicts.Where(item => !item.IsResolved).Select(item => SourcingFieldLabel(item.Field)).ToList() ?? [];
         SourcingConflictText.Text = conflicts.Count == 0 ? "" : $"冲突待处理：{string.Join("、", conflicts)}";
         PendingQuestionText.Text = context?.PendingQuestions.FirstOrDefault(item => !item.IsResolved) is { } question
-            ? $"待确认：{question.Question}（{question.Safety}）" : "待确认：—";
+            ? $"待确认：{question.Question}（{question.Safety}）" : "待确认：无";
         FindProductsButton.IsEnabled = sourcing is not null && readiness.CanUseAgent && _currentLead is not null;
         SourcingActionHelpText.Text = sourcing is null
             ? "尚未形成采购需求；达到 3/5 且商品可识别后会开放人工 Agent 入口。"

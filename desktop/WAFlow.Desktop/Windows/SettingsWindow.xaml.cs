@@ -97,6 +97,7 @@ public partial class SettingsWindow : Window
         _hadConfiguredProviderAtLoad = _services.DeepSeek.HasApiKey();
         _settings = await _services.Repository.GetAppSettingsAsync();
         McpGatewayEnabledBox.IsChecked = _settings.McpAgentGatewayEnabled;
+        await RefreshMcpConnectionSummaryAsync();
         LoadBusinessRoleProfile();
         await LoadCustomerEnrichmentSettingsAsync();
         _settings.AiModulePreferences ??= new Dictionary<string, AiModuleModelPreference>(StringComparer.OrdinalIgnoreCase);
@@ -893,8 +894,31 @@ public partial class SettingsWindow : Window
     private void VersionHistory_Click(object sender, RoutedEventArgs e) =>
         new VersionHistoryWindow(_updates) { Owner = this }.ShowDialog();
 
-    private void ManageMcpAgents_Click(object sender, RoutedEventArgs e) =>
+    private async void ManageMcpAgents_Click(object sender, RoutedEventArgs e)
+    {
         new McpAgentGatewayWindow(_services) { Owner = this }.ShowDialog();
+        await RefreshMcpConnectionSummaryAsync();
+    }
+
+    private async Task RefreshMcpConnectionSummaryAsync()
+    {
+        try
+        {
+            var servers = await _services.McpAgents.GetServersAsync();
+            var enabled = servers.Count(server => server.Enabled);
+            var connected = servers.Count(server => server.ConnectionState == McpConnectionState.Connected);
+            McpConnectionSummaryText.Text = servers.Count == 0
+                ? "尚未配置 MCP Server。点击右侧按钮添加连接。"
+                : $"已配置 {servers.Count} 个 Server，其中 {enabled} 个已启用、{connected} 个已连接。";
+            McpConnectionSummaryText.Foreground = (System.Windows.Media.Brush)FindResource(
+                connected > 0 ? "Success" : servers.Count > 0 ? "Warning" : "Info");
+        }
+        catch (Exception error)
+        {
+            McpConnectionSummaryText.Text = $"无法读取 MCP 连接：{error.Message}";
+            McpConnectionSummaryText.Foreground = (System.Windows.Media.Brush)FindResource("Danger");
+        }
+    }
 
     private async Task RefreshWorkspaceSummaryAsync()
     {
