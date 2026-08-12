@@ -390,6 +390,19 @@ public sealed partial class LocalRepository
             );
             CREATE INDEX IF NOT EXISTS ix_follow_up_tasks_customer ON follow_up_tasks(customer_id, due_at);
             CREATE INDEX IF NOT EXISTS ix_follow_up_tasks_due ON follow_up_tasks(status, due_at);
+            CREATE TABLE IF NOT EXISTS customer_commitments (
+              id TEXT PRIMARY KEY,
+              customer_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+              status TEXT NOT NULL,
+              due_at TEXT,
+              source_channel TEXT NOT NULL,
+              source_message_id TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              data_json TEXT NOT NULL,
+              UNIQUE(customer_id, source_channel, source_message_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_customer_commitments_customer ON customer_commitments(customer_id, status, due_at);
+            CREATE INDEX IF NOT EXISTS ix_customer_commitments_active ON customer_commitments(status, due_at, updated_at DESC);
             CREATE TABLE IF NOT EXISTS customer_event_log (
               id TEXT PRIMARY KEY,
               customer_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
@@ -4211,6 +4224,59 @@ public sealed partial class LocalRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             if (Json.Deserialize<FollowUpTask>(reader.GetString(0)) is { } item) items.Add(item);
+        return items;
+    }
+
+    public async Task UpsertCustomerCommitmentAsync(
+        CustomerCommitment commitment,
+        CancellationToken cancellationToken = default)
+    {
+        commitment.UpdatedAt = DateTimeOffset.Now;
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        command.CommandText = """
+            INSERT INTO customer_commitments(
+              id,customer_id,status,due_at,source_channel,source_message_id,updated_at,data_json)
+            VALUES($id,$customer,$status,$due,$channel,$message,$updated,$json)
+            ON CONFLICT(customer_id,source_channel,source_message_id) DO UPDATE SET
+              status=excluded.status,due_at=excluded.due_at,updated_at=excluded.updated_at,data_json=excluded.data_json
+            """;
+        command.Parameters.AddWithValue("$id", commitment.Id);
+        command.Parameters.AddWithValue("$customer", commitment.CustomerId);
+        command.Parameters.AddWithValue("$status", commitment.Status.ToString());
+        command.Parameters.AddWithValue("$due", (object?)commitment.DueAt?.ToString("O") ?? DBNull.Value);
+        command.Parameters.AddWithValue("$channel", commitment.SourceChannel);
+        command.Parameters.AddWithValue("$message", commitment.SourceMessageId);
+        command.Parameters.AddWithValue("$updated", commitment.UpdatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$json", Json.Serialize(commitment));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<List<CustomerCommitment>> GetCustomerCommitmentsAsync(
+        string? customerId = null,
+        bool activeOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        var items = new List<CustomerCommitment>();
+        await using var db = Open();
+        await db.OpenAsync(cancellationToken);
+        await using var command = db.CreateCommand();
+        var predicates = new List<string>();
+        if (customerId is not null)
+        {
+            predicates.Add("customer_id=$customer");
+            command.Parameters.AddWithValue("$customer", customerId);
+        }
+        if (activeOnly)
+        {
+            predicates.Add("status=$status");
+            command.Parameters.AddWithValue("$status", CustomerCommitmentStatus.Active.ToString());
+        }
+        command.CommandText = $"SELECT data_json FROM customer_commitments{(predicates.Count == 0 ? "" : $" WHERE {string.Join(" AND ", predicates)}")} ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at, updated_at DESC";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (Json.Deserialize<CustomerCommitment>(reader.GetString(0)) is { } item) items.Add(item);
         return items;
     }
 

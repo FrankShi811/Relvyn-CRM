@@ -2723,8 +2723,15 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         {
             AiSidebarBrainMetaText.Text = "CUSTOMER BRAIN · 等待客户上下文";
             RenderConversationContext(null);
+            RenderCommitmentReminders([]);
             return;
         }
+
+        // Promise reminders are local, durable state. Render them before any
+        // network-backed Customer Brain refresh so a slow or unavailable model
+        // cannot hide an obligation from the active conversation.
+        await UpdateCommitmentRemindersAsync(lead.Id);
+        if (generation != _customerBrainRefreshGeneration || _currentLead?.Id != lead.Id) return;
 
         try
         {
@@ -2765,7 +2772,11 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         try
         {
             var profile = await _services.CustomerBrain.UpdateConversationContextAsync(_currentLead.Id, force: true);
-            if (_currentLead?.Id == profile.CustomerId) RenderConversationContext(profile.ConversationContext);
+            if (_currentLead?.Id == profile.CustomerId)
+            {
+                RenderConversationContext(profile.ConversationContext);
+                await UpdateCommitmentRemindersAsync(profile.CustomerId);
+            }
         }
         catch (Exception error)
         {
@@ -2775,6 +2786,74 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         finally
         {
             RefreshAiContextButton.IsEnabled = _currentLead is not null;
+        }
+    }
+
+    private async Task UpdateCommitmentRemindersAsync(string customerId)
+    {
+        var commitments = await _services.CustomerCommitments.GetActiveAsync(customerId);
+        if (_currentLead?.Id != customerId) return;
+        RenderCommitmentReminders(commitments);
+    }
+
+    private void RenderCommitmentReminders(IReadOnlyCollection<CustomerCommitment> commitments)
+    {
+        CommitmentReminderCard.Visibility = commitments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (commitments.Count == 0)
+        {
+            CommitmentReminderItems.ItemsSource = null;
+            CommitmentReminderStatusText.Text = "没有待履约承诺";
+            CompleteCommitmentReminderButton.IsEnabled = false;
+            return;
+        }
+
+        var ordered = commitments
+            .OrderByDescending(item => item.IsOverdue)
+            .ThenBy(item => item.DueAt is null)
+            .ThenBy(item => item.DueAt)
+            .ThenBy(item => item.DetectedAt)
+            .ToList();
+        CommitmentReminderItems.ItemsSource = ordered
+            .Select(item => new CommitmentReminderOption(item, $"{item.DueLabel} · {item.Title}\n“{item.Evidence}”"))
+            .ToList();
+        CommitmentReminderItems.SelectedIndex = 0;
+        var overdue = ordered.Count(item => item.IsOverdue);
+        CommitmentReminderStatusText.Text = overdue > 0
+            ? $"{ordered.Count} 条待履约，其中 {overdue} 条逾期"
+            : $"{ordered.Count} 条待履约";
+        CompleteCommitmentReminderButton.IsEnabled = true;
+    }
+
+    private void CommitmentReminderItems_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        CompleteCommitmentReminderButton.IsEnabled =
+            CommitmentReminderItems.SelectedItem is CommitmentReminderOption;
+
+    private async void CompleteCommitmentReminder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentLead is null
+            || CommitmentReminderItems.SelectedItem is not CommitmentReminderOption selected)
+            return;
+        if (MessageBox.Show(
+                $"确认这项承诺已经真实履约？\n\n{selected.Item.Title}\n来源原文：{selected.Item.Evidence}\n\n确认后会保留历史记录，并结束所有板块的待履约标记。",
+                "完成待履约承诺",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        CompleteCommitmentReminderButton.IsEnabled = false;
+        try
+        {
+            await _services.CustomerCommitments.CompleteAsync(
+                _currentLead.Id,
+                selected.Item.Id,
+                "用户在 Customer Intelligence 中确认已经履约");
+            await UpdateCommitmentRemindersAsync(_currentLead.Id);
+            DataChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "无法完成承诺", MessageBoxButton.OK, MessageBoxImage.Warning);
+            CompleteCommitmentReminderButton.IsEnabled = true;
         }
     }
 
@@ -3311,6 +3390,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     private sealed record StageOption(string Label, LeadStage Value);
     private sealed record AgentModeOption(string Label, ConversationAgentMode Value);
     private sealed record LabelFilterOption(string Id, string Name);
+    private sealed record CommitmentReminderOption(CustomerCommitment Item, string DisplayText);
     private sealed record KnowledgeReferenceRow(string Citation, string Preview, KnowledgeRetrievalHit Hit);
     private sealed record WhatsAppInboxSnapshot(
         BusinessRoleProfile WorkspaceProfile,

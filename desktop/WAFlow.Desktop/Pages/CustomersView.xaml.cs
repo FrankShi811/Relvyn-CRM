@@ -75,9 +75,11 @@ public partial class CustomersView : UserControl, IRefreshableView
             : dimensions.Where(dimension => dimension.Key.Equals(selectedDimension, StringComparison.CurrentCultureIgnoreCase)));
         _dimensionCount = dimensions.Count;
         var whatsappLabelsByLead = await _services.Repository.GetWhatsAppLabelsByLeadIdsAsync(leads.Select(lead => lead.Id));
+        var commitmentSummaries = await _services.CustomerCommitments.GetActiveSummariesAsync(leads.Select(lead => lead.Id));
         _filteredRows = leads.Select(lead => new CustomerRow(
             lead,
             whatsappLabelsByLead.TryGetValue(lead.Id, out var labels) ? labels : [],
+            commitmentSummaries.TryGetValue(lead.Id, out var commitment) ? commitment : null,
             _checkedLeadIds.Contains(lead.Id),
             RowSelectionChanged)).ToList();
         ApplyCurrentSort();
@@ -227,6 +229,7 @@ public partial class CustomersView : UserControl, IRefreshableView
             nameof(CustomerRow.Owner) => row.Owner,
             nameof(CustomerRow.Grade) => row.Grade,
             "Stage" => ((int)row.Lead.Stage).ToString("D2", CultureInfo.InvariantCulture),
+            nameof(CustomerRow.ActiveCommitmentCount) => row.ActiveCommitmentCount.ToString("D6", CultureInfo.InvariantCulture),
             nameof(CustomerRow.PrimaryCategoryPreference) => row.PrimaryCategoryPreference,
             _ => ""
         };
@@ -278,7 +281,8 @@ public partial class CustomersView : UserControl, IRefreshableView
         var current = await _services.Repository.GetLeadAsync(selected.Id);
         if (current is null) { await RefreshAsync(); return; }
         var window = new CustomerEditWindow(_services, current) { Owner = Window.GetWindow(this) };
-        if (window.ShowDialog() == true)
+        var saved = window.ShowDialog() == true;
+        if (saved || window.HasDataChanges)
         {
             await RefreshAsync();
             DataChanged?.Invoke(this, EventArgs.Empty);
@@ -400,9 +404,15 @@ public partial class CustomersView : UserControl, IRefreshableView
         private readonly Action<CustomerRow, bool> _selectionChanged;
         private bool _isSelected;
 
-        public CustomerRow(Lead lead, IEnumerable<WhatsAppLabel> whatsappLabels, bool isSelected, Action<CustomerRow, bool> selectionChanged)
+        public CustomerRow(
+            Lead lead,
+            IEnumerable<WhatsAppLabel> whatsappLabels,
+            CustomerCommitmentSummary? commitment,
+            bool isSelected,
+            Action<CustomerRow, bool> selectionChanged)
         {
             Lead = lead;
+            Commitment = commitment ?? new CustomerCommitmentSummary { CustomerId = lead.Id };
             WhatsAppLabels = whatsappLabels
                 .Where(label => !label.Deleted && !string.IsNullOrWhiteSpace(label.Name))
                 .GroupBy(label => $"{label.AccountId}\u001f{label.Id}", StringComparer.OrdinalIgnoreCase)
@@ -415,6 +425,7 @@ public partial class CustomersView : UserControl, IRefreshableView
         }
 
         public Lead Lead { get; }
+        public CustomerCommitmentSummary Commitment { get; }
         public string Id => Lead.Id;
         public string DisplayName => CustomerDisplayName(Lead);
         public string BuyerId => Lead.BuyerId;
@@ -433,6 +444,14 @@ public partial class CustomersView : UserControl, IRefreshableView
         public string Owner => Lead.Owner;
         public string Grade => Lead.Grade;
         public string StageLabel => Lead.StageLabel;
+        public int ActiveCommitmentCount => Commitment.ActiveCount;
+        public string CommitmentMarkerLabel => Commitment.MarkerLabel;
+        public string CommitmentState => Commitment.State;
+        public string CommitmentToolTip => Commitment.ActiveCount == 0
+            ? "没有待履约承诺"
+            : string.IsNullOrWhiteSpace(Commitment.FirstTitle)
+                ? Commitment.MarkerLabel
+                : $"{Commitment.MarkerLabel}\n{Commitment.FirstTitle}";
         public string PrimaryCategoryPreference => CustomerDimensionCatalog.ResolvePrimaryCategoryPreference(Lead);
         public IReadOnlyDictionary<string, string> CustomFields => Lead.CustomFields;
         public void UpdateWhatsAppRegistration(WAFlow.Core.Services.WhatsAppNumberValidationChanged state)

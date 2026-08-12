@@ -566,6 +566,7 @@ public sealed class CustomerSuccessContext
     public AccountRelationshipMemory? AccountRelationship { get; set; }
     public RelationshipMemory? GlobalRelationship { get; set; }
     public CustomerIntelligenceProfile? Brain { get; set; }
+    public List<CustomerCommitment> ActiveCommitments { get; set; } = [];
     public SourcingRequest? SourcingRequest { get; set; }
     public ConversationAgentState? AgentState { get; set; }
     public GlobalCustomerAgentLock? AgentLock { get; set; }

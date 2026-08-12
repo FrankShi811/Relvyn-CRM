@@ -52,6 +52,7 @@ $campaignPreviewXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $
 $campaignPreviewSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Windows\CampaignPreviewWindow.xaml.cs')
 $todayBriefSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\TodayBriefService.cs')
 $customerBrainModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\CustomerBrainModels.cs')
+$customerCommitmentSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\CustomerCommitmentService.cs')
 $leadIntelligenceXaml = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\LeadIntelligenceView.xaml')
 $leadIntelligenceSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Desktop\Pages\LeadIntelligenceView.xaml.cs')
 $leadAutomationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\LeadIntelligenceAutomationService.cs')
@@ -1185,6 +1186,27 @@ if ($whatsAppInboxXaml -match 'LinkedAccountsText|AccountRelationshipText|关联
   throw 'WhatsApp Customer Success card must not expose linked-account, primary-account or per-account relationship internals.'
 }
 Write-Host 'PASS  Customer Success Agent mode behavior and visible-output contract'
+
+$commitmentContractFailures = @()
+foreach ($token in @('customer_commitments', 'UNIQUE(customer_id, source_channel, source_message_id)', 'ix_customer_commitments_customer')) {
+  if ($localRepositorySource -notmatch [regex]::Escape($token)) { $commitmentContractFailures += "repository:$token" }
+}
+foreach ($token in @('current.Status == CustomerCommitmentStatus.Completed', 'CompleteAsync(', 'completed_by=human')) {
+  if ($customerCommitmentSource -notmatch [regex]::Escape($token)) { $commitmentContractFailures += "service:$token" }
+}
+if ($customersXaml -notmatch [regex]::Escape('Header="待履约承诺"') -or
+    $leadIntelligenceXaml -notmatch [regex]::Escape('x:Name="OpportunityCommitmentCard"') -or
+    $customerEditXaml -notmatch [regex]::Escape('x:Name="BrainCommitmentItems"') -or
+    $whatsAppInboxXaml -notmatch [regex]::Escape('x:Name="CommitmentReminderCard"')) {
+  $commitmentContractFailures += 'cross-module reminder surfaces'
+}
+if ($whatsAppInboxSource -notmatch 'await UpdateCommitmentRemindersAsync\(lead\.Id\);[\s\S]{0,500}try[\s\S]{0,500}CustomerBrain\.RefreshAsync') {
+  $commitmentContractFailures += 'local-first Customer Intelligence reminder'
+}
+if ($commitmentContractFailures.Count -gt 0) {
+  throw "Customer promises must stay evidence-bound, persistent, human-completed and visible across Customer Brain, Customer Intelligence, opportunity and customer lists. missing=$($commitmentContractFailures -join ', ')"
+}
+Write-Host 'PASS  evidence-bound customer commitment persistence, human completion and cross-module reminder contract'
 
 if ($bridgeSource -notmatch [regex]::Escape('proto.WebMessageInfo.StubType.CIPHERTEXT') -or
     $bridgeSource -notmatch [regex]::Escape('update.update?.message') -or

@@ -548,6 +548,20 @@
                                            Foreground="{DynamicResource Muted}" FontSize="9" TextWrapping="Wrap" Margin="0,7,0,0"/>
                             </StackPanel>
                         </Border>
+                        <Border x:Name="CommitmentReminderCard" Background="{DynamicResource WarningSoft}" BorderBrush="{DynamicResource Warning}" BorderThickness="1" CornerRadius="10" Padding="11" Margin="0,0,0,11" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="待履约承诺" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="CommitmentReminderStatusText" Text="等待关联客户" Foreground="{DynamicResource Warning}" FontSize="9.5" Margin="0,3,0,0" AutomationProperties.LiveSetting="Polite"/>
+                                    </StackPanel>
+                                    <Button x:Name="CompleteCommitmentReminderButton" Grid.Column="1" Content="标记完成" Style="{StaticResource PrimaryButton}" Click="CompleteCommitmentReminder_Click" Padding="9,5" IsEnabled="False" AutomationProperties.Name="将选中的客户承诺标记为人工完成"/>
+                                </Grid>
+                                <ListBox x:Name="CommitmentReminderItems" DisplayMemberPath="DisplayText" MaxHeight="130" Margin="0,8,0,0" SelectionChanged="CommitmentReminderItems_SelectionChanged" AutomationProperties.Name="当前会话待履约承诺"/>
+                                <TextBlock Text="模型不能自动清除承诺；只有人工确认履约后，跨板块标记才会结束。" Foreground="{DynamicResource Muted}" FontSize="9" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
                         <TextBlock Text="自定义维度（每行 key=value）" Style="{StaticResource LabelText}"/><TextBox x:Name="CustomFieldsBox" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="90" Margin="0,5,0,11" FontFamily="Consolas" FontSize="11"/>
                         <Border Background="{DynamicResource WarningSoft}" CornerRadius="9" Padding="10"><TextBlock Text="保存会同步到客户列表、商机智能和后续 Campaign。" Foreground="{DynamicResource Warning}" TextWrapping="Wrap" FontSize="10"/></Border>
                     </StackPanel></ScrollViewer>

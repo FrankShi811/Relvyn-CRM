@@ -87,6 +87,31 @@
                             <DataGridTextColumn Header="等级" Binding="{Binding Grade}" Width="52"/>
                             <DataGridTextColumn Header="AI 分数" Binding="{Binding Score}" Width="64"/>
                             <DataGridTextColumn Header="阶段" Binding="{Binding StageLabel}" Width="82"/>
+                            <DataGridTemplateColumn Header="待履约" Width="125">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6" Padding="7,3" HorizontalAlignment="Left" ToolTip="{Binding CommitmentTitle}">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CommitmentState}" Value="active"><Setter Property="Visibility" Value="Visible"/><Setter Property="Background" Value="{DynamicResource WarningSoft}"/></DataTrigger>
+                                                        <DataTrigger Binding="{Binding CommitmentState}" Value="overdue"><Setter Property="Visibility" Value="Visible"/><Setter Property="Background" Value="{DynamicResource DangerSoft}"/></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding CommitmentMarkerLabel}" FontSize="9.5" FontWeight="SemiBold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource Warning}"/>
+                                                        <Style.Triggers><DataTrigger Binding="{Binding CommitmentState}" Value="overdue"><Setter Property="Foreground" Value="{DynamicResource Danger}"/></DataTrigger></Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="分析状态" Binding="{Binding AnalysisStateLabel}" Width="135"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -184,6 +209,19 @@
                                        FontWeight="SemiBold"
                                        Margin="0,5,0,0"
                                        TextWrapping="Wrap"/>
+
+                            <Border x:Name="OpportunityCommitmentCard" Background="{DynamicResource WarningSoft}" BorderBrush="{DynamicResource Warning}" BorderThickness="1" CornerRadius="11" Padding="14" Margin="0,13,0,0" Visibility="Collapsed">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="待履约承诺" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock x:Name="OpportunityCommitmentCountText" HorizontalAlignment="Right" Foreground="{DynamicResource Warning}" FontWeight="SemiBold"/>
+                                    </Grid>
+                                    <ItemsControl x:Name="OpportunityCommitmentItems" Margin="0,6,0,0" AutomationProperties.Name="当前商机待履约承诺">
+                                        <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding StringFormat=• {0}}" TextWrapping="Wrap" Margin="0,2,0,3" FontSize="9.5"/></DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="承诺由 Customer Brain 从销售方已发消息提取；必须人工确认完成。" Foreground="{DynamicResource Muted}" FontSize="9" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                </StackPanel>
+                            </Border>
 
                             <Border Style="{StaticResource HolographicCard}" Padding="14" Margin="0,16,0,0">
                                 <StackPanel>

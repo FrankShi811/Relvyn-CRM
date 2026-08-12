@@ -162,6 +162,21 @@
                             </StackPanel>
                         </Border>
 
+                        <Border Background="{DynamicResource WarningSoft}" BorderBrush="{DynamicResource Warning}" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,14,0,0">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="待履约承诺" Style="{StaticResource SectionTitle}"/>
+                                        <TextBlock x:Name="CommitmentStatusText" Text="正在读取销售方已发消息中的明确承诺…" Foreground="{DynamicResource Warning}" FontSize="9.5" Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite"/>
+                                    </StackPanel>
+                                    <Button x:Name="CompleteCommitmentButton" Grid.Column="1" Content="标记承诺已完成" Style="{StaticResource PrimaryButton}" Click="CompleteCommitment_Click" IsEnabled="False" VerticalAlignment="Top" AutomationProperties.Name="将选中的待履约承诺标记为人工完成"/>
+                                </Grid>
+                                <ListBox x:Name="BrainCommitmentItems" DisplayMemberPath="DisplayText" MinHeight="54" MaxHeight="150" Margin="0,9,0,0" SelectionChanged="BrainCommitmentItems_SelectionChanged" AutomationProperties.Name="当前客户待履约承诺"/>
+                                <TextBlock Text="只记录销售人员在 WhatsApp 或邮件中已经明确说出的未来行动。模型不能自动完成或清除，标记会一直保留到你手动确认履约。" Foreground="{DynamicResource Muted}" FontSize="9.5" TextWrapping="Wrap" Margin="0,7,0,0"/>
+                            </StackPanel>
+                        </Border>
+
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <StackPanel>

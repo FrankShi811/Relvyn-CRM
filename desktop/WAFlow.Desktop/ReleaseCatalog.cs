@@ -9,10 +9,17 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.20.1";
+            : "5.21.0";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.21.0", "2026-08-12", "串联客户承诺与持续跟进提醒",
+        [
+            "Customer Brain 从 WhatsApp 与邮件上下文中只提取销售人员已经明确作出的未来承诺，并绑定原始消息、证据、渠道、时间与明确截止日期；客户请求、建议、问题、已完成事项和无证据推断不会被记为承诺。",
+            "未完成承诺会持久化并同步显示在 Customer Brain、Customer Intelligence、商机和客户列表中；逾期状态优先提示，WhatsApp 话术助手与 Customer Success Agent 也会先提醒履约或澄清，不能自行宣称已经完成。",
+            "承诺只有用户在确认对话框中手动完成后才会清除活动标记；AI 重扫、程序重启或上下文刷新都不会自动完成或重新打开历史承诺，人工操作与来源证据保留审计轨迹。",
+            "已通过 Windows 桌面回归、隔离数据库重启持久化、跨模块状态、键盘与可访问性人工验收。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.20.1", "2026-08-11", "接入通用 MCP 外部智能体与渐进式搜品",
         [
             "设置页新增 MCP 与外部智能体配置区，可启用 Gateway、查看已配置和已连接的 Server 数量，并进入统一的 Server、Tool、权限、任务和审计管理窗口。支持 stdio、Streamable HTTP 与 SSE，凭据保存在 Windows 凭据管理器。",
@@ -21,7 +28,7 @@ public static class ReleaseCatalog
             "Product Sourcing 支持部分需求、缺失信息、假设、引用、Needs Information、需求版本、结果依据和 Refine Search；新增信息不会自动重复搜品，也不会静默覆盖 Customer Brain。",
             "新增连接权限、工具风险与审批策略、输入输出限制、路径与密钥脱敏、超时、重试、并发、幂等、任务恢复和不可变审计记录，并通过确定性假 MCP Server 覆盖核心回归。",
             "本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.20.0", "2026-08-11", "重构九项关键操作流程",
         [
             "客户导入改为选择文件、核对可编辑字段映射、确认实际变更三步流程；写入前集中展示新增、更新、提醒和阻止项，已有客户的负责人及销售阶段默认受保护。",
