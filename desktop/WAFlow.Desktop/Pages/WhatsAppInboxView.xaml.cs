@@ -1070,7 +1070,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             MessageBox.Show("WhatsApp 尚未提供该联系人的电话号码，AI 暂时不能安全关联客户资料。", "AI 会话助理", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (!_services.DeepSeek.HasApiKey())
+        if (!_services.AiProvider.HasApiKey())
         {
             MessageBox.Show("请先打开左侧“设置”，填写 API Key 并选择工作模型。", "AI 会话助理", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -1121,7 +1121,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
             DataChanged?.Invoke(this, EventArgs.Empty);
             ComposerBox.Focus();
         }
-        catch (DeepSeekException error)
+        catch (AiProviderException error)
         {
             try
             {
@@ -1152,7 +1152,7 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
         }
     }
 
-    private static string AgentErrorMessage(DeepSeekException error) => error.Code switch
+    private static string AgentErrorMessage(AiProviderException error) => error.Code switch
     {
         "provider_not_configured" or "model_not_selected" or "provider_unauthorized" => error.Message,
         "provider_timeout" or "provider_unavailable" or "provider_rate_limited" =>
@@ -1966,8 +1966,8 @@ public partial class WhatsAppInboxView : UserControl, IRefreshableView
     }
 
     private static string FriendlyTranslationError(Exception error) =>
-        error is DeepSeekException deepSeek
-            ? deepSeek.Message
+        error is AiProviderException providerError
+            ? providerError.Message
             : error.Message.Length <= 120 ? error.Message : error.Message[..120] + "…";
 
     private static Dictionary<string, string> ParseCustomFields(string text)

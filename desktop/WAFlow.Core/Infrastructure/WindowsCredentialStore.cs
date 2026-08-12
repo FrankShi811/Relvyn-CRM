@@ -12,11 +12,17 @@ public interface ISecretStore
 
 public sealed class WindowsCredentialStore : ISecretStore
 {
+    public const string ActiveAiProviderTarget = "WAFlow/AiProvider/active";
+    public const string LegacyAiProviderTarget = "WAFlow/DeepSeekApiKey";
     private const uint CredTypeGeneric = 1;
     private const uint PersistLocalMachine = 2;
     private readonly string _target;
 
-    public WindowsCredentialStore(string target = "WAFlow/DeepSeekApiKey") => _target = target;
+    public WindowsCredentialStore(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException("凭据目标不能为空。", nameof(target));
+        _target = target.Trim();
+    }
 
     public void Save(string secret)
     {

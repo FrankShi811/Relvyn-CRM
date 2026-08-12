@@ -689,7 +689,7 @@ public sealed class OutreachDraft
     public List<string> Risks { get; set; } = [];
     public DraftStatus Status { get; set; } = DraftStatus.Draft;
     public string Provider { get; set; } = "compatible";
-    public string Model { get; set; } = "deepseek-chat";
+    public string Model { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset? ApprovedAt { get; set; }
@@ -720,9 +720,9 @@ public sealed class DashboardSnapshot
 public sealed class AppSettings
 {
     public BusinessRoleProfile BusinessRoleProfile { get; set; } = new();
-    public string DeepSeekBaseUrl { get; set; } = "https://api.deepseek.com";
-    public string DeepSeekModel { get; set; } = "deepseek-v4-flash";
-    public string ActiveProviderId { get; set; } = "deepseek";
+    public string AiBaseUrl { get; set; } = "";
+    public string AiModel { get; set; } = "";
+    public string ActiveProviderId { get; set; } = "custom";
     public List<AiProviderProfile> ConfiguredAiProviders { get; set; } = [];
     public bool UseGlobalAiConfiguration { get; set; } = true;
     public string DefaultReasoningEffort { get; set; } = AiReasoningEfforts.Auto;
@@ -741,13 +741,40 @@ public sealed class AppSettings
 
     /// <summary>Automation guardrails around offline catch-up (PRD v0.4 §5).</summary>
     public AgentAutomationSettings AgentAutomation { get; set; } = new();
+
+    // Read-only compatibility aliases for settings written before the provider-neutral migration.
+    // They are cleared after loading and are never written by current versions.
+    [JsonPropertyName("deepSeekBaseUrl")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyAiBaseUrl { get; set; }
+
+    [JsonPropertyName("deepSeekModel")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyAiModel { get; set; }
+
+    public void NormalizeLegacyAiSettings()
+    {
+        if (string.IsNullOrWhiteSpace(AiBaseUrl) && !string.IsNullOrWhiteSpace(LegacyAiBaseUrl))
+            AiBaseUrl = LegacyAiBaseUrl.Trim();
+        if (string.IsNullOrWhiteSpace(AiModel) && !string.IsNullOrWhiteSpace(LegacyAiModel))
+            AiModel = LegacyAiModel.Trim();
+        LegacyAiBaseUrl = null;
+        LegacyAiModel = null;
+    }
+
+    // Frozen macOS source compatibility only. Current Windows persistence and runtime use AiBaseUrl/AiModel.
+    [JsonIgnore]
+    public string DeepSeekBaseUrl { get => AiBaseUrl; set => AiBaseUrl = value; }
+
+    [JsonIgnore]
+    public string DeepSeekModel { get => AiModel; set => AiModel = value; }
 }
 
 public sealed class AiProviderProfile
 {
-    public string ProviderId { get; set; } = "deepseek";
-    public string DisplayName { get; set; } = "DeepSeek";
-    public string BaseUrl { get; set; } = "https://api.deepseek.com";
+    public string ProviderId { get; set; } = "custom";
+    public string DisplayName { get; set; } = "自定义 OpenAI 兼容接口";
+    public string BaseUrl { get; set; } = "";
     public string Model { get; set; } = "";
     public List<string> AvailableModels { get; set; } = [];
     public List<AiModelCapability> ModelCapabilities { get; set; } = [];

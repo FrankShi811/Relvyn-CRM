@@ -28,7 +28,7 @@ public partial class DraftsView : UserControl, IRefreshableView
         var leadId = (LeadCombo.SelectedItem as Lead)?.Id;
         var draftId = _current?.Id;
         _leads = await _services.Repository.GetLeadsAsync(); _drafts = await _services.Repository.GetDraftsAsync();
-        GenerateButton.Content = $"{await _services.DeepSeek.GetSelectedModelAsync(AiModuleKeys.Campaigns)} 生成";
+        GenerateButton.Content = $"{await _services.AiProvider.GetSelectedModelAsync(AiModuleKeys.Campaigns)} 生成";
         LeadCombo.ItemsSource = _leads; LeadCombo.SelectedItem = _leads.FirstOrDefault(l => l.Id == leadId) ?? _leads.FirstOrDefault();
         DraftList.ItemsSource = _drafts; DraftCountText.Text = $"{_drafts.Count} 条";
         if (draftId is not null) DraftList.SelectedItem = _drafts.FirstOrDefault(d => d.Id == draftId);
@@ -43,12 +43,12 @@ public partial class DraftsView : UserControl, IRefreshableView
         {
             var purpose = (PurposeCombo.SelectedItem as PurposeOption)?.Value ?? "first_contact";
             var language = LanguageCombo.Text.Trim();
-            _current = await _services.DeepSeek.GenerateDraftAsync(lead, purpose, language, ExtraInstructionsBox.Text);
+            _current = await _services.AiProvider.GenerateDraftAsync(lead, purpose, language, ExtraInstructionsBox.Text);
             Editor.Text = _current.Body; await RefreshAsync(); DraftList.SelectedItem = _drafts.FirstOrDefault(d => d.Id == _current.Id);
             DataChanged?.Invoke(this, EventArgs.Empty);
         }
         catch (Exception error) { MessageBox.Show(error.Message, "话术生成失败", MessageBoxButton.OK, MessageBoxImage.Warning); }
-        finally { GenerateButton.IsEnabled = true; GenerateButton.Content = $"{await _services.DeepSeek.GetSelectedModelAsync(AiModuleKeys.Campaigns)} 生成"; UpdateButtons(); }
+        finally { GenerateButton.IsEnabled = true; GenerateButton.Content = $"{await _services.AiProvider.GetSelectedModelAsync(AiModuleKeys.Campaigns)} 生成"; UpdateButtons(); }
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)

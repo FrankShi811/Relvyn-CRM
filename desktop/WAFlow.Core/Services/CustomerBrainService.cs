@@ -331,8 +331,8 @@ public sealed class CustomerBrainService
             {
                 profile.ConversationContext ??= new CustomerConversationContext();
                 profile.ConversationContext.Status = CustomerContextStatus.RetryableFailed;
-                profile.ConversationContext.Error = error is DeepSeekException deepSeek
-                    ? $"{deepSeek.Code}: {deepSeek.Message}"
+                profile.ConversationContext.Error = error is AiProviderException providerError
+                    ? $"{providerError.Code}: {providerError.Message}"
                     : error.Message;
                 await _repository.SaveCustomerIntelligenceProfileAsync(profile, CancellationToken.None);
             }

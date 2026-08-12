@@ -314,7 +314,7 @@ public partial class AnalyticsView : UserControl, IRefreshableView
     private async void Generate_Click(object sender, RoutedEventArgs e)
     {
         if (_currentLead is null || _generationCancellation is not null) return;
-        if (!_services.DeepSeek.HasApiKey()) { MessageBox.Show("请先在左侧“设置”中配置 API Key 并选择模型。", "无法生成报告", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        if (!_services.AiProvider.HasApiKey()) { MessageBox.Show("请先在左侧“设置”中配置 API Key 并选择模型。", "无法生成报告", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         _generationCancellation = new CancellationTokenSource();
         SetGenerationState(true);
         var progress = new Progress<CustomerAnalysisProgress>(state => { GenerationProgress.Maximum = state.Total; GenerationProgress.Value = Math.Max(0, state.Sequence - 1); ProgressText.Text = $"{state.Sequence}/{state.Total} · {state.Message}"; });

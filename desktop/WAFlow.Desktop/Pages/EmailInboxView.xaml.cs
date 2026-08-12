@@ -720,7 +720,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
             ShowEmailAssistantResult(_emailDraft);
             UseEmailDraftButton.IsEnabled = true;
         }
-        catch (DeepSeekException error)
+        catch (AiProviderException error)
         {
             if (!IsCurrentRun()) return;
             MessageBox.Show(EmailAssistantErrorMessage(error), "AI 邮件助理", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -848,14 +848,14 @@ public partial class EmailInboxView : UserControl, IRefreshableView
 
     private async Task UpdateEmailAssistantModelAsync()
     {
-        if (!_services.DeepSeek.HasApiKey(AiModuleKeys.EmailInbox))
+        if (!_services.AiProvider.HasApiKey(AiModuleKeys.EmailInbox))
         {
             EmailAiModelText.Text = "未配置邮件 AI";
             return;
         }
         try
         {
-            EmailAiModelText.Text = await _services.DeepSeek.GetSelectedModelAsync(AiModuleKeys.EmailInbox);
+            EmailAiModelText.Text = await _services.AiProvider.GetSelectedModelAsync(AiModuleKeys.EmailInbox);
         }
         catch
         {
@@ -867,7 +867,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
     {
         var hasAccount = AccountBox.SelectedItem is EmailAccount;
         var hasRecipient = !string.IsNullOrWhiteSpace(RecipientBox.Text);
-        var aiReady = hasAccount && hasRecipient && _services.DeepSeek.HasApiKey(AiModuleKeys.EmailInbox) &&
+        var aiReady = hasAccount && hasRecipient && _services.AiProvider.HasApiKey(AiModuleKeys.EmailInbox) &&
                       !_aiAssisting && !_sending && !_conversationLoading;
         ComposerAiButton.IsEnabled = aiReady;
         GenerateEmailDraftButton.IsEnabled = aiReady;
@@ -1015,7 +1015,7 @@ public partial class EmailInboxView : UserControl, IRefreshableView
         return string.Join(Environment.NewLine, parts);
     }
 
-    private static string EmailAssistantErrorMessage(DeepSeekException error) => error.Code switch
+    private static string EmailAssistantErrorMessage(AiProviderException error) => error.Code switch
     {
         "provider_not_configured" or "model_not_selected" or "provider_unauthorized" => error.Message,
         "provider_timeout" or "provider_unavailable" or "provider_rate_limited" =>

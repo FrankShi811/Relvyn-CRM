@@ -32,7 +32,7 @@ public sealed class CustomerAnalysisService
         IProgress<CustomerAnalysisProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (!_provider.HasApiKey(AiModuleKeys.CustomerAnalytics)) throw new DeepSeekException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
+        if (!_provider.HasApiKey(AiModuleKeys.CustomerAnalytics)) throw new AiProviderException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
         var lead = await _repository.GetLeadAsync(customerId, cancellationToken) ?? throw new InvalidOperationException("客户不存在或已经删除。");
         lead = await LeadIntelligenceFreshness.EnsureCurrentAsync(_repository, lead, cancellationToken);
         if (_customerBrain is not null)
@@ -168,7 +168,7 @@ public sealed class CustomerAnalysisService
             if (report.Status != CustomerReportStatus.Stale)
             {
                 report.Status = CustomerReportStatus.RetryableFailed;
-                report.Error = error is DeepSeekException dse ? $"{dse.Code}: {dse.Message}" : error.Message;
+                report.Error = error is AiProviderException dse ? $"{dse.Code}: {dse.Message}" : error.Message;
                 await _repository.SaveCustomerAnalysisReportAsync(report, cancellationToken);
             }
             await _repository.LogEventAsync("customer_intelligence_report_failed", lead.Id, null, $"report_id={report.Id};version={report.Version};error={report.Error}", cancellationToken);
@@ -207,7 +207,7 @@ public sealed class CustomerAnalysisService
         catch (Exception error)
         {
             step.Status = CustomerReportStepStatus.RetryableFailed;
-            step.Error = error is DeepSeekException dse ? $"{dse.Code}: {dse.Message}" : error.Message;
+            step.Error = error is AiProviderException dse ? $"{dse.Code}: {dse.Message}" : error.Message;
             await _repository.SaveCustomerAnalysisStepAsync(step, cancellationToken);
             throw;
         }
@@ -309,7 +309,7 @@ public sealed class CustomerAnalysisService
                 result.Quotes.AddRange(extracted.Quotes);
                 result.InformationGaps.AddRange(extracted.InformationGaps);
             }
-            catch (DeepSeekException error) when (error.Retryable)
+            catch (AiProviderException error) when (error.Retryable)
             {
                 result.InformationGaps.Add($"一批 WhatsApp 消息未能完成 AI 事实提取（{error.Code}）；本版报告继续使用 CRM 与其他已核验资料。");
             }
@@ -400,7 +400,7 @@ public sealed class CustomerAnalysisService
             analysis = await _provider.CompleteStructuredAsync<CustomerBusinessAnalysisResult>(AiModuleKeys.CustomerAnalytics, BusinessAnalysisPrompt, payload,
                 value => ValidateBusinessAnalysis(value, lead), cancellationToken);
         }
-        catch (DeepSeekException error) when (error.Retryable)
+        catch (AiProviderException error) when (error.Retryable)
         {
             facts.InformationGaps.Add($"商业分析 AI 输出未通过校验（{error.Code}）；本版采用基于已核验事实的安全降级结果。");
             analysis = BuildFallbackBusinessAnalysis(snapshot, facts);
@@ -433,7 +433,7 @@ public sealed class CustomerAnalysisService
         {
             return await _provider.CompleteStructuredAsync<CustomerSalesStrategy>(AiModuleKeys.CustomerAnalytics, SalesStrategyPrompt, payload, ValidateSalesStrategy, cancellationToken);
         }
-        catch (DeepSeekException error) when (error.Retryable)
+        catch (AiProviderException error) when (error.Retryable)
         {
             facts.InformationGaps.Add($"销售策略 AI 输出未通过校验（{error.Code}）；本版采用核实优先的安全推进计划。");
             return BuildFallbackSalesStrategy(snapshot, facts);
@@ -455,7 +455,7 @@ public sealed class CustomerAnalysisService
         {
             return await _provider.CompleteStructuredAsync<CustomerReportSynthesisResult>(AiModuleKeys.CustomerAnalytics, ReportSynthesisPrompt, payload, ValidateSynthesis, cancellationToken);
         }
-        catch (DeepSeekException error) when (error.Retryable)
+        catch (AiProviderException error) when (error.Retryable)
         {
             facts.InformationGaps.Add($"管理层摘要 AI 输出未通过校验（{error.Code}）；本版摘要由当前已核验内容安全汇总。");
             return BuildFallbackSynthesis(snapshot, facts, business, strategy);

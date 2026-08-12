@@ -104,7 +104,7 @@ public sealed class DashboardUnreadDigestService
 
             var model = "";
             try { model = await _provider.GetSelectedModelAsync(AiModuleKeys.Dashboard, cancellationToken); }
-            catch (DeepSeekException) { model = ""; }
+            catch (AiProviderException) { model = ""; }
 
             var cached = await _repository.GetDashboardUnreadDigestCacheAsync(cancellationToken);
             if (!forceRefresh
@@ -307,7 +307,7 @@ public sealed class DashboardUnreadDigestService
 
     private static string FriendlyError(Exception error) => error switch
     {
-        DeepSeekException deepSeek when !string.IsNullOrWhiteSpace(deepSeek.Message) => deepSeek.Message,
+        AiProviderException providerError when !string.IsNullOrWhiteSpace(providerError.Message) => providerError.Message,
         TimeoutException => "请求超时",
         _ => "模型或网络异常"
     };

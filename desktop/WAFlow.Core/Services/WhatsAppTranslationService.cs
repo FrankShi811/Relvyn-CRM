@@ -135,7 +135,7 @@ public sealed partial class WhatsAppTranslationService
                     UpdatedAt = DateTimeOffset.Now
                 };
             }
-            catch (DeepSeekException error) when (
+            catch (AiProviderException error) when (
                 error.Code.Equals("invalid_structured_output", StringComparison.OrdinalIgnoreCase) ||
                 error.Retryable)
             {
@@ -333,7 +333,7 @@ public sealed partial class WhatsAppTranslationService
         {
             return await TranslateBatchAsync(sources, profile, cancellationToken);
         }
-        catch (DeepSeekException error) when (
+        catch (AiProviderException error) when (
             error.Code.Equals("invalid_structured_output", StringComparison.OrdinalIgnoreCase) &&
             sources.Count > 1)
         {
@@ -395,7 +395,7 @@ public sealed partial class WhatsAppTranslationService
     private void EnsureProvider()
     {
         if (!_provider.HasApiKey(AiModuleKeys.WhatsAppInbox))
-            throw new DeepSeekException("provider_not_configured", "请先在“设置”中为 WhatsApp 配置 AI 模型。", false);
+            throw new AiProviderException("provider_not_configured", "请先在“设置”中为 WhatsApp 配置 AI 模型。", false);
     }
 
     private static bool IsTranslatableMessage(WhatsAppMessage message)

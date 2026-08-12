@@ -116,7 +116,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
 
     public async Task RefreshAiRouteAsync()
     {
-        var execution = await _services.DeepSeek.ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence);
+        var execution = await _services.AiProvider.ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence);
         _bulkAnalyzeModel = execution.Model;
         if (TryRestoreActiveBulkProgress()) return;
 
@@ -329,7 +329,7 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
             MessageBox.Show("商机智能列表中没有可分析的客户。", "AI Sales OS", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        if (!_services.DeepSeek.HasApiKey())
+        if (!_services.AiProvider.HasApiKey())
         {
             MessageBox.Show("请先在左侧“设置”中配置 API Key 并选择模型。", "无法开始批量分析", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;

@@ -18,7 +18,7 @@
 
 现有代码已经包含：
 
-- `DeepSeekService`：兼容 DeepSeek/OpenAI 风格 Provider，结构化 Lead V2 分析与失败保护。
+- `AiProviderService`：根据用户配置路由 OpenAI Chat Completions 兼容 Provider 或原生 Anthropic Claude 协议，负责结构化 Lead V2 分析与失败保护。
 - `CustomerAnalysisService`：数据整理 → 事实提取 → 商业分析 → 销售策略 → 报告生成的多阶段流程。
 - `ConversationAssistantService`：建议回复、需求摘要、购买信号、风险和需人工批准的 CRM 字段建议。
 - `CampaignAutomationService`：WhatsApp/Email 任务、节奏、安全停止和结果统计。

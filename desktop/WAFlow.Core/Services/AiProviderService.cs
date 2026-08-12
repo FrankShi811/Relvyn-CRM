@@ -10,11 +10,12 @@ using WAFlow.Core.Infrastructure;
 
 namespace WAFlow.Core.Services;
 
-public sealed class DeepSeekException : Exception
+/// <summary>Represents a provider-neutral AI discovery, routing, transport, or output-contract failure.</summary>
+public sealed class AiProviderException : Exception
 {
     public string Code { get; }
     public bool Retryable { get; }
-    public DeepSeekException(string code, string message, bool retryable, Exception? inner = null) : base(message, inner) { Code = code; Retryable = retryable; }
+    public AiProviderException(string code, string message, bool retryable, Exception? inner = null) : base(message, inner) { Code = code; Retryable = retryable; }
 }
 
 public sealed record AiModelCatalog(IReadOnlyList<AiModelCapability> ModelCapabilities, DateTimeOffset FetchedAt)
@@ -29,9 +30,10 @@ public sealed record AiExecutionProfile(
     string Model,
     string ReasoningEffort,
     string ReasoningParameter,
-    bool AllowLegacyCredential);
+    bool AllowActiveCredentialFallback);
 
-public sealed class DeepSeekService : IStructuredAiProvider
+/// <summary>Routes structured AI work to the user-selected provider and model.</summary>
+public sealed class AiProviderService : IStructuredAiProvider
 {
     private const int StructuredOutputTokenBudget = 16_384;
     private const int ProviderAttemptLimit = 3;
@@ -40,30 +42,30 @@ public sealed class DeepSeekService : IStructuredAiProvider
         NumberHandling = JsonNumberHandling.AllowReadingFromString
     };
     private readonly LocalRepository _repository;
-    private readonly ISecretStore _secrets;
+    private readonly ISecretStore _activeCredential;
     private readonly Func<string, ISecretStore> _providerSecretResolver;
     private readonly HttpClient _http;
     private readonly HybridRetriever? _knowledgeRetrieval;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _analysisGates =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public DeepSeekService(
+    public AiProviderService(
         LocalRepository repository,
-        ISecretStore secrets,
+        ISecretStore activeCredential,
         HttpClient? httpClient = null,
         HybridRetriever? knowledgeRetrieval = null,
         Func<string, ISecretStore>? providerSecretResolver = null)
     {
-        _repository = repository; _secrets = secrets;
+        _repository = repository; _activeCredential = activeCredential;
         _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(90) };
         _knowledgeRetrieval = knowledgeRetrieval;
         _providerSecretResolver = providerSecretResolver
-            ?? (_ => secrets);
+            ?? (_ => activeCredential);
     }
 
     public bool HasApiKey()
     {
-        try { return !string.IsNullOrWhiteSpace(_secrets.Read()); }
+        try { return !string.IsNullOrWhiteSpace(_activeCredential.Read()); }
         catch { return false; }
     }
 
@@ -89,7 +91,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 ? moduleKey
                 : AiModuleKeys.Global;
         var providerId = settings.ActiveProviderId;
-        var model = settings.DeepSeekModel;
+        var model = settings.AiModel;
         var reasoningEffort = settings.DefaultReasoningEffort;
         var profiles = settings.ConfiguredAiProviders ?? [];
 
@@ -125,12 +127,12 @@ public sealed class DeepSeekService : IStructuredAiProvider
         var baseUrl = profile?.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
             baseUrl = providerId.Equals(settings.ActiveProviderId, StringComparison.OrdinalIgnoreCase)
-                ? settings.DeepSeekBaseUrl
+                ? settings.AiBaseUrl
                 : AiProviderCatalog.Resolve(providerId).DefaultBaseUrl;
         if (string.IsNullOrWhiteSpace(model))
             model = profile?.Model;
         if (string.IsNullOrWhiteSpace(model))
-            throw new DeepSeekException("model_not_selected", "请先从自动拉取的模型列表中选择一个模型。", false);
+            throw new AiProviderException("model_not_selected", "请先从自动拉取的模型列表中选择一个模型。", false);
 
         var capability = profile?.ModelCapabilities?.FirstOrDefault(item =>
             item.ModelId.Equals(model, StringComparison.OrdinalIgnoreCase));
@@ -276,7 +278,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
         try
         {
             var execution = await ResolveExecutionProfileAsync(moduleKey, cancellationToken);
-            DeepSeekException? lastError = null;
+            AiProviderException? lastError = null;
             var previousOutput = "";
             var serializedPayload = Infrastructure.Json.Serialize(payload);
             for (var attempt = 0; attempt < maximumAttempts; attempt++)
@@ -296,26 +298,26 @@ public sealed class DeepSeekService : IStructuredAiProvider
                     var content = await CompleteJsonAsync(execution, attemptInstructions, serializedPayload, cancellationToken);
                     previousOutput = content;
                     var result = DeserializeCompatibleJson<T>(content);
-                    if (result is null) throw new DeepSeekException("invalid_structured_output", "AI 未返回结构化分析结果。", true);
+                    if (result is null) throw new AiProviderException("invalid_structured_output", "AI 未返回结构化分析结果。", true);
                     var validationError = validate(result);
                     if (!string.IsNullOrWhiteSpace(validationError))
-                        throw new DeepSeekException("invalid_structured_output", validationError, true);
+                        throw new AiProviderException("invalid_structured_output", validationError, true);
                     return result;
                 }
-                catch (DeepSeekException error) when (error.Code == "invalid_structured_output")
+                catch (AiProviderException error) when (error.Code == "invalid_structured_output")
                 {
                     lastError = error;
                 }
-                catch (DeepSeekException)
+                catch (AiProviderException)
                 {
                     throw;
                 }
                 catch (Exception error)
                 {
-                    lastError = new DeepSeekException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true, error);
+                    lastError = new AiProviderException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true, error);
                 }
             }
-            throw lastError ?? new DeepSeekException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true);
+            throw lastError ?? new AiProviderException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true);
         }
         finally { gate.Release(); }
     }
@@ -332,10 +334,10 @@ public sealed class DeepSeekService : IStructuredAiProvider
         string? apiKeyOverride = null,
         CancellationToken cancellationToken = default)
     {
-        var key = string.IsNullOrWhiteSpace(apiKeyOverride) ? _secrets.Read() : apiKeyOverride.Trim();
-        if (string.IsNullOrWhiteSpace(key)) throw new DeepSeekException("provider_not_configured", "请先填写 API Key，再自动拉取模型。", false);
+        var key = string.IsNullOrWhiteSpace(apiKeyOverride) ? _activeCredential.Read() : apiKeyOverride.Trim();
+        if (string.IsNullOrWhiteSpace(key)) throw new AiProviderException("provider_not_configured", "请先填写 API Key，再自动拉取模型。", false);
         if (!Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-            throw new DeepSeekException("invalid_base_url", "AI Base URL 必须是有效的 HTTPS 地址。", false);
+            throw new AiProviderException("invalid_base_url", "AI Base URL 必须是有效的 HTTPS 地址。", false);
 
         var provider = AiProviderCatalog.Resolve(providerId);
         var modelsEndpoint = uri.ToString().TrimEnd('/') + "/models";
@@ -345,15 +347,15 @@ public sealed class DeepSeekService : IStructuredAiProvider
         ApplyProviderAuthentication(request, provider.Protocol, key);
         HttpResponseMessage response;
         try { response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
-        catch (TaskCanceledException error) { throw new DeepSeekException("model_discovery_timeout", "拉取模型列表超时，请检查网络后重试。", true, error); }
-        catch (HttpRequestException error) { throw new DeepSeekException("model_discovery_unavailable", "无法连接 AI 模型列表接口，请检查网络和 Base URL。", true, error); }
+        catch (TaskCanceledException error) { throw new AiProviderException("model_discovery_timeout", "拉取模型列表超时，请检查网络后重试。", true, error); }
+        catch (HttpRequestException error) { throw new AiProviderException("model_discovery_unavailable", "无法连接 AI 模型列表接口，请检查网络和 Base URL。", true, error); }
         using (response)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var unauthorized = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     unauthorized ? "provider_unauthorized" : "model_discovery_failed",
                     unauthorized ? "API Key 无效或没有读取模型列表的权限。" : $"拉取模型列表失败（HTTP {(int)response.StatusCode}）。",
                     response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500);
@@ -387,9 +389,9 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 if (capabilities.Count == 0) throw new JsonException("Empty model array");
                 return new AiModelCatalog(capabilities, DateTimeOffset.Now);
             }
-            catch (Exception error) when (error is not DeepSeekException)
+            catch (Exception error) when (error is not AiProviderException)
             {
-                throw new DeepSeekException("invalid_model_catalog", "模型列表接口未返回可选择的模型名称。", true, error);
+                throw new AiProviderException("invalid_model_catalog", "模型列表接口未返回可选择的模型名称。", true, error);
             }
         }
     }
@@ -691,7 +693,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 """;
             LeadAnalysis? analysis = null;
             var analysisAccepted = false;
-            DeepSeekException? lastContractError = null;
+            AiProviderException? lastContractError = null;
             var previousOutput = "";
             var serializedPayload = Infrastructure.Json.Serialize(payload);
             for (var attempt = 0; attempt < 3; attempt++)
@@ -715,20 +717,20 @@ public sealed class DeepSeekService : IStructuredAiProvider
                     analysisAccepted = true;
                     break;
                 }
-                catch (DeepSeekException error) when (error.Code == "invalid_structured_output")
+                catch (AiProviderException error) when (error.Code == "invalid_structured_output")
                 {
                     lastContractError = error;
                 }
             }
             if (!analysisAccepted || analysis is null)
-                throw lastContractError ?? new DeepSeekException("invalid_structured_output", "AI 未返回 Lead Intelligence V2 结果。", true);
+                throw lastContractError ?? new AiProviderException("invalid_structured_output", "AI 未返回 Lead Intelligence V2 结果。", true);
             var currentExternalDependency = await CustomerExternalFactPolicy.CaptureDependencyAsync(
                 _repository,
                 lead.Id,
                 DateTimeOffset.Now,
                 cancellationToken);
             if (!externalDependency.Hash.Equals(currentExternalDependency.Hash, StringComparison.Ordinal))
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     "lead_analysis_source_changed",
                     "客户身份或外部调查事实已在 Lead Intelligence 分析期间变化，旧快照结果未提交，请重试。",
                     true);
@@ -758,7 +760,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 DateTimeOffset.Now,
                 cancellationToken);
             if (!externalDependency.Hash.Equals(currentExternalDependency.Hash, StringComparison.Ordinal))
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     "lead_analysis_source_changed",
                     "客户身份或外部调查事实在 Lead Intelligence 保存时变化，旧快照结果已撤销，请重试。",
                     true);
@@ -789,7 +791,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
         }
         catch (Exception error)
         {
-            var safe = error is DeepSeekException dse ? $"{dse.Code}: {dse.Message}" : "AI 返回内容无法验证，请重试。";
+            var safe = error is AiProviderException dse ? $"{dse.Code}: {dse.Message}" : "AI 返回内容无法验证，请重试。";
             var target = await _repository.GetLeadAsync(lead.Id, cancellationToken) ?? lead;
             var hasNewerRequest = target.AnalysisRequestedAt is not null && (requestedAt is null || target.AnalysisRequestedAt > requestedAt);
             LeadScoringService.ResetToAiBaseline(target, "本次 AI 分析失败，客户资料已保留", "检查 AI 配置后重试分析。");
@@ -798,7 +800,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
             target.LastAnalyzedAt = null;
             await _repository.UpsertLeadAsync(target, cancellationToken);
             await _repository.SaveAnalysisRunAsync(runId, lead.Id, "retryable_failed", execution.Model, null, safe, cancellationToken);
-            throw error is DeepSeekException ? error : new DeepSeekException("invalid_structured_output", safe, true, error);
+            throw error is AiProviderException ? error : new AiProviderException("invalid_structured_output", safe, true, error);
         }
     }
 
@@ -816,8 +818,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
         var content = await CompleteJsonAsync(execution, instructions, Infrastructure.Json.Serialize(payload), cancellationToken);
         GeneratedDraft? generated;
         try { generated = Infrastructure.Json.Deserialize<GeneratedDraft>(ExtractJson(content)); }
-        catch (Exception error) { throw new DeepSeekException("invalid_structured_output", "AI 话术 JSON 解析失败。", true, error); }
-        if (generated is null || string.IsNullOrWhiteSpace(generated.Body) || generated.Body.Length > 4096) throw new DeepSeekException("invalid_structured_output", "AI 话术缺少正文或正文过长。", true);
+        catch (Exception error) { throw new AiProviderException("invalid_structured_output", "AI 话术 JSON 解析失败。", true, error); }
+        if (generated is null || string.IsNullOrWhiteSpace(generated.Body) || generated.Body.Length > 4096) throw new AiProviderException("invalid_structured_output", "AI 话术缺少正文或正文过长。", true);
         var draft = new OutreachDraft
         {
             LeadId=lead.Id, LeadName=lead.DisplayName, Purpose=purpose, Language=language, Body=generated.Body.Trim(),
@@ -832,25 +834,25 @@ public sealed class DeepSeekService : IStructuredAiProvider
     private async Task<string> CompleteJsonAsync(AiExecutionProfile execution, string instructions, string payload, CancellationToken cancellationToken)
     {
         var key = ReadApiKey(execution);
-        if (string.IsNullOrWhiteSpace(key)) throw new DeepSeekException("provider_not_configured", "请先在 AI 设置中填写 API Key。", false);
+        if (string.IsNullOrWhiteSpace(key)) throw new AiProviderException("provider_not_configured", "请先在 AI 设置中填写 API Key。", false);
         var settings = await _repository.GetAppSettingsAsync(cancellationToken);
         instructions = BusinessRoleContextPolicy.ApplyInstructions(instructions);
         payload = BusinessRoleContextPolicy.ApplyPayload(payload, settings.BusinessRoleProfile);
-        DeepSeekException? lastError = null;
+        AiProviderException? lastError = null;
         for (var attempt = 0; attempt < ProviderAttemptLimit; attempt++)
         {
             try
             {
                 return await CompleteJsonAttemptAsync(execution, instructions, payload, key, cancellationToken);
             }
-            catch (DeepSeekException error) when (ShouldRetryProviderRequest(error))
+            catch (AiProviderException error) when (ShouldRetryProviderRequest(error))
             {
                 lastError = error;
                 if (attempt == ProviderAttemptLimit - 1) throw;
                 await Task.Delay(ProviderRetryDelay(error, attempt), cancellationToken);
             }
         }
-        throw lastError ?? new DeepSeekException("provider_unavailable", "AI Provider 暂时不可用，请稍后重试。", true);
+        throw lastError ?? new AiProviderException("provider_unavailable", "AI Provider 暂时不可用，请稍后重试。", true);
     }
 
     private async Task<string> CompleteJsonAttemptAsync(
@@ -882,8 +884,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
         HttpResponseMessage response;
         try { response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (TaskCanceledException error) { throw new DeepSeekException("provider_timeout", "AI 请求超时，请稍后重试。", true, error); }
-        catch (HttpRequestException error) { throw new DeepSeekException("provider_unavailable", "无法连接 AI Provider，请检查网络和 Base URL。", true, error); }
+        catch (TaskCanceledException error) { throw new AiProviderException("provider_timeout", "AI 请求超时，请稍后重试。", true, error); }
+        catch (HttpRequestException error) { throw new AiProviderException("provider_unavailable", "无法连接 AI Provider，请检查网络和 Base URL。", true, error); }
         using (response)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -891,7 +893,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
             {
                 var code = response.StatusCode == HttpStatusCode.TooManyRequests ? "provider_rate_limited" : response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "provider_unauthorized" : "provider_request_failed";
                 var retryable = response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500;
-                throw new DeepSeekException(code, response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "AI API Key 无效或无权限。" : $"AI 请求失败（HTTP {(int)response.StatusCode}）。", retryable);
+                throw new AiProviderException(code, response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "AI API Key 无效或无权限。" : $"AI 请求失败（HTTP {(int)response.StatusCode}）。", retryable);
             }
             try
             {
@@ -899,7 +901,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 var choice = document.RootElement.GetProperty("choices")[0];
                 var finishReason = choice.TryGetProperty("finish_reason", out var reason) ? reason.GetString() : "";
                 if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
-                    throw new DeepSeekException(
+                    throw new AiProviderException(
                         "invalid_structured_output",
                         "AI 结构化结果达到输出上限，系统将使用修复提示自动重试。",
                         true);
@@ -912,7 +914,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                     var hasReasoning = message.TryGetProperty("reasoning_content", out var reasoningContent)
                         && reasoningContent.ValueKind == JsonValueKind.String
                         && !string.IsNullOrWhiteSpace(reasoningContent.GetString());
-                    throw new DeepSeekException(
+                    throw new AiProviderException(
                         "invalid_structured_output",
                         hasReasoning
                             ? "AI 已完成思考但未返回最终 JSON，系统将自动重试。"
@@ -921,8 +923,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 }
                 return content;
             }
-            catch (DeepSeekException) { throw; }
-            catch (Exception error) { throw new DeepSeekException("invalid_provider_response", "AI Provider 响应缺少有效内容。", true, error); }
+            catch (AiProviderException) { throw; }
+            catch (Exception error) { throw new AiProviderException("invalid_provider_response", "AI Provider 响应缺少有效内容。", true, error); }
         }
     }
 
@@ -1021,8 +1023,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
         HttpResponseMessage response;
         try { response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (TaskCanceledException error) { throw new DeepSeekException("provider_timeout", "Claude 请求超时，请稍后重试。", true, error); }
-        catch (HttpRequestException error) { throw new DeepSeekException("provider_unavailable", "无法连接 Anthropic Claude，请检查网络和 Base URL。", true, error); }
+        catch (TaskCanceledException error) { throw new AiProviderException("provider_timeout", "Claude 请求超时，请稍后重试。", true, error); }
+        catch (HttpRequestException error) { throw new AiProviderException("provider_unavailable", "无法连接 Anthropic Claude，请检查网络和 Base URL。", true, error); }
         using (response)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1034,7 +1036,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
                         ? "provider_unauthorized"
                         : "provider_request_failed";
                 var retryable = response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500;
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     code,
                     response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
                         ? "Claude API Key 无效或无权限。"
@@ -1048,27 +1050,27 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 var root = document.RootElement;
                 var stopReason = root.TryGetProperty("stop_reason", out var reason) ? reason.GetString() : "";
                 if (string.Equals(stopReason, "max_tokens", StringComparison.OrdinalIgnoreCase))
-                    throw new DeepSeekException(
+                    throw new AiProviderException(
                         "invalid_structured_output",
                         "Claude 结构化结果达到输出上限，系统将使用修复提示自动重试。",
                         true);
                 var content = ExtractAnthropicText(root);
                 if (string.IsNullOrWhiteSpace(content))
-                    throw new DeepSeekException(
+                    throw new AiProviderException(
                         "invalid_structured_output",
                         "Claude 未返回最终 JSON，系统将自动重试。",
                         true);
                 return content;
             }
-            catch (DeepSeekException) { throw; }
+            catch (AiProviderException) { throw; }
             catch (Exception error)
             {
-                throw new DeepSeekException("invalid_provider_response", "Claude 响应缺少有效内容。", true, error);
+                throw new AiProviderException("invalid_provider_response", "Claude 响应缺少有效内容。", true, error);
             }
         }
     }
 
-    private static bool ShouldRetryProviderRequest(DeepSeekException error) =>
+    private static bool ShouldRetryProviderRequest(AiProviderException error) =>
         error.Retryable
         && error.Code is "provider_rate_limited"
             or "provider_timeout"
@@ -1076,7 +1078,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
             or "provider_request_failed"
             or "invalid_provider_response";
 
-    private static TimeSpan ProviderRetryDelay(DeepSeekException error, int attempt) =>
+    private static TimeSpan ProviderRetryDelay(AiProviderException error, int attempt) =>
         error.Code == "provider_rate_limited"
             ? TimeSpan.FromSeconds(attempt == 0 ? 1 : 3)
             : TimeSpan.FromMilliseconds(attempt == 0 ? 350 : 900);
@@ -1165,33 +1167,33 @@ public sealed class DeepSeekService : IStructuredAiProvider
                 RiskWarning=riskWarning, Risks=string.IsNullOrWhiteSpace(riskWarning) ? [] : [riskWarning]
             };
         }
-        catch (Exception error) { throw new DeepSeekException("invalid_structured_output", "AI 分析 JSON 解析失败。", true, error); }
+        catch (Exception error) { throw new AiProviderException("invalid_structured_output", "AI 分析 JSON 解析失败。", true, error); }
     }
 
     private static void Validate(LeadAnalysis analysis)
     {
         if (analysis.ContractVersion != LeadIntelligenceContract.Version)
-            throw new DeepSeekException("invalid_structured_output", "AI 未返回 Lead Intelligence V2 契约。", true);
+            throw new AiProviderException("invalid_structured_output", "AI 未返回 Lead Intelligence V2 契约。", true);
         if (analysis.Factors.Count != LeadScoringService.Weights.Count || analysis.Factors.Select(x => x.Key).Distinct().Count() != LeadScoringService.Weights.Count)
-            throw new DeepSeekException("invalid_structured_output", "分析必须包含 6 个唯一 V2 评分维度。", true);
+            throw new AiProviderException("invalid_structured_output", "分析必须包含 6 个唯一 V2 评分维度。", true);
         foreach (var factor in analysis.Factors)
             if (!LeadScoringService.Weights.TryGetValue(factor.Key, out var max) || factor.MaxScore != max || factor.Score < 0 || factor.Score > max ||
                 string.IsNullOrWhiteSpace(factor.Rationale) || factor.Evidence.Count == 0 || factor.Evidence.Any(string.IsNullOrWhiteSpace))
-                throw new DeepSeekException("invalid_structured_output", $"评分维度 {factor.Key} 的分数、原因或证据无效。", true);
+                throw new AiProviderException("invalid_structured_output", $"评分维度 {factor.Key} 的分数、原因或证据无效。", true);
         if (analysis.Factors.Sum(x => x.Score) != analysis.BaseProfileScore || analysis.BaseProfileScore is < 0 or > 100)
-            throw new DeepSeekException("invalid_structured_output", "基础画像分与六维分数不一致。", true);
+            throw new AiProviderException("invalid_structured_output", "基础画像分与六维分数不一致。", true);
         if (analysis.BehaviorSignalScore is < LeadIntelligenceContract.BehaviorSignalMinimum or > LeadIntelligenceContract.BehaviorSignalMaximum ||
             analysis.BehaviorSignals.Sum(signal => signal.Score) != analysis.BehaviorSignalScore ||
             analysis.BehaviorSignals.Any(signal => signal.Score == 0 || signal.Score is < LeadIntelligenceContract.BehaviorSignalMinimum or > LeadIntelligenceContract.BehaviorSignalMaximum || string.IsNullOrWhiteSpace(signal.Signal) || string.IsNullOrWhiteSpace(signal.Evidence)))
-            throw new DeepSeekException("invalid_structured_output", "WhatsApp 行为修正分与行为证据不一致。", true);
+            throw new AiProviderException("invalid_structured_output", "WhatsApp 行为修正分与行为证据不一致。", true);
         var expectedScore = Math.Clamp(analysis.BaseProfileScore + analysis.BehaviorSignalScore, 0, 100);
         if (analysis.Score != expectedScore || LeadScoringService.GradeFromScore(analysis.Score) != analysis.Grade)
-            throw new DeepSeekException("invalid_structured_output", "最终分、行为修正分与等级不一致。", true);
+            throw new AiProviderException("invalid_structured_output", "最终分、行为修正分与等级不一致。", true);
         if (analysis.PurchaseProbability is < 0 or > 100)
-            throw new DeepSeekException("invalid_structured_output", "AI \u91c7\u8d2d\u6982\u7387\u5fc5\u987b\u4ecb\u4e8e 0 \u81f3 100\u3002", true);
+            throw new AiProviderException("invalid_structured_output", "AI \u91c7\u8d2d\u6982\u7387\u5fc5\u987b\u4ecb\u4e8e 0 \u81f3 100\u3002", true);
         if (analysis.Confidence is < 0 or > 1 || string.IsNullOrWhiteSpace(analysis.ProfileSummary) || string.IsNullOrWhiteSpace(analysis.CustomerSegment) ||
             string.IsNullOrWhiteSpace(analysis.NextAction) || string.IsNullOrWhiteSpace(analysis.RiskWarning))
-            throw new DeepSeekException("invalid_structured_output", "分析缺少画像、分组、风险或下一步动作。", true);
+            throw new AiProviderException("invalid_structured_output", "分析缺少画像、分组、风险或下一步动作。", true);
     }
 
     private static T? DeserializeCompatibleJson<T>(string content) where T : class
@@ -1201,8 +1203,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
             var normalized = NormalizeJsonForType<T>(ExtractJson(content));
             return JsonSerializer.Deserialize<T>(normalized, CompatibleJsonOptions);
         }
-        catch (DeepSeekException) { throw; }
-        catch (Exception error) { throw new DeepSeekException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true, error); }
+        catch (AiProviderException) { throw; }
+        catch (Exception error) { throw new AiProviderException("invalid_structured_output", "AI 返回的结构化 JSON 无法解析。", true, error); }
     }
 
     private static string NormalizeJsonForType<T>(string json) where T : class
@@ -1376,8 +1378,8 @@ public sealed class DeepSeekService : IStructuredAiProvider
             // after an in-place upgrade. Non-active providers must never borrow it.
         }
 
-        if (!execution.AllowLegacyCredential) return null;
-        try { return _secrets.Read(); }
+        if (!execution.AllowActiveCredentialFallback) return null;
+        try { return _activeCredential.Read(); }
         catch { return null; }
     }
 
@@ -1651,7 +1653,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
             if (firstLine >= 0 && lastFence > firstLine) trimmed = trimmed[(firstLine + 1)..lastFence].Trim();
         }
         var start = trimmed.IndexOf('{');
-        if (start < 0) throw new DeepSeekException("invalid_structured_output", "AI Provider 未返回 JSON 对象。", true);
+        if (start < 0) throw new AiProviderException("invalid_structured_output", "AI Provider 未返回 JSON 对象。", true);
         var depth = 0;
         var inString = false;
         var escaped = false;
@@ -1669,7 +1671,7 @@ public sealed class DeepSeekService : IStructuredAiProvider
             if (character == '{') depth++;
             else if (character == '}' && --depth == 0) return trimmed[start..(index + 1)];
         }
-        throw new DeepSeekException("invalid_structured_output", "AI Provider 返回的 JSON 对象不完整。", true);
+        throw new AiProviderException("invalid_structured_output", "AI Provider 返回的 JSON 对象不完整。", true);
     }
 
     private sealed class LeadAnalysisOutput

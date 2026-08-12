@@ -45,7 +45,7 @@
 
 ## 6. WhatsApp、邮箱与网络服务
 
-本软件不是 Meta、WhatsApp、Microsoft、Google、DeepSeek、OpenAI、Tavily、Brave 或其他第三方服务商的官方产品，也不受其认可或担保。
+本软件不是 Meta、WhatsApp、Microsoft、Google、任何 AI 模型服务商、Tavily、Brave 或其他第三方服务商的官方产品，也不受其认可或担保。
 
 个人 WhatsApp 连接依赖非官方 WhatsApp Web 多设备协议。许可方不承诺账号持续在线、不要求重新验证、不会受到限制、不会被登出或不会被封禁。用户必须遵守 WhatsApp 及相关服务的条款。
 

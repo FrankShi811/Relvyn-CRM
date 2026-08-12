@@ -2346,7 +2346,7 @@ try
     await blockedEmailDraftTask;
     Check(false, "Email Sales Copilot rejects a draft when the customer external-fact source changes in flight");
 }
-catch (DeepSeekException error)
+catch (AiProviderException error)
 {
     Check(error.Code == "email_assistant_source_changed"
         && (await repository.GetEmailMessagesAsync(emailRaceConversation.Id)).Count == 1,
@@ -2882,6 +2882,30 @@ Check(
     && persistedOnboarding.SeenGuideVersions.GetValueOrDefault("settings") == 4,
     "global and per-module onboarding completion persists by content version");
 
+var providerNeutralDefaults = new AppSettings();
+Check(
+    providerNeutralDefaults.ActiveProviderId == AiProviderCatalog.DefaultProviderId
+    && string.IsNullOrWhiteSpace(providerNeutralDefaults.AiBaseUrl)
+    && string.IsNullOrWhiteSpace(providerNeutralDefaults.AiModel)
+    && new AiProviderProfile() is { ProviderId: "custom", DisplayName: "自定义 OpenAI 兼容接口", BaseUrl: "" }
+    && string.IsNullOrWhiteSpace(new OutreachDraft().Model)
+    && AiProviderCatalog.Resolve("unknown-provider").Id == AiProviderCatalog.DefaultProviderId
+    && AiProviderCatalog.Supported.First().Id == AiProviderCatalog.DefaultProviderId,
+    "new installations use provider-neutral AI defaults without preselecting a vendor or model");
+var legacyProviderSettings = Json.Deserialize<AppSettings>(
+    """{"deepSeekBaseUrl":"https://legacy.example/v1","deepSeekModel":"legacy-model","activeProviderId":"openai"}""")!;
+legacyProviderSettings.NormalizeLegacyAiSettings();
+var migratedProviderJson = Json.Serialize(legacyProviderSettings);
+Check(
+    legacyProviderSettings.AiBaseUrl == "https://legacy.example/v1"
+    && legacyProviderSettings.AiModel == "legacy-model"
+    && legacyProviderSettings.ActiveProviderId == "openai"
+    && !migratedProviderJson.Contains("deepSeekBaseUrl", StringComparison.Ordinal)
+    && !migratedProviderJson.Contains("deepSeekModel", StringComparison.Ordinal)
+    && migratedProviderJson.Contains("aiBaseUrl", StringComparison.Ordinal)
+    && migratedProviderJson.Contains("aiModel", StringComparison.Ordinal),
+    "legacy provider settings migrate once to provider-neutral fields without losing the configured route");
+
 await repository.SaveAppSettingsAsync(new AppSettings
 {
     BusinessRoleProfile=new BusinessRoleProfile
@@ -2891,8 +2915,8 @@ await repository.SaveAppSettingsAsync(new AppSettings
         RoleName="商务拓展",
         RoleSkillDescription="识别合作机会和决策链，所有报价与承诺由人工确认。"
     },
-    DeepSeekBaseUrl="https://api.openai.com/v1",
-    DeepSeekModel="gpt-4.1-mini",
+    AiBaseUrl="https://api.openai.com/v1",
+    AiModel="gpt-4.1-mini",
     ActiveProviderId="openai",
     UseGlobalAiConfiguration=false,
     DefaultReasoningEffort="medium",
@@ -2995,8 +3019,8 @@ var settingsWindowRouteSnapshot = AiModulePreferencePersistence.CreateSnapshot(
 await repository.SaveAppSettingsAsync(new AppSettings
 {
     ActiveProviderId="deepseek",
-    DeepSeekBaseUrl="https://api.deepseek.com",
-    DeepSeekModel="deepseek-v4-flash",
+    AiBaseUrl="https://api.deepseek.com",
+    AiModel="deepseek-v4-flash",
     UseGlobalAiConfiguration=false,
     ConfiguredAiProviders=
     [
@@ -3036,7 +3060,7 @@ var routingHandler = new QueueHandler(
     Envelope("""{"value":"whatsapp-route"}"""),
     Envelope("""{"value":"lead-route"}""")
 ]);
-var routingProvider = new DeepSeekService(
+var routingProvider = new AiProviderService(
     repository,
     new FakeSecretStore("sk-global"),
     new HttpClient(routingHandler) { Timeout=TimeSpan.FromSeconds(5) },
@@ -3044,8 +3068,8 @@ var routingProvider = new DeepSeekService(
 await repository.SaveAppSettingsAsync(new AppSettings
 {
     ActiveProviderId="deepseek",
-    DeepSeekBaseUrl="https://api.deepseek.com",
-    DeepSeekModel="deepseek-chat",
+    AiBaseUrl="https://api.deepseek.com",
+    AiModel="deepseek-chat",
     DefaultReasoningEffort="auto",
     UseGlobalAiConfiguration=false,
     ConfiguredAiProviders=
@@ -3150,10 +3174,10 @@ Check(
     && dashboardLowestTierRoute.Model == "deepseek-v4-flash"
     && dashboardLowestTierRoute.ReasoningEffort == "low"
     && dashboardLowestTierRoute.ReasoningParameter == "reasoning_effort"
-    && DeepSeekService.SelectLowestTierModel(
+    && AiProviderService.SelectLowestTierModel(
         ["gpt-5-mini", "gpt-5-nano", "gpt-5-pro"],
         "gpt-5-pro") == "gpt-5-nano"
-    && DeepSeekService.SelectLowestTierModel(
+    && AiProviderService.SelectLowestTierModel(
         ["deepseek-reasoner", "deepseek-chat"],
         "deepseek-reasoner") == "deepseek-chat",
     "Dashboard silently ignores old module overrides and selects the API-discovered lowest-tier model and reasoning depth");
@@ -3212,8 +3236,8 @@ var analysisJson = V2AnalysisJson("Could you quote 300 units?");
 var draftJson = WAFlow.Core.Infrastructure.Json.Serialize(new { purpose="follow_up", language="en", body="Hi Elena, thank you for confirming 300 units. I will verify the lead time and share the next details with you.", rationale=new[] { "承接客户的数量与交期问题" }, assumptions=Array.Empty<string>(), risks=new[] { "交期需人工确认" } });
 var invalidAnalysisJson = "{\"score\":99,\"grade\":\"A\",\"factors\":[],\"stage\":\"new\",\"confidence\":0.8,\"evidence\":[],\"profileSummary\":\"x\",\"customerSegment\":\"x\",\"nextAction\":\"x\",\"risks\":[]}";
 var handler = new QueueHandler([Envelope(analysisJson), Envelope(draftJson), Envelope(invalidAnalysisJson), Envelope(invalidAnalysisJson), Envelope(invalidAnalysisJson)]);
-var deepSeek = new DeepSeekService(repository, new FakeSecretStore("sk-test-redacted"), new HttpClient(handler) { Timeout=TimeSpan.FromSeconds(5) });
-await repository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-chat" });
+var deepSeek = new AiProviderService(repository, new FakeSecretStore("sk-test-redacted"), new HttpClient(handler) { Timeout=TimeSpan.FromSeconds(5) });
+await repository.SaveAppSettingsAsync(new AppSettings { AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-chat" });
 var catalog = await deepSeek.DiscoverModelsAsync("https://api.deepseek.com");
 Check(catalog.Models.SequenceEqual(["deepseek-chat", "deepseek-reasoner"]), "AI provider model catalog is fetched and sorted");
 var reasonerCapability = catalog.ModelCapabilities.Single(item => item.ModelId == "deepseek-reasoner");
@@ -3224,7 +3248,7 @@ Check(
 var deepSeekIdOnlyHandler = new ProviderProtocolHandler(
     """{"data":[{"id":"deepseek-v4-flash"},{"id":"deepseek-v4-pro"}]}""",
     []);
-var deepSeekIdOnlyProvider = new DeepSeekService(
+var deepSeekIdOnlyProvider = new AiProviderService(
     repository,
     new FakeSecretStore("sk-deepseek-id-only"),
     new HttpClient(deepSeekIdOnlyHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3245,7 +3269,7 @@ await deepSeekReasoningRepository.InitializeAsync();
 var deepSeekReasoningHandler = new ProviderProtocolHandler(
     """{"data":[{"id":"deepseek-v4-flash"}]}""",
     [Envelope("""{"value":"deepseek-thinking"}""")]);
-var deepSeekReasoningProvider = new DeepSeekService(
+var deepSeekReasoningProvider = new AiProviderService(
     deepSeekReasoningRepository,
     new FakeSecretStore("sk-deepseek-thinking"),
     new HttpClient(deepSeekReasoningHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3259,8 +3283,8 @@ await deepSeekReasoningRepository.SaveAppSettingsAsync(new AppSettings
         RoleSkillDescription="Identify evidence-backed cooperation opportunities."
     },
     ActiveProviderId="deepseek",
-    DeepSeekBaseUrl="https://api.deepseek.com",
-    DeepSeekModel="deepseek-v4-flash",
+    AiBaseUrl="https://api.deepseek.com",
+    AiModel="deepseek-v4-flash",
     DefaultReasoningEffort="high",
     UseGlobalAiConfiguration=true,
     ConfiguredAiProviders=
@@ -3300,7 +3324,7 @@ Check(
 var openRouterMandatoryHandler = new ProviderProtocolHandler(
     """{"data":[{"id":"vendor/mandatory-reasoner","reasoning":{"supported_efforts":null,"mandatory":true}}]}""",
     []);
-var openRouterMandatoryProvider = new DeepSeekService(
+var openRouterMandatoryProvider = new AiProviderService(
     repository,
     new FakeSecretStore("sk-openrouter-mandatory"),
     new HttpClient(openRouterMandatoryHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3357,7 +3381,7 @@ await anthropicRepository.InitializeAsync();
 var anthropicHandler = new ProviderProtocolHandler(
     """{"data":[{"id":"claude-opus-4-6","capabilities":{"effort":{"low":{"supported":true},"medium":{"supported":true},"high":{"supported":true},"max":{"supported":true}}}}]}""",
     ["""{"content":[{"type":"text","text":"{\"value\":\"claude-route\"}"}],"stop_reason":"end_turn"}"""]);
-var anthropicProvider = new DeepSeekService(
+var anthropicProvider = new AiProviderService(
     anthropicRepository,
     new FakeSecretStore("sk-legacy"),
     new HttpClient(anthropicHandler) { Timeout=TimeSpan.FromSeconds(5) },
@@ -3369,8 +3393,8 @@ var anthropicCatalog = await anthropicProvider.DiscoverModelsAsync(
 await anthropicRepository.SaveAppSettingsAsync(new AppSettings
 {
     ActiveProviderId="anthropic",
-    DeepSeekBaseUrl="https://api.anthropic.com/v1",
-    DeepSeekModel="claude-opus-4-6",
+    AiBaseUrl="https://api.anthropic.com/v1",
+    AiModel="claude-opus-4-6",
     DefaultReasoningEffort="high",
     UseGlobalAiConfiguration=true,
     ConfiguredAiProviders=
@@ -3417,7 +3441,7 @@ try
     await deepSeek.AnalyzeLeadAsync((await repository.GetLeadAsync("lead_ahmed"))!);
     Check(false, "DeepSeek invalid structure rejected");
 }
-catch (DeepSeekException error) { Check(error.Code == "invalid_structured_output" && error.Retryable, "DeepSeek invalid structure rejected"); }
+catch (AiProviderException error) { Check(error.Code == "invalid_structured_output" && error.Retryable, "DeepSeek invalid structure rejected"); }
 var failedAnalysisLead = await repository.GetLeadAsync("lead_ahmed");
 Check(failedAnalysisLead is { Grade: "D", Score: 0, AnalysisStatus: AnalysisStatus.RetryableFailed, AiScoreApplied: false }, "AI analysis failure remains D/0 and is retryable");
 Check(handler.Requests.All(x => x.Authorization == "Bearer sk-test-redacted") && handler.Requests.Count(x => x.Method == "GET" && x.Uri == "https://api.deepseek.com/models") == 1 && handler.Requests.Count(x => x.Method == "POST" && x.Uri == "https://api.deepseek.com/chat/completions") == 5, "AI model discovery and chat requests use the server-side key");
@@ -3429,7 +3453,7 @@ await reasoningRecoveryRepository.InitializeAsync();
 var reasoningRecoveryLead = new Lead { Id="reasoning-recovery", Name="Reasoning Recovery", PhoneE164="+14155550901", PhoneValid=true };
 await reasoningRecoveryRepository.UpsertLeadAsync(reasoningRecoveryLead);
 await reasoningRecoveryRepository.RemoveDemoLeadsIfRealDataExistsAsync();
-await reasoningRecoveryRepository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-v4-pro" });
+await reasoningRecoveryRepository.SaveAppSettingsAsync(new AppSettings { AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-v4-pro" });
 var emptyThinkingEnvelope = System.Text.Json.JsonSerializer.Serialize(new
 {
     choices=new[]
@@ -3442,7 +3466,7 @@ var emptyThinkingEnvelope = System.Text.Json.JsonSerializer.Serialize(new
     }
 });
 var reasoningRecoveryHandler = new QueueHandler([emptyThinkingEnvelope, Envelope(V2AnalysisJson("Please quote 600 pcs"))]);
-var reasoningRecoveryProvider = new DeepSeekService(
+var reasoningRecoveryProvider = new AiProviderService(
     reasoningRecoveryRepository,
     new FakeSecretStore("sk-reasoning-recovery"),
     new HttpClient(reasoningRecoveryHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3462,9 +3486,9 @@ await transientRecoveryRepository.InitializeAsync();
 var transientRecoveryLead = new Lead { Id="transient-recovery", Name="Transient Recovery", PhoneE164="+14155550902", PhoneValid=true };
 await transientRecoveryRepository.UpsertLeadAsync(transientRecoveryLead);
 await transientRecoveryRepository.RemoveDemoLeadsIfRealDataExistsAsync();
-await transientRecoveryRepository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-v4-pro" });
+await transientRecoveryRepository.SaveAppSettingsAsync(new AppSettings { AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-v4-pro" });
 var transientRecoveryHandler = new QueueHandler(["{\"choices\":[]}", Envelope(V2AnalysisJson("Please quote 700 pcs"))]);
-var transientRecoveryProvider = new DeepSeekService(
+var transientRecoveryProvider = new AiProviderService(
     transientRecoveryRepository,
     new FakeSecretStore("sk-transient-recovery"),
     new HttpClient(transientRecoveryHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3493,7 +3517,7 @@ var compatibleDecisionJson = """
     }
     """;
 var compatibleDecisionHandler = new QueueHandler([Envelope(compatibleDecisionJson)]);
-var compatibleDecisionProvider = new DeepSeekService(
+var compatibleDecisionProvider = new AiProviderService(
     repository,
     new FakeSecretStore("sk-test-redacted"),
     new HttpClient(compatibleDecisionHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3538,7 +3562,7 @@ var repairDecisionHandler = new QueueHandler(
     Envelope("""{"replyText":"","chineseSummary":"","recommendedNextAction":"","confidence":0.5}"""),
     Envelope(repairDecisionJson)
 ]);
-var repairDecisionProvider = new DeepSeekService(
+var repairDecisionProvider = new AiProviderService(
     repository,
     new FakeSecretStore("sk-test-redacted"),
     new HttpClient(repairDecisionHandler) { Timeout=TimeSpan.FromSeconds(5) });
@@ -3569,9 +3593,9 @@ var manuallyStagedLead = new Lead
     StageManuallyUpdatedAt=DateTimeOffset.Now
 };
 await stageLockRepository.UpsertLeadAsync(manuallyStagedLead);
-await stageLockRepository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-chat" });
+await stageLockRepository.SaveAppSettingsAsync(new AppSettings { AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-chat" });
 var stageLockHandler = new QueueHandler([Envelope(V2AnalysisJson("Please send a quotation for 500 pcs"))]);
-var stageLockProvider = new DeepSeekService(stageLockRepository, new FakeSecretStore("sk-stage-lock"), new HttpClient(stageLockHandler) { Timeout=TimeSpan.FromSeconds(5) });
+var stageLockProvider = new AiProviderService(stageLockRepository, new FakeSecretStore("sk-stage-lock"), new HttpClient(stageLockHandler) { Timeout=TimeSpan.FromSeconds(5) });
 var stageLockedAnalysis = await stageLockProvider.AnalyzeLeadAsync(manuallyStagedLead);
 Check(
     stageLockedAnalysis is { Stage: LeadStage.Waiting, StageManuallyLocked: true, StageSource: "user", Grade: "A", Score: 88, AnalysisStatus: AnalysisStatus.Succeeded },
@@ -3584,7 +3608,7 @@ await repository.UpsertWhatsAppConversationAsync(automationConversation);
 var automationMessage = new WhatsAppMessage { Id="primary:reply-auto", ProviderMessageId="reply-auto", AccountId="primary", ConversationId=automationConversation.Id, LeadId=automationLead.Id, Phone=automationConversation.Phone, Direction=WhatsAppMessageDirection.Incoming, Status=WhatsAppMessageStatus.Received, Body="I need 500 pcs monthly", Timestamp=DateTimeOffset.Now };
 await repository.UpsertWhatsAppMessageAsync(automationMessage);
 var automationHandler = new QueueHandler([Envelope(V2AnalysisJson("I need 500 pcs monthly"))]);
-var automationProvider = new DeepSeekService(repository, new FakeSecretStore("sk-automation"), new HttpClient(automationHandler) { Timeout=TimeSpan.FromSeconds(5) });
+var automationProvider = new AiProviderService(repository, new FakeSecretStore("sk-automation"), new HttpClient(automationHandler) { Timeout=TimeSpan.FromSeconds(5) });
 await using (var automationBridge = new WhatsAppConnectionManager())
 {
     var automationSync = new WhatsAppSyncService(repository, automationBridge);
@@ -3607,9 +3631,9 @@ await bulkRepository.InitializeAsync();
 await bulkRepository.UpsertLeadAsync(new Lead { Id="bulk-one", Name="Bulk One", PhoneE164="+14155550101", PhoneValid=true });
 await bulkRepository.UpsertLeadAsync(new Lead { Id="bulk-two", Name="Bulk Two", PhoneE164="+14155550102", PhoneValid=true });
 await bulkRepository.RemoveDemoLeadsIfRealDataExistsAsync();
-await bulkRepository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-chat" });
+await bulkRepository.SaveAppSettingsAsync(new AppSettings { ActiveProviderId="deepseek", AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-chat" });
 var bulkHandler = new QueueHandler([Envelope(invalidAnalysisJson), Envelope(invalidAnalysisJson), Envelope(invalidAnalysisJson), Envelope(V2AnalysisJson("Please send a quotation for 500 pcs"))]);
-var bulkProvider = new DeepSeekService(bulkRepository, new FakeSecretStore("sk-bulk"), new HttpClient(bulkHandler) { Timeout=TimeSpan.FromSeconds(5) });
+var bulkProvider = new AiProviderService(bulkRepository, new FakeSecretStore("sk-bulk"), new HttpClient(bulkHandler) { Timeout=TimeSpan.FromSeconds(5) });
 await using (var bulkBridge = new WhatsAppConnectionManager())
 {
     var bulkSync = new WhatsAppSyncService(bulkRepository, bulkBridge);
@@ -3641,9 +3665,9 @@ await circuitRepository.InitializeAsync();
 for (var index = 1; index <= 4; index++)
     await circuitRepository.UpsertLeadAsync(new Lead { Id=$"circuit-{index}", Name=$"Circuit {index}", PhoneE164=$"+1415555091{index}", PhoneValid=true });
 await circuitRepository.RemoveDemoLeadsIfRealDataExistsAsync();
-await circuitRepository.SaveAppSettingsAsync(new AppSettings { DeepSeekBaseUrl="https://api.deepseek.com", DeepSeekModel="deepseek-v4-pro" });
+await circuitRepository.SaveAppSettingsAsync(new AppSettings { AiBaseUrl="https://api.deepseek.com", AiModel="deepseek-v4-pro" });
 var circuitHandler = new QueueHandler(Enumerable.Repeat(Envelope(invalidAnalysisJson), 9));
-var circuitProvider = new DeepSeekService(circuitRepository, new FakeSecretStore("sk-circuit"), new HttpClient(circuitHandler) { Timeout=TimeSpan.FromSeconds(5) });
+var circuitProvider = new AiProviderService(circuitRepository, new FakeSecretStore("sk-circuit"), new HttpClient(circuitHandler) { Timeout=TimeSpan.FromSeconds(5) });
 await using (var circuitBridge = new WhatsAppConnectionManager())
 {
     var circuitSync = new WhatsAppSyncService(circuitRepository, circuitBridge);
@@ -3653,7 +3677,7 @@ await using (var circuitBridge = new WhatsAppConnectionManager())
         await circuitAutomation.AnalyzeAllLeadsAsync();
         Check(false, "bulk lead analysis circuit breaker");
     }
-    catch (DeepSeekException error)
+    catch (AiProviderException error)
     {
         var circuitState = await circuitRepository.GetLeadBulkAnalysisRunStateAsync();
         Check(
@@ -3676,7 +3700,7 @@ await bulkRepository.SaveLeadBulkAnalysisRunStateAsync(new LeadBulkAnalysisRunSt
     IsComplete=false
 });
 var resumedBulkHandler = new QueueHandler([Envelope(V2AnalysisJson("Please confirm the remaining order"))]);
-var resumedBulkProvider = new DeepSeekService(bulkRepository, new FakeSecretStore("sk-bulk-resume"), new HttpClient(resumedBulkHandler) { Timeout=TimeSpan.FromSeconds(5) });
+var resumedBulkProvider = new AiProviderService(bulkRepository, new FakeSecretStore("sk-bulk-resume"), new HttpClient(resumedBulkHandler) { Timeout=TimeSpan.FromSeconds(5) });
 await using (var resumedBulkBridge = new WhatsAppConnectionManager())
 {
     var resumedBulkSync = new WhatsAppSyncService(bulkRepository, resumedBulkBridge);
@@ -3820,7 +3844,7 @@ try
 {
     await new CustomerBrainService(reportRepository, new AlwaysInvalidStructuredReportProvider()).AnalyzeAsync(reportLead.Id);
 }
-catch (DeepSeekException)
+catch (AiProviderException)
 {
 }
 var preservedDecision = await reportRepository.GetCustomerIntelligenceProfileAsync(reportLead.Id);
@@ -4412,7 +4436,7 @@ try
         trigger: CustomerSuccessRunTrigger.IncomingAutomation);
     Check(false, "automatic customer-success processing fails closed when structured output remains invalid");
 }
-catch (DeepSeekException error)
+catch (AiProviderException error)
 {
     Check(error.Code == "invalid_structured_output" &&
           (await customerSuccessRepository.GetConversationAgentStateAsync("account-a", "conversation-a")) is
@@ -6576,7 +6600,7 @@ var retryProvider = new TavilySearchProvider(
     delay: (_, _) => Task.CompletedTask);
 var aiGuardrailHandler = new CustomerSearchHttpHandler(HttpStatusCode.OK, "{}");
 using var aiGuardrailHttp = new HttpClient(aiGuardrailHandler) { Timeout = Timeout.InfiniteTimeSpan };
-var guardrailDeepSeek = new DeepSeekService(
+var guardrailDeepSeek = new AiProviderService(
     enrichmentGuardrailRepository,
     new FakeSecretStore("configured-ai-key"),
     aiGuardrailHttp);
@@ -6890,7 +6914,7 @@ await recoveryRepository.SaveCustomerEnrichmentUsageAsync(new CustomerEnrichment
     RequestState = "reserved"
 });
 var replayProbeProvider = new ReplayProbeCustomerSearchProvider();
-var recoveryDeepSeek = new DeepSeekService(recoveryRepository, new FakeSecretStore("configured-ai-key"), aiGuardrailHttp);
+var recoveryDeepSeek = new AiProviderService(recoveryRepository, new FakeSecretStore("configured-ai-key"), aiGuardrailHttp);
 await using (var recoveryService = new CustomerEnrichmentService(
                  recoveryRepository,
                  recoveryDeepSeek,
@@ -6934,7 +6958,7 @@ var reviewStatusFact = new CustomerEnrichmentFact
     EvidenceQuote = "Example Company operates as a wholesale exporter."
 };
 await enrichmentRepository.SaveCustomerEnrichmentFactsAsync([reviewStatusFact]);
-var reviewDeepSeek = new DeepSeekService(enrichmentRepository, new FakeSecretStore(""), aiGuardrailHttp);
+var reviewDeepSeek = new AiProviderService(enrichmentRepository, new FakeSecretStore(""), aiGuardrailHttp);
 await using (var reviewStatusService = new CustomerEnrichmentService(
                  enrichmentRepository,
                  reviewDeepSeek,
@@ -7227,8 +7251,8 @@ var leadDependencyCustomer = new Lead
 await leadDependencyRepository.UpsertLeadAsync(leadDependencyCustomer);
 await leadDependencyRepository.SaveAppSettingsAsync(new AppSettings
 {
-    DeepSeekBaseUrl = "https://api.deepseek.com",
-    DeepSeekModel = "deepseek-chat"
+    AiBaseUrl = "https://api.deepseek.com",
+    AiModel = "deepseek-chat"
 });
 var leadDependencyJob = new CustomerEnrichmentJob
 {
@@ -7255,7 +7279,7 @@ var leadDependencyFact = new CustomerEnrichmentFact
 };
 await leadDependencyRepository.SaveCustomerEnrichmentFactsAsync([leadDependencyFact]);
 var leadDependencyHandler = new QueueHandler([Envelope(V2AnalysisJson("Please quote 700 pcs monthly."))]);
-var leadDependencyDeepSeek = new DeepSeekService(
+var leadDependencyDeepSeek = new AiProviderService(
     leadDependencyRepository,
     new FakeSecretStore("lead-dependency-key"),
     new HttpClient(leadDependencyHandler) { Timeout = TimeSpan.FromSeconds(5) });
@@ -7311,7 +7335,7 @@ var inFlightDependencyFact = new CustomerEnrichmentFact
 await leadDependencyRepository.SaveCustomerEnrichmentFactsAsync([inFlightDependencyFact]);
 var blockingLeadFactHandler = new BlockingLeadAnalysisHandler(
     Envelope(V2AnalysisJson("Please quote 900 pcs monthly.")));
-var blockingLeadFactDeepSeek = new DeepSeekService(
+var blockingLeadFactDeepSeek = new AiProviderService(
     leadDependencyRepository,
     new FakeSecretStore("lead-dependency-blocking-key"),
     new HttpClient(blockingLeadFactHandler) { Timeout = TimeSpan.FromSeconds(30) });
@@ -7336,12 +7360,12 @@ await leadDependencyRepository.ApplyCustomerEnrichmentReviewAsync(
         Reason = "reject while Lead Intelligence provider is blocked"
     });
 blockingLeadFactHandler.ReleaseAnalysis();
-DeepSeekException? blockingLeadFactError = null;
+AiProviderException? blockingLeadFactError = null;
 try
 {
     _ = await blockingLeadFactTask;
 }
-catch (DeepSeekException error)
+catch (AiProviderException error)
 {
     blockingLeadFactError = error;
 }
@@ -7364,8 +7388,8 @@ var identityOnlyLeadDependencyCustomer = new Lead
 await identityOnlyLeadDependencyRepository.UpsertLeadAsync(identityOnlyLeadDependencyCustomer);
 await identityOnlyLeadDependencyRepository.SaveAppSettingsAsync(new AppSettings
 {
-    DeepSeekBaseUrl = "https://api.deepseek.com",
-    DeepSeekModel = "deepseek-chat"
+    AiBaseUrl = "https://api.deepseek.com",
+    AiModel = "deepseek-chat"
 });
 var identityOnlyDependencyHashA = (await CustomerExternalFactPolicy.CaptureDependencyAsync(
     identityOnlyLeadDependencyRepository,
@@ -7373,7 +7397,7 @@ var identityOnlyDependencyHashA = (await CustomerExternalFactPolicy.CaptureDepen
     DateTimeOffset.Now)).Hash;
 var blockingIdentityOnlyHandler = new BlockingLeadAnalysisHandler(
     Envelope(V2AnalysisJson("Please quote 400 pcs monthly.")));
-var blockingIdentityOnlyDeepSeek = new DeepSeekService(
+var blockingIdentityOnlyDeepSeek = new AiProviderService(
     identityOnlyLeadDependencyRepository,
     new FakeSecretStore("identity-only-blocking-key"),
     new HttpClient(blockingIdentityOnlyHandler) { Timeout = TimeSpan.FromSeconds(30) });
@@ -7384,12 +7408,12 @@ var changedIdentityOnlyLead = await identityOnlyLeadDependencyRepository.GetLead
 changedIdentityOnlyLead.BuyerId = "IDENTITY-ONLY-B";
 await identityOnlyLeadDependencyRepository.UpsertLeadAsync(changedIdentityOnlyLead);
 blockingIdentityOnlyHandler.ReleaseAnalysis();
-DeepSeekException? blockingIdentityOnlyError = null;
+AiProviderException? blockingIdentityOnlyError = null;
 try
 {
     _ = await blockingIdentityOnlyTask;
 }
-catch (DeepSeekException error)
+catch (AiProviderException error)
 {
     blockingIdentityOnlyError = error;
 }
@@ -7447,7 +7471,7 @@ var identityFactA = new CustomerEnrichmentFact
 await identityRevisionRepository.SaveCustomerEnrichmentFactsAsync([identityFactA]);
 var identityBrain = new CustomerBrainService(identityRevisionRepository);
 var selfHealedIdentityBrain = await identityBrain.GetAsync(identityRevisionLead.Id);
-var identityDeepSeek = new DeepSeekService(identityRevisionRepository, new FakeSecretStore(""), aiGuardrailHttp);
+var identityDeepSeek = new AiProviderService(identityRevisionRepository, new FakeSecretStore(""), aiGuardrailHttp);
 await using var identityEnrichment = new CustomerEnrichmentService(
     identityRevisionRepository,
     identityDeepSeek,
@@ -8608,7 +8632,7 @@ sealed class FakeWhatsAppTranslationProvider : IStructuredAiProvider
             if (InvalidDetectionResponsesRemaining > 0)
             {
                 InvalidDetectionResponsesRemaining--;
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     "invalid_structured_output",
                     "AI 返回的结构化 JSON 无法解析。",
                     true);
@@ -8629,7 +8653,7 @@ sealed class FakeWhatsAppTranslationProvider : IStructuredAiProvider
                 .Select(item => item.Clone())
                 .ToList();
             if (suppliedMessages.Count > MaxAcceptedTranslationBatch)
-                throw new DeepSeekException(
+                throw new AiProviderException(
                     "invalid_structured_output",
                     "AI 返回的结构化 JSON 无法解析。",
                     true);
@@ -8882,7 +8906,7 @@ sealed class AlwaysInvalidStructuredReportProvider : IStructuredAiProvider
     public bool HasApiKey() => true;
     public Task<string> GetSelectedModelAsync(CancellationToken cancellationToken = default) => Task.FromResult("invalid-structured-test");
     public Task<T> CompleteStructuredAsync<T>(string instructions, object payload, Func<T, string?> validate, CancellationToken cancellationToken = default) where T : class =>
-        throw new DeepSeekException("invalid_structured_output", "测试模型返回的结构化 JSON 无法解析。", true);
+        throw new AiProviderException("invalid_structured_output", "测试模型返回的结构化 JSON 无法解析。", true);
 }
 
 sealed class CapturingConversationAssistantProvider : IStructuredAiProvider

@@ -16,8 +16,11 @@ public sealed record AiProviderDefinition(
 
 public static class AiProviderCatalog
 {
+    public const string DefaultProviderId = "custom";
+
     public static readonly IReadOnlyList<AiProviderDefinition> Supported =
     [
+        new(DefaultProviderId, "自定义 OpenAI 兼容接口", "", "可填写任意 HTTPS OpenAI Chat Completions 兼容 Base URL", []),
         new("deepseek", "DeepSeek", "https://api.deepseek.com", "DeepSeek 官方 OpenAI 兼容接口", ["deepseek-v4-flash", "deepseek-v4-pro"]),
         new("openai", "OpenAI", "https://api.openai.com/v1", "OpenAI 官方 API", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]),
         new("anthropic", "Anthropic Claude", "https://api.anthropic.com/v1", "Claude 原生 Messages API", ["claude-sonnet-4-6", "claude-opus-4-6"], AiProviderProtocol.AnthropicMessages),
@@ -30,11 +33,10 @@ public static class AiProviderCatalog
         new("qwen", "阿里云百炼 / Qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "DashScope OpenAI 兼容接口", ["qwen-max", "qwen-plus"]),
         new("moonshot", "Moonshot / Kimi", "https://api.moonshot.cn/v1", "Moonshot OpenAI 兼容接口", ["kimi-k2-0711-preview"]),
         new("zhipu", "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "智谱 OpenAI 兼容接口", ["glm-4.5"]),
-        new("siliconflow", "SiliconFlow", "https://api.siliconflow.cn/v1", "硅基流动 OpenAI 兼容接口", ["deepseek-ai/DeepSeek-V3"]),
-        new("custom", "自定义 OpenAI 兼容接口", "https://", "可填写任意 HTTPS OpenAI 兼容 Base URL", [])
+        new("siliconflow", "SiliconFlow", "https://api.siliconflow.cn/v1", "硅基流动 OpenAI 兼容接口", ["deepseek-ai/DeepSeek-V3"])
     ];
 
     public static AiProviderDefinition Resolve(string? id) =>
         Supported.FirstOrDefault(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
-        ?? Supported[0];
+        ?? Supported.First(item => item.Id == DefaultProviderId);
 }

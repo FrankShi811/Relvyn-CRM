@@ -1246,11 +1246,18 @@ public sealed partial class LocalRepository
         }
     }
 
-    public async Task<AppSettings> GetAppSettingsAsync(CancellationToken cancellationToken = default) =>
-        await GetSettingAsync<AppSettings>("app_settings", cancellationToken) ?? new AppSettings();
+    public async Task<AppSettings> GetAppSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingAsync<AppSettings>("app_settings", cancellationToken) ?? new AppSettings();
+        settings.NormalizeLegacyAiSettings();
+        return settings;
+    }
 
-    public Task SaveAppSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default) =>
-        SaveSettingAsync("app_settings", settings, cancellationToken);
+    public Task SaveAppSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    {
+        settings.NormalizeLegacyAiSettings();
+        return SaveSettingAsync("app_settings", settings, cancellationToken);
+    }
 
     public async Task<LeadBulkAnalysisRunState?> GetLeadBulkAnalysisRunStateAsync(CancellationToken cancellationToken = default) =>
         await GetSettingAsync<LeadBulkAnalysisRunState>("lead_bulk_analysis_run_state", cancellationToken);

@@ -115,7 +115,7 @@ $modulePreferencePersistenceSource = Get-Content -Raw -Encoding utf8 -LiteralPat
 $domainModelsSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\Models.cs')
 $businessRoleProfileSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Domain\BusinessRoleProfile.cs')
 $businessRoleContextPolicySource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\BusinessRoleContextPolicy.cs')
-$deepSeekSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\DeepSeekService.cs')
+$aiProviderSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiProviderService.cs')
 $aiProviderCatalogSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiProviderCatalog.cs')
 $aiModelCapabilityResolverSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\AiModelCapabilityResolver.cs')
 $conversationAssistantSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\ConversationAssistantService.cs')
@@ -260,7 +260,7 @@ if (-not ($domainModelsSource.Contains('BusinessRoleProfile BusinessRoleProfile'
     -not ($businessRoleProfileSource.Contains('DefaultRoleSkillDescription')) -or
     -not ($businessRoleContextPolicySource.Contains('workspace_profile is user-managed descriptive business context')) -or
     -not ($businessRoleContextPolicySource.Contains('Never assume a marketplace')) -or
-    -not ($deepSeekSource.Contains('BusinessRoleContextPolicy.ApplyPayload')) -or
+    -not ($aiProviderSource.Contains('BusinessRoleContextPolicy.ApplyPayload')) -or
     -not ($settingsXaml.Contains('x:Name="BusinessOrganizationNameBox"')) -or
     -not ($settingsXaml.Contains('x:Name="BusinessDescriptionBox"')) -or
     -not ($settingsXaml.Contains('x:Name="BusinessRoleBox"')) -or
@@ -378,7 +378,7 @@ if (-not $domainModelsSource.Contains('public const string CustomerEnrichment = 
     -not $customerEnrichmentAnalyzerSource.Contains('CompleteStructuredWithAttemptLimitAsync<CustomerEnrichmentAnalysisResult>') -or
     -not $customerEnrichmentAnalyzerSource.Contains('AiModuleKeys.CustomerEnrichment') -or
     -not $customerEnrichmentAnalyzerSource.Contains('maximumAttempts: 2') -or
-    -not $customerEnrichmentServiceSource.Contains('_analyzer = new CustomerEnrichmentAnalyzer(deepSeek);') -or
+    -not $customerEnrichmentServiceSource.Contains('_analyzer = new CustomerEnrichmentAnalyzer(aiProvider);') -or
     -not $customerEnrichmentServiceSource.Contains('_analyzer.AnalyzeAsync(identity, sources, cancellationToken)') -or
     -not $appServicesSource.Contains('public CustomerEnrichmentService CustomerEnrichment { get; }') -or
     -not $appServicesSource.Contains('CustomerEnrichment = new CustomerEnrichmentService(')) {
@@ -690,7 +690,7 @@ if ($dashboardXaml -notmatch 'x:Name="UnreadDigestItems"' -or
     $dashboardUnreadDigestSource -notmatch [regex]::Escape('AiModuleKeys.Dashboard') -or
     $dashboardUnreadDigestSource -notmatch [regex]::Escape('QueueBackgroundRefresh()') -or
     $dashboardUnreadDigestSource -notmatch [regex]::Escape('GetDashboardUnreadDigestCacheAsync') -or
-    $deepSeekSource -notmatch [regex]::Escape('SelectLowestTierModel') -or
+    $aiProviderSource -notmatch [regex]::Escape('SelectLowestTierModel') -or
     $mainWindowSource -notmatch [regex]::Escape('_services.DashboardUnreadDigest.QueueBackgroundRefresh()') -or
     $localRepositorySource -notmatch [regex]::Escape('GetDashboardUnreadSnapshotAsync') -or
     $localRepositorySource -notmatch [regex]::Escape('LastReadAt') -or
@@ -1560,7 +1560,7 @@ $aiRoutingCoreTokens = @(
   'ApplyReasoningEffort',
   'ReasoningEffort == AiReasoningEfforts.Auto'
 )
-$combinedAiRoutingSource = $domainModelsSource + $deepSeekSource + $settingsSource
+$combinedAiRoutingSource = $domainModelsSource + $aiProviderSource + $settingsSource
 $missingAiRoutingCoreTokens = @($aiRoutingCoreTokens | Where-Object { -not $combinedAiRoutingSource.Contains($_) })
 if ($missingAiRoutingCoreTokens.Count -gt 0) {
   throw "AI routing must persist module overrides, parse API capabilities and suppress undeclared reasoning parameters. missing=$($missingAiRoutingCoreTokens -join ', ')"
@@ -1572,7 +1572,7 @@ if (-not $conversationAssistantSource.Contains('AiModuleKeys.WhatsAppInbox') -or
     -not $domainModelsSource.Contains('public const string Dashboard') -or
     -not $domainModelsSource.Contains('public const string LeadIntelligence') -or
     -not $settingsSource.Contains('AiModuleKeys.LeadIntelligence') -or
-    -not $deepSeekSource.Contains('ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence') -or
+    -not $aiProviderSource.Contains('ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence') -or
     -not $leadAutomationSource.Contains('ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence') -or
     -not $customerBrainSource.Contains('AiModuleKeys.Customers') -or
     -not $customerAnalysisSource.Contains('AiModuleKeys.CustomerAnalytics') -or
@@ -1583,10 +1583,10 @@ Write-Host 'PASS  global/per-module AI model, token-cost and declared reasoning-
 
 if (-not $aiProviderCatalogSource.Contains('"anthropic", "Anthropic Claude"') -or
     -not $aiProviderCatalogSource.Contains('AiProviderProtocol.AnthropicMessages') -or
-    -not $deepSeekSource.Contains('"x-api-key"') -or
-    -not $deepSeekSource.Contains('"anthropic-version"') -or
-    -not $deepSeekSource.Contains('execution.BaseUrl + "/messages"') -or
-    -not $deepSeekSource.Contains('"output_config.effort"') -or
+    -not $aiProviderSource.Contains('"x-api-key"') -or
+    -not $aiProviderSource.Contains('"anthropic-version"') -or
+    -not $aiProviderSource.Contains('execution.BaseUrl + "/messages"') -or
+    -not $aiProviderSource.Contains('"output_config.effort"') -or
     -not $aiModelCapabilityResolverSource.Contains('ResolveDeepSeek') -or
     -not $aiModelCapabilityResolverSource.Contains('["low", "high", "max"]') -or
     -not $aiModelCapabilityResolverSource.Contains('ResolveOpenAi') -or
@@ -1606,9 +1606,46 @@ if (-not $aiProviderCatalogSource.Contains('"anthropic", "Anthropic Claude"') -o
 }
 Write-Host 'PASS  live-first provider reasoning catalog and native Anthropic Claude protocol contract'
 
+$allowedProviderSpecificFiles = @(
+  'desktop\WAFlow.Core\Domain\Models.cs',
+  'desktop\WAFlow.Core\Infrastructure\WindowsCredentialStore.cs',
+  'desktop\WAFlow.Core\Services\AiModelCapabilityResolver.cs',
+  'desktop\WAFlow.Core\Services\AiProviderCatalog.cs',
+  'desktop\WAFlow.Core\Services\AiProviderService.cs',
+  'desktop\WAFlow.Desktop\ReleaseCatalog.cs',
+  'desktop\WAFlow.Desktop\Windows\SettingsWindow.xaml.cs'
+)
+$normalizedAuditRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+$unexpectedDeepSeekRuntimeHits = @(
+  Get-ChildItem -LiteralPath (Join-Path $root 'desktop\WAFlow.Core'), (Join-Path $root 'desktop\WAFlow.Desktop') -Recurse -File |
+    Where-Object { $_.Extension -in '.cs', '.xaml' -and $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
+    ForEach-Object {
+      $fullName = [System.IO.Path]::GetFullPath($_.FullName)
+      if (-not $fullName.StartsWith($normalizedAuditRoot, [StringComparison]::OrdinalIgnoreCase)) { return }
+      $relative = $fullName.Substring($normalizedAuditRoot.Length)
+      if ($allowedProviderSpecificFiles -contains $relative) { return }
+      if (Select-String -LiteralPath $_.FullName -Pattern 'deepseek' -SimpleMatch -Quiet) { $relative }
+    }
+)
+if ($unexpectedDeepSeekRuntimeHits.Count -gt 0 -or
+    $settingsXaml.Contains('api.deepseek.com') -or
+    $guideCatalogSource.Contains('支持 DeepSeek') -or
+    -not $appServicesSource.Contains('public AiProviderService AiProvider { get; }') -or
+    $appServicesSource.Contains('AiProviderService DeepSeek') -or
+    -not $domainModelsSource.Contains('public string ActiveProviderId { get; set; } = "custom";') -or
+    -not $domainModelsSource.Contains('public string AiBaseUrl { get; set; } = "";') -or
+    -not $domainModelsSource.Contains('[JsonPropertyName("deepSeekBaseUrl")]') -or
+    -not $aiProviderCatalogSource.Contains('public const string DefaultProviderId = "custom";') -or
+    -not $aiProviderSource.Contains('class AiProviderException') -or
+    -not $aiProviderSource.Contains('class AiProviderService') -or
+    (Test-Path -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\DeepSeekService.cs'))) {
+  throw "AI runtime and UI must use provider-neutral names and defaults while retaining only explicit provider adapters and legacy migration. unexpected=$($unexpectedDeepSeekRuntimeHits -join ', ')"
+}
+Write-Host 'PASS  provider-neutral AI runtime, defaults, UI copy and legacy settings migration contract'
+
 if (-not $leadIntelligenceSource.Contains('ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence') -or
     -not $leadIntelligenceSource.Contains('execution.Model') -or
-    $leadIntelligenceSource.Contains('settings.DeepSeekModel') -or
+    $leadIntelligenceSource.Contains('settings.AiModel') -or
     $settingsSource -match 'if \(!string\.IsNullOrWhiteSpace\(activeKey\)\)\s*await _services\.LeadAutomation\.NotifyProviderConfiguredAsync\(\);' -or
     -not $settingsSource.Contains('_ = ResumeQueuedLeadAnalysisAsync()') -or
     $mainWindowSource -notmatch [regex]::Escape('await _intelligence.RefreshAiRouteAsync();') -or

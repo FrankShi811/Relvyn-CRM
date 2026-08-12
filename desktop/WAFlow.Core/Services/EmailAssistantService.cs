@@ -67,7 +67,7 @@ public sealed class EmailAssistantService
         CancellationToken cancellationToken = default)
     {
         if (!_provider.HasApiKey(AiModuleKeys.EmailInbox))
-            throw new DeepSeekException("provider_not_configured", "请先在 API 对接中为邮件箱配置可用模型。", false);
+            throw new AiProviderException("provider_not_configured", "请先在 API 对接中为邮件箱配置可用模型。", false);
 
         var recipient = NormalizeEmail(recipientEmail);
         if (!LooksLikeEmail(recipient))
@@ -391,7 +391,7 @@ public sealed class EmailAssistantService
             throw SourceChanged();
     }
 
-    private static DeepSeekException SourceChanged() =>
+    private static AiProviderException SourceChanged() =>
         new(SourceChangedCode, SourceChangedMessage, true);
 
     public static string? Validate(EmailAssistantResult result)
