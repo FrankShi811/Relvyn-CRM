@@ -81,7 +81,7 @@ public sealed class ConversationAssistantService
         CancellationToken cancellationToken = default)
     {
         if (!_provider.HasApiKey(AiModuleKeys.WhatsAppInbox))
-            throw new DeepSeekException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
+            throw new AiProviderException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
         var messages = (await _repository.GetWhatsAppMessagesAsync(conversationId, 160, cancellationToken))
             .Where(message => !message.IsStatusUpdate && !message.IsRevoked && !string.IsNullOrWhiteSpace(message.Body))
             .OrderBy(message => message.Timestamp)

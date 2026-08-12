@@ -92,11 +92,11 @@ public sealed class CustomerEnrichmentAnalyzer
         @"\s+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private readonly DeepSeekService _deepSeek;
+    private readonly AiProviderService _aiProvider;
 
-    public CustomerEnrichmentAnalyzer(DeepSeekService deepSeek)
+    public CustomerEnrichmentAnalyzer(AiProviderService aiProvider)
     {
-        _deepSeek = deepSeek ?? throw new ArgumentNullException(nameof(deepSeek));
+        _aiProvider = aiProvider ?? throw new ArgumentNullException(nameof(aiProvider));
     }
 
     public async Task<CustomerEnrichmentAnalysisResult> AnalyzeAsync(
@@ -124,8 +124,8 @@ public sealed class CustomerEnrichmentAnalyzer
             };
         }
 
-        if (!_deepSeek.HasApiKey(AiModuleKeys.CustomerEnrichment))
-            throw new DeepSeekException("provider_not_configured", "请先完成 AI API 对接并为客户公开调查选择模型。", false);
+        if (!_aiProvider.HasApiKey(AiModuleKeys.CustomerEnrichment))
+            throw new AiProviderException("provider_not_configured", "请先完成 AI API 对接并为客户公开调查选择模型。", false);
 
         var payload = new
         {
@@ -162,7 +162,7 @@ public sealed class CustomerEnrichmentAnalyzer
             })
         };
 
-        var result = await _deepSeek.CompleteStructuredWithAttemptLimitAsync<CustomerEnrichmentAnalysisResult>(
+        var result = await _aiProvider.CompleteStructuredWithAttemptLimitAsync<CustomerEnrichmentAnalysisResult>(
             AiModuleKeys.CustomerEnrichment,
             Instructions,
             payload,

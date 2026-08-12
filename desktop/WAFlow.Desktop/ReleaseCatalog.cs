@@ -9,17 +9,24 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.21.0";
+            : "5.21.1";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.21.1", "2026-08-12", "统一 AI Provider 与模型通用命名",
+        [
+            "全程序 AI 执行入口、异常类型、内部依赖与状态文案统一改为 Provider 中立命名，不再把通用 API 模型能力描述成单一供应商能力。",
+            "新安装默认选择自定义 OpenAI 兼容接口，不预填特定供应商的 Base URL 或模型；用户仍可主动选择内置 Provider、原生 Anthropic Claude 或自定义兼容接口，并继续按板块配置不同模型与推理深度。",
+            "旧版本保存的 AI Base URL、模型和历史凭据会在本机一次性迁移到通用字段与独立 Provider 凭据，不丢失现有路由；真实供应商的专属协议和推理参数适配继续按明确 Provider ID 生效。",
+            "已通过 Windows Release 编译、通用默认值、旧设置迁移、多 Provider 路由和完整回归门禁。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.21.0", "2026-08-12", "串联客户承诺与持续跟进提醒",
         [
             "Customer Brain 从 WhatsApp 与邮件上下文中只提取销售人员已经明确作出的未来承诺，并绑定原始消息、证据、渠道、时间与明确截止日期；客户请求、建议、问题、已完成事项和无证据推断不会被记为承诺。",
             "未完成承诺会持久化并同步显示在 Customer Brain、Customer Intelligence、商机和客户列表中；逾期状态优先提示，WhatsApp 话术助手与 Customer Success Agent 也会先提醒履约或澄清，不能自行宣称已经完成。",
             "承诺只有用户在确认对话框中手动完成后才会清除活动标记；AI 重扫、程序重启或上下文刷新都不会自动完成或重新打开历史承诺，人工操作与来源证据保留审计轨迹。",
             "已通过 Windows 桌面回归、隔离数据库重启持久化、跨模块状态、键盘与可访问性人工验收。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.20.1", "2026-08-11", "接入通用 MCP 外部智能体与渐进式搜品",
         [
             "设置页新增 MCP 与外部智能体配置区，可启用 Gateway、查看已配置和已连接的 Server 数量，并进入统一的 Server、Tool、权限、任务和审计管理窗口。支持 stdio、Streamable HTTP 与 SSE，凭据保存在 Windows 凭据管理器。",

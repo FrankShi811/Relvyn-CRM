@@ -714,12 +714,16 @@ public partial class MainWindow : Window
 
     private async Task UpdateProviderStateAsync()
     {
-        var configured = _services.DeepSeek.HasApiKey();
+        var configured = _services.AiProvider.HasApiKey();
         var settings = await _services.Repository.GetAppSettingsAsync();
+        var provider = AiProviderCatalog.Resolve(settings.ActiveProviderId);
+        var routeLabel = string.IsNullOrWhiteSpace(settings.AiModel)
+            ? provider.DisplayName
+            : $"{provider.DisplayName} / {settings.AiModel}";
         ProviderText.Text = configured
             ? settings.UseGlobalAiConfiguration
-                ? $"AI 已配置 · {settings.DeepSeekModel}"
-                : $"AI 已配置 · 分板块模型（默认 {settings.DeepSeekModel}）"
+                ? $"AI 已配置 · {routeLabel}"
+                : $"AI 已配置 · 分板块路由（全域默认 {routeLabel}）"
             : "AI API 未配置";
         ProviderBadge.SetResourceReference(Border.BackgroundProperty, configured ? "SuccessSoft" : "WarningSoft");
         ProviderText.SetResourceReference(TextBlock.ForegroundProperty, configured ? "Success" : "Warning");

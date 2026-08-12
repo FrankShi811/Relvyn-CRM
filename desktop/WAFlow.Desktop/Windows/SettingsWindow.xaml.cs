@@ -34,7 +34,7 @@ public partial class SettingsWindow : Window
     private List<string> _availableModels = [];
     private string _modelsBaseUrl = "";
     private DateTimeOffset? _modelsFetchedAt;
-    private string _currentProviderId = "deepseek";
+    private string _currentProviderId = AiProviderCatalog.DefaultProviderId;
     private bool _loaded;
     private bool _updatingRoutingUi;
     private bool _hadConfiguredProviderAtLoad;
@@ -94,7 +94,7 @@ public partial class SettingsWindow : Window
 
     private async void SettingsWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        _hadConfiguredProviderAtLoad = _services.DeepSeek.HasApiKey();
+        _hadConfiguredProviderAtLoad = _services.AiProvider.HasApiKey();
         _settings = await _services.Repository.GetAppSettingsAsync();
         McpGatewayEnabledBox.IsChecked = _settings.McpAgentGatewayEnabled;
         await RefreshMcpConnectionSummaryAsync();
@@ -121,7 +121,7 @@ public partial class SettingsWindow : Window
         foreach (var profile in _settings.ConfiguredAiProviders)
             _profiles[profile.ProviderId] = Clone(profile);
 
-        MigrateLegacyProvider();
+        EnsureActiveProviderProfile();
         AiProviderBox.ItemsSource = AiProviderCatalog.Supported;
         _currentProviderId = AiProviderCatalog.Resolve(_settings.ActiveProviderId).Id;
         AiProviderBox.SelectedItem = AiProviderCatalog.Resolve(_currentProviderId);
@@ -225,7 +225,7 @@ public partial class SettingsWindow : Window
         BraveFreeRequestsBox.Text = _enrichmentSettings.BraveMonthlyFreeRequests.ToString(CultureInfo.InvariantCulture);
         EnrichmentAllowAiAnalysisBox.IsChecked = _enrichmentSettings.AllowAiAnalysisRequests;
         EnrichmentAiReservationBox.Text = _enrichmentSettings.AiAnalysisReservationUsd.ToString("0.####", CultureInfo.InvariantCulture);
-        EnrichmentAiStatusText.Text = _services.DeepSeek.HasApiKey(AiModuleKeys.CustomerEnrichment)
+        EnrichmentAiStatusText.Text = _services.AiProvider.HasApiKey(AiModuleKeys.CustomerEnrichment)
             ? "板块 AI 路由已配置。本程序仅按预留额进行本地估算并停止超额新调用；Provider 定价和实际账单可能不同。"
             : "板块 AI 路由未配置；调查仍会保存公开来源，但不会生成推断事实。";
         EnrichmentMaxQueriesBox.Text = _enrichmentSettings.MaxQueriesPerCustomer.ToString(CultureInfo.InvariantCulture);
@@ -370,7 +370,7 @@ public partial class SettingsWindow : Window
         finally { button.IsEnabled = true; }
     }
 
-    private void MigrateLegacyProvider()
+    private void EnsureActiveProviderProfile()
     {
         var active = AiProviderCatalog.Resolve(_settings.ActiveProviderId);
         if (!_profiles.ContainsKey(active.Id))
@@ -379,20 +379,14 @@ public partial class SettingsWindow : Window
             {
                 ProviderId = active.Id,
                 DisplayName = active.DisplayName,
-                BaseUrl = string.IsNullOrWhiteSpace(_settings.DeepSeekBaseUrl) ? active.DefaultBaseUrl : _settings.DeepSeekBaseUrl,
-                Model = _settings.DeepSeekModel,
+                BaseUrl = string.IsNullOrWhiteSpace(_settings.AiBaseUrl) ? active.DefaultBaseUrl : _settings.AiBaseUrl,
+                Model = _settings.AiModel,
                 AvailableModels = _settings.AvailableModels.ToList(),
                 ModelsFetchedAt = _settings.ModelsFetchedAt,
-                IsConfigured = _services.DeepSeek.HasApiKey()
+                IsConfigured = _services.AiProvider.HasApiKey()
             };
         }
 
-        // Existing installations stored the active key under the historical
-        // DeepSeek target. Copy it once to the provider-specific credential.
-        var legacyKey = _services.Secrets.Read();
-        var providerStore = ProviderCredentialStore(active.Id);
-        if (!string.IsNullOrWhiteSpace(legacyKey) && string.IsNullOrWhiteSpace(providerStore.Read()))
-            providerStore.Save(legacyKey);
     }
 
     private void AiProviderBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -549,7 +543,7 @@ public partial class SettingsWindow : Window
                     ?? new AiModuleModelPreference
                     {
                         ProviderId = _settings.ActiveProviderId,
-                        Model = _settings.DeepSeekModel,
+                        Model = _settings.AiModel,
                         ReasoningEffort = _settings.DefaultReasoningEffort
                     };
                 var row = new AiModuleRoutingRow(definition.Key, definition.Name, definition.Description);
@@ -779,11 +773,9 @@ public partial class SettingsWindow : Window
                 ProviderCredentialStore(pending.Key).Save(pending.Value);
 
             var activeKey = ReadProviderKey(_currentProviderId);
-            // The existing provider service remains OpenAI-compatible and reads
-            // this stable credential target. Keep it synchronized to the active
-            // profile without exposing the key to settings or logs.
+            // Keep the provider-neutral active credential synchronized without exposing the key to settings or logs.
             if (!string.IsNullOrWhiteSpace(activeKey))
-                _services.Secrets.Save(activeKey);
+                _services.ActiveAiCredential.Save(activeKey);
             foreach (var profile in _profiles.Values)
                 profile.IsConfigured = HasProviderKey(profile.ProviderId);
 
@@ -793,8 +785,8 @@ public partial class SettingsWindow : Window
                 .Select(Clone)
                 .OrderBy(profile => profile.DisplayName)
                 .ToList();
-            _settings.DeepSeekBaseUrl = active.BaseUrl.TrimEnd('/');
-            _settings.DeepSeekModel = active.Model;
+            _settings.AiBaseUrl = active.BaseUrl.TrimEnd('/');
+            _settings.AiModel = active.Model;
             _settings.DefaultReasoningEffort = AiReasoningEfforts.Normalize(
                 ReasoningEffortBox.SelectedValue as string);
             _settings.UseGlobalAiConfiguration = UseGlobalAiConfigurationBox.IsChecked != false;
@@ -1086,7 +1078,7 @@ public partial class SettingsWindow : Window
         {
             var selected = ModelBox.Text.Trim();
             var normalizedBaseUrl = baseUri.ToString().TrimEnd('/');
-            var catalog = await _services.DeepSeek.DiscoverModelsAsync(_currentProviderId, normalizedBaseUrl, key, _modelFetchCancellation.Token);
+            var catalog = await _services.AiProvider.DiscoverModelsAsync(_currentProviderId, normalizedBaseUrl, key, _modelFetchCancellation.Token);
             _pendingKeys[_currentProviderId] = key;
             _availableModels = catalog.Models.ToList();
             _profiles[_currentProviderId].ModelCapabilities = catalog.ModelCapabilities.Select(Clone).ToList();

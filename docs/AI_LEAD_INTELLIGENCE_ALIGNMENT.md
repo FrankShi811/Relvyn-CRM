@@ -2,7 +2,7 @@
 
 ## 当前已确定的产品契约
 
-1. AI Provider 采用 DeepSeek 或 OpenAI Chat Completions 兼容 HTTPS API。
+1. AI Provider 采用用户选择的 OpenAI Chat Completions 兼容 HTTPS API，或原生 Anthropic Claude Messages API；程序不预选特定供应商或模型。
 2. 设置页调用 `GET <Base URL>/models`，使用 Windows 凭据中的 API Key 拉取模型目录；模型目录、拉取时间和用户选择保存在本机，API Key 不写入 SQLite。
 3. 新客户与从未成功完成 V2 AI 分析的客户初始为 `D / 0`。Excel 导入、重复覆盖和人工编辑不会自行计算 A/B/C 等级。
 4. WhatsApp Inbox 收到已关联客户的新回复后：

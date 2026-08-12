@@ -516,7 +516,7 @@ public sealed partial class CustomerSuccessAgentService
         }
 
         if (!_provider.HasApiKey(AiModuleKeys.WhatsAppInbox))
-            throw new DeepSeekException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
+            throw new AiProviderException("provider_not_configured", "请先完成 AI API 对接并选择模型。", false);
         var allowedFields = BuildAllowedFields(context.Customer);
         var evidence = context.Messages.Where(item => item.Direction == WhatsAppMessageDirection.Incoming)
             .Select(item => item.Body).Where(item => !string.IsNullOrWhiteSpace(item)).ToList();
@@ -744,13 +744,13 @@ public sealed partial class CustomerSuccessAgentService
                     batchSourceIds),
                 cancellationToken);
         }
-        catch (DeepSeekException error) when (
+        catch (AiProviderException error) when (
             trigger == CustomerSuccessRunTrigger.Manual &&
             error.Code == "invalid_structured_output")
         {
             decision = CreateSafeManualFallbackDecision(source, error);
         }
-        catch (DeepSeekException error) when (trigger == CustomerSuccessRunTrigger.IncomingAutomation)
+        catch (AiProviderException error) when (trigger == CustomerSuccessRunTrigger.IncomingAutomation)
         {
             var failedFrom = state.RunState;
             ConversationAgentStateMachine.PauseError(
@@ -2405,7 +2405,7 @@ public sealed partial class CustomerSuccessAgentService
 
     private static CustomerSuccessAgentDecision CreateSafeManualFallbackDecision(
         WhatsAppMessage source,
-        DeepSeekException error)
+        AiProviderException error)
     {
         var chinese = IsChinese(source.Body);
         return new CustomerSuccessAgentDecision

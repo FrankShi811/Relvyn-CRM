@@ -13,8 +13,8 @@ public sealed class AppServices
     public LeadScoringService Scoring { get; }
     public ImportService Imports { get; }
     public OpportunitySupplementImportService OpportunitySupplements { get; }
-    public WindowsCredentialStore Secrets { get; }
-    public DeepSeekService DeepSeek { get; }
+    public WindowsCredentialStore ActiveAiCredential { get; }
+    public AiProviderService AiProvider { get; }
     public WhatsAppConnectionManager WhatsApp { get; }
     public WhatsAppNumberValidationService WhatsAppNumberValidation { get; }
     public WhatsAppSyncService WhatsAppSync { get; }
@@ -55,42 +55,42 @@ public sealed class AppServices
             : DataWorkspaceManager.FromDatabasePath(repository.DatabasePath);
         Repository = repository ?? new LocalRepository(DataWorkspace.DatabasePath);
         Scoring = new LeadScoringService();
-        Secrets = new WindowsCredentialStore();
+        ActiveAiCredential = new WindowsCredentialStore(WindowsCredentialStore.ActiveAiProviderTarget);
         KnowledgeRetrieval = new KnowledgeRetrievalService(Repository);
-        DeepSeek = new DeepSeekService(
+        AiProvider = new AiProviderService(
             Repository,
-            Secrets,
+            ActiveAiCredential,
             knowledgeRetrieval: KnowledgeRetrieval,
             providerSecretResolver: providerId => new WindowsCredentialStore($"WAFlow/AiProvider/{providerId}"));
         KnowledgeBase = new KnowledgeBaseService(
             Repository,
-            new CompositeKnowledgeDocumentParser(new AiProviderImageTextExtractor(DeepSeek)));
+            new CompositeKnowledgeDocumentParser(new AiProviderImageTextExtractor(AiProvider)));
         Imports = new ImportService(Repository);
         OpportunitySupplements = new OpportunitySupplementImportService(Repository);
         WhatsApp = new WhatsAppConnectionManager(DataWorkspace.RootDirectory);
         WhatsAppNumberValidation = new WhatsAppNumberValidationService(Repository, WhatsApp);
         WhatsAppSync = new WhatsAppSyncService(Repository, WhatsApp);
         CustomerCommitments = new CustomerCommitmentService(Repository);
-        CustomerBrain = new CustomerBrainService(Repository, DeepSeek, KnowledgeRetrieval, CustomerCommitments);
+        CustomerBrain = new CustomerBrainService(Repository, AiProvider, KnowledgeRetrieval, CustomerCommitments);
         Email = new EmailService(Repository);
-        EmailAssistant = new EmailAssistantService(Repository, DeepSeek, KnowledgeRetrieval, CustomerBrain);
+        EmailAssistant = new EmailAssistantService(Repository, AiProvider, KnowledgeRetrieval, CustomerBrain);
         MessagingSync = new MessagingSyncService(Repository, WhatsApp, Email);
-        LeadAutomation = new LeadIntelligenceAutomationService(Repository, DeepSeek, WhatsAppSync);
+        LeadAutomation = new LeadIntelligenceAutomationService(Repository, AiProvider, WhatsAppSync);
         PublicIp = new PublicIpMonitor(Repository);
         Campaigns = new CampaignAutomationService(Repository, WhatsApp, PublicIp, Email);
         CustomerEnrichment = new CustomerEnrichmentService(
             Repository,
-            DeepSeek,
+            AiProvider,
             CustomerBrain,
             WhatsAppSync,
             LeadAutomation,
             Imports);
-        CustomerAnalysis = new CustomerAnalysisService(Repository, DeepSeek, KnowledgeRetrieval, CustomerBrain);
+        CustomerAnalysis = new CustomerAnalysisService(Repository, AiProvider, KnowledgeRetrieval, CustomerBrain);
         CustomerReportExports = new CustomerReportExportService(Repository);
         CustomerActions = new CustomerActionLifecycleService(Repository, CustomerBrain);
         SalesLearning = new PersonalSalesLearningService(Repository);
-        ConversationAssistant = new ConversationAssistantService(Repository, DeepSeek, SalesLearning, KnowledgeRetrieval, CustomerBrain);
-        WhatsAppTranslation = new WhatsAppTranslationService(Repository, DeepSeek);
+        ConversationAssistant = new ConversationAssistantService(Repository, AiProvider, SalesLearning, KnowledgeRetrieval, CustomerBrain);
+        WhatsAppTranslation = new WhatsAppTranslationService(Repository, AiProvider);
         CustomerIdentity = new CustomerIdentityService(Repository);
         SourcingRequests = new SourcingRequestService(Repository);
         McpAgents = new McpAgentGatewayService(
@@ -101,7 +101,7 @@ public sealed class AppServices
         KnowledgeLearning = new KnowledgeLearningService(Repository, SalesLearning);
         CustomerSuccessAgent = new CustomerSuccessAgentService(
             Repository,
-            DeepSeek,
+            AiProvider,
             CustomerIdentity,
             SourcingRequests,
             KnowledgeRetrieval,
@@ -110,12 +110,13 @@ public sealed class AppServices
             WhatsAppSync);
         CustomerSuccessCoordinator = new CustomerSuccessAgentCoordinator(Repository, WhatsAppSync, WhatsApp, CustomerSuccessAgent);
         TodayBrief = new TodayBriefService(Repository, SalesLearning, CustomerBrain);
-        DashboardUnreadDigest = new DashboardUnreadDigestService(Repository, DeepSeek);
+        DashboardUnreadDigest = new DashboardUnreadDigestService(Repository, AiProvider);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await Repository.InitializeAsync(cancellationToken);
+        await MigrateLegacyAiCredentialAsync(cancellationToken);
         // Load before any bridge starts: the governor is constructed during the
         // bridge's initialize command, so settings that arrive later would leave
         // the first sends of the session running on bridge defaults.
@@ -127,5 +128,27 @@ public sealed class AppServices
         await CustomerSuccessAgent.RecoverAfterRestartAsync(cancellationToken);
         await McpAgents.InitializeAsync(cancellationToken);
         await CustomerIdentity.RepairOwnedAccountBindingsAsync(cancellationToken);
+    }
+
+    private async Task MigrateLegacyAiCredentialAsync(CancellationToken cancellationToken)
+    {
+        var legacyStore = new WindowsCredentialStore(WindowsCredentialStore.LegacyAiProviderTarget);
+        string? legacyKey;
+        try { legacyKey = legacyStore.Read(); }
+        catch { return; }
+        if (string.IsNullOrWhiteSpace(legacyKey)) return;
+
+        var settings = await Repository.GetAppSettingsAsync(cancellationToken);
+        var providerId = AiProviderCatalog.Resolve(settings.ActiveProviderId).Id;
+        var providerStore = new WindowsCredentialStore($"WAFlow/AiProvider/{providerId}");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(providerStore.Read())) providerStore.Save(legacyKey);
+            if (string.IsNullOrWhiteSpace(ActiveAiCredential.Read())) ActiveAiCredential.Save(legacyKey);
+        }
+        catch
+        {
+            // A credential-store failure must not block local startup. Settings will show the provider as unavailable.
+        }
     }
 }

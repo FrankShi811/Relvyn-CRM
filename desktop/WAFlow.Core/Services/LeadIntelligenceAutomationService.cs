@@ -29,7 +29,7 @@ public sealed record LeadBulkAnalysisResult(int Total, int Succeeded, int Failed
 public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
 {
     private readonly LocalRepository _repository;
-    private readonly DeepSeekService _provider;
+    private readonly AiProviderService _provider;
     private readonly WhatsAppSyncService _sync;
     private readonly Channel<string> _queue = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource _lifetime = new();
@@ -61,7 +61,7 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
         }
     }
 
-    public LeadIntelligenceAutomationService(LocalRepository repository, DeepSeekService provider, WhatsAppSyncService sync)
+    public LeadIntelligenceAutomationService(LocalRepository repository, AiProviderService provider, WhatsAppSyncService sync)
     {
         _repository = repository;
         _provider = provider;
@@ -122,7 +122,7 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
     {
         if (!await _bulkAnalysisGate.WaitAsync(0, cancellationToken))
         {
-            throw new DeepSeekException("bulk_analysis_running", "商机批量分析正在运行，请等待当前任务完成。", true);
+            throw new AiProviderException("bulk_analysis_running", "商机批量分析正在运行，请等待当前任务完成。", true);
         }
 
         lock (_bulkProgressLock)
@@ -145,7 +145,7 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
 
     private async Task<LeadBulkAnalysisResult> AnalyzeAllLeadsCoreAsync(IProgress<LeadBulkAnalysisProgress>? progress, CancellationToken cancellationToken)
     {
-        if (!_provider.HasApiKey()) throw new DeepSeekException("provider_not_configured", "请先在 API 对接中配置 API Key。", false);
+        if (!_provider.HasApiKey()) throw new AiProviderException("provider_not_configured", "请先在 API 对接中配置 API Key。", false);
         var execution = await _provider.ResolveExecutionProfileAsync(AiModuleKeys.LeadIntelligence, cancellationToken);
         lock (_bulkProgressLock) _currentBulkModel = execution.Model;
 
@@ -269,7 +269,7 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
             }
             catch (Exception error)
             {
-                if (error is DeepSeekException { Retryable: false })
+                if (error is AiProviderException { Retryable: false })
                 {
                     run.UpdatedAt = DateTimeOffset.Now;
                     await _repository.SaveLeadBulkAnalysisRunStateAsync(run, cancellationToken);
@@ -288,7 +288,7 @@ public sealed class LeadIntelligenceAutomationService : IAsyncDisposable
                         cancellationToken);
                     PublishBulkProgress(progress, new(total, completed, run.Succeeded, run.Failed, lead.Id, lead.DisplayName, "paused",
                         $"AI 连续 {consecutiveFailures} 位客户分析失败，已暂停并保留剩余队列"));
-                    throw new DeepSeekException(
+                    throw new AiProviderException(
                         "bulk_analysis_paused",
                         $"AI 连续 {consecutiveFailures} 位客户分析失败，批量任务已自动暂停，剩余 {run.PendingLeadIds.Count} 位客户仍保留在队列中，未继续消耗 Token。请稍后重试或检查模型设置。",
                         true,

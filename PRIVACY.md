@@ -30,7 +30,7 @@ AI Provider、搜索 Provider、邮箱及其他受支持凭据按当前 Windows 
 
 ## 4. AI Provider 数据流
 
-启用 DeepSeek、OpenAI Compatible Provider 或其他兼容 Provider 时，请求可能包括用户提示词，以及完成所选功能所需的客户字段、人工备注、WhatsApp 或邮件上下文、Knowledge Base 片段、公开来源、分析中间结果和输出格式要求。请求发送到用户配置的 Base URL。
+启用任意 AI Provider 时，请求可能包括用户提示词，以及完成所选功能所需的客户字段、人工备注、WhatsApp 或邮件上下文、Knowledge Base 片段、公开来源、分析中间结果和输出格式要求。请求发送到用户选择的 Provider 和 Base URL。
 
 软件不能控制 Provider 的日志、保留、训练、跨境传输或安全措施。用户必须阅读并接受相应 Provider 的条款和隐私政策，并确认有合法依据向其发送相关数据。
 

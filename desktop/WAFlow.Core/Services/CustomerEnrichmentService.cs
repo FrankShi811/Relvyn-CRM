@@ -20,7 +20,7 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(200));
 
     private readonly LocalRepository _repository;
-    private readonly DeepSeekService _deepSeek;
+    private readonly AiProviderService _aiProvider;
     private readonly CustomerEnrichmentAnalyzer _analyzer;
     private readonly CustomerBrainService _customerBrain;
     private readonly WhatsAppSyncService? _whatsAppSync;
@@ -52,7 +52,7 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
 
     public CustomerEnrichmentService(
         LocalRepository repository,
-        DeepSeekService deepSeek,
+        AiProviderService aiProvider,
         CustomerBrainService customerBrain,
         WhatsAppSyncService? whatsAppSync = null,
         LeadIntelligenceAutomationService? leadAutomation = null,
@@ -62,8 +62,8 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
         TimeProvider? timeProvider = null)
     {
         _repository = repository;
-        _deepSeek = deepSeek;
-        _analyzer = new CustomerEnrichmentAnalyzer(deepSeek);
+        _aiProvider = aiProvider;
+        _analyzer = new CustomerEnrichmentAnalyzer(aiProvider);
         _customerBrain = customerBrain;
         _whatsAppSync = whatsAppSync;
         _leadAutomation = leadAutomation;
@@ -784,7 +784,7 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
             return;
         }
 
-        if (!_deepSeek.HasApiKey(AiModuleKeys.CustomerEnrichment))
+        if (!_aiProvider.HasApiKey(AiModuleKeys.CustomerEnrichment))
         {
             job.Status = CustomerEnrichmentJobStatus.NeedsReview;
             job.CompletedAt = _timeProvider.GetUtcNow();
@@ -848,7 +848,7 @@ public sealed partial class CustomerEnrichmentService : IAsyncDisposable
                 aiUsage.RequestState = "completed";
                 await _repository.SaveCustomerEnrichmentUsageAsync(aiUsage, CancellationToken.None);
             }
-            catch (DeepSeekException error)
+            catch (AiProviderException error)
             {
                 aiUsage.ErrorCode = error.Code;
                 aiUsage.ErrorMessage = error.Message;
