@@ -208,6 +208,49 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource Card}" Margin="0,15,0,0" AutomationProperties.Name="WhatsApp 连接健康与诊断">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="WhatsApp 连接健康与诊断" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="按账号和功能检查连接状态。单项降级不会关闭整个 Inbox；诊断包只包含脱敏技术信息。" Foreground="{DynamicResource Muted}" FontSize="10.5" Margin="0,5,18,0" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="WhatsAppConnectorSummaryText" Text="正在读取连接健康状态…" Foreground="{DynamicResource Info}" FontSize="10" FontWeight="SemiBold" Margin="0,8,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                <Button Content="刷新状态" Style="{StaticResource SecondaryButton}" Padding="12,7" Margin="0,0,8,0" Click="RefreshWhatsAppHealth_Click" AutomationProperties.Name="刷新 WhatsApp 连接健康状态"/>
+                                <Button x:Name="ExportWhatsAppDiagnosticsButton" Content="导出诊断包" Style="{StaticResource PrimaryButton}" Padding="12,7" Click="ExportWhatsAppDiagnostics_Click" AutomationProperties.Name="导出脱敏 WhatsApp 诊断包"/>
+                            </StackPanel>
+                        </Grid>
+                        <Border x:Name="WhatsAppSafeModePanel" Background="{DynamicResource WarningSoft}" CornerRadius="8" Padding="10,8" Margin="0,11,0,0" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="WhatsAppSafeModeText" Foreground="{DynamicResource Warning}" FontSize="10" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive"/>
+                                <Button Grid.Column="1" Content="复核后恢复" Style="{StaticResource SecondaryButton}" Padding="11,6" Margin="12,0,0,0" VerticalAlignment="Center" Click="ClearWhatsAppSafeMode_Click" AutomationProperties.Name="人工复核后恢复 WhatsApp 自动发送"/>
+                            </Grid>
+                        </Border>
+                        <Expander Header="查看分功能健康状态" IsExpanded="False" Margin="0,12,0,0" AutomationProperties.Name="查看 WhatsApp 分功能健康状态">
+                            <ItemsControl x:Name="WhatsAppHealthItems" Margin="0,8,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate><UniformGrid Columns="3"/></ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="0,7" Margin="0,0,14,0">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Feature}" Foreground="{DynamicResource Ink}" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding State}" Foreground="{DynamicResource Muted}" FontSize="9.5" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+                        <TextBlock Text="诊断包不会包含 API Key、账号凭据、二维码、会话文件、客户身份、电话号码、消息正文、媒体或本机文件路径。" Foreground="{DynamicResource Muted}" FontSize="9.5" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
                 <Border Style="{StaticResource Card}" Margin="0,15,0,0">
                     <StackPanel>
                         <Grid>

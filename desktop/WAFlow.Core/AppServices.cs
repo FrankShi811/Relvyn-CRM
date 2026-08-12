@@ -16,6 +16,7 @@ public sealed class AppServices
     public WindowsCredentialStore ActiveAiCredential { get; }
     public AiProviderService AiProvider { get; }
     public WhatsAppConnectionManager WhatsApp { get; }
+    public IWhatsAppConnector WhatsAppConnector { get; }
     public WhatsAppNumberValidationService WhatsAppNumberValidation { get; }
     public WhatsAppSyncService WhatsAppSync { get; }
     public EmailService Email { get; }
@@ -68,6 +69,7 @@ public sealed class AppServices
         Imports = new ImportService(Repository);
         OpportunitySupplements = new OpportunitySupplementImportService(Repository);
         WhatsApp = new WhatsAppConnectionManager(DataWorkspace.RootDirectory);
+        WhatsAppConnector = new WhatsAppConnectorFacade(WhatsApp);
         WhatsAppNumberValidation = new WhatsAppNumberValidationService(Repository, WhatsApp);
         WhatsAppSync = new WhatsAppSyncService(Repository, WhatsApp);
         CustomerCommitments = new CustomerCommitmentService(Repository);

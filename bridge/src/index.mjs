@@ -45,6 +45,7 @@ import {
   normalizeHistoryCursors,
   shouldRequestChatHistory
 } from './history-recovery.mjs'
+import { connectorMetadata } from './connector-protocol.mjs'
 
 const logger = pino({ level: 'silent' })
 const QR_GENERATION_WATCHDOG_MS = 35000
@@ -1972,7 +1973,7 @@ async function handle(command) {
   try {
     switch (command.command) {
       case 'ping':
-        reply(requestId, true, { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.4', connection: state.connection })
+        reply(requestId, true, connectorMetadata(state.connection))
         return
       case 'initialize': {
         labelAssociationRouter.clear()
@@ -1986,6 +1987,7 @@ async function handle(command) {
         await fs.mkdir(state.sessionDir, { recursive: true })
         state.governor = await createGovernor(command.outbound)
         reply(requestId, true, {
+          ...connectorMetadata(state.connection),
           accountId: state.accountId,
           sessionDir: state.sessionDir,
           outbound: state.governor.snapshot()
@@ -2294,4 +2296,4 @@ lines.on('close', async () => {
   process.exit(0)
 })
 
-emit({ type: 'event', event: 'ready', data: { bridge: 'WAFlow.WhatsApp.Bridge', version: '0.8.4' } })
+emit({ type: 'event', event: 'ready', data: connectorMetadata(state.connection) })

@@ -84,6 +84,11 @@ $batchCollectionSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path
 $whatsAppSyncSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppSyncService.cs')
 $whatsAppNamingSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppConversationNaming.cs')
 $whatsAppManagerSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppConnectionManager.cs')
+$whatsAppConnectorContractSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppConnectorContracts.cs')
+$whatsAppConnectorResilienceSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppConnectorResilienceService.cs')
+$whatsAppConnectorProtocolSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\src\connector-protocol.mjs')
+$whatsAppCompatibilityManifestSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'bridge\compatibility-manifest.json')
+$whatsAppBaselineSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'docs\whatsapp-current-behavior-baseline.md')
 $whatsAppNumberValidationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\WhatsAppNumberValidationService.cs')
 $campaignAutomationSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\CampaignAutomationService.cs')
 $customerSuccessSource = Get-Content -Raw -Encoding utf8 -LiteralPath (Join-Path $root 'desktop\WAFlow.Core\Services\CustomerSuccessAgentCoordinator.cs')
@@ -1025,6 +1030,31 @@ if ($LASTEXITCODE -ne 0) { throw 'WhatsApp offline-message catch-up smoke test f
 & $node (Join-Path $root 'bridge\scripts\history-recovery-smoke.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'WhatsApp per-chat history recovery smoke test failed.' }
 Write-Host 'PASS  WhatsApp startup, Desktop history and per-chat offline-message recovery contract'
+
+if (-not $whatsAppBaselineSource.Contains('## Upgrade invariants') -or
+    -not $whatsAppConnectorContractSource.Contains('public interface IWhatsAppConnector') -or
+    -not $whatsAppConnectorContractSource.Contains('WhatsAppConnectorFacade') -or
+    -not $whatsAppConnectorContractSource.Contains('Healthy') -or
+    -not $whatsAppConnectorContractSource.Contains('Degraded') -or
+    -not $whatsAppConnectorContractSource.Contains('Unavailable') -or
+    -not $whatsAppConnectorContractSource.Contains('Suspended') -or
+    -not $whatsAppConnectorContractSource.Contains('Unknown') -or
+    -not $whatsAppConnectorProtocolSource.Contains('PROTOCOL_VERSION = 1') -or
+    -not $whatsAppConnectorProtocolSource.Contains("CONNECTOR_VERSION = '7.0.0-rc13'") -or
+    -not $whatsAppConnectorProtocolSource.Contains('STABLE_CAPABILITIES') -or
+    -not $whatsAppConnectorResilienceSource.Contains('LegacyCompatible') -or
+    -not $whatsAppConnectorResilienceSource.Contains('connector_safe_mode_automatic_send_blocked') -or
+    -not $whatsAppConnectorResilienceSource.Contains('technical-metadata-only') -or
+    -not $whatsAppConnectorResilienceSource.Contains('HashAccount') -or
+    -not $whatsAppConnectorResilienceSource.Contains('PRAGMA quick_check;') -or
+    -not $whatsAppCompatibilityManifestSource.Contains('"defaultCapabilitiesEnabled": true') -or
+    -not $settingsXaml.Contains('x:Name="WhatsAppConnectorSummaryText"') -or
+    -not $settingsXaml.Contains('x:Name="WhatsAppSafeModePanel"') -or
+    -not $settingsSource.Contains('ExportWhatsAppDiagnostics_Click') -or
+    -not $appServicesSource.Contains('public IWhatsAppConnector WhatsAppConnector { get; }')) {
+  throw 'WhatsApp connector resilience boundary, protocol v1, feature health, safe mode, compatibility manifest and redacted diagnostics must remain additive.'
+}
+Write-Host 'PASS  additive WhatsApp connector protocol, capability, feature-health, safe-mode and redacted-diagnostics contract'
 
 if ($networkProxyResolverSource -notmatch 'WAFLOW_PROXY_URL' -or
     $networkProxyResolverSource -notmatch 'WebRequest\.DefaultWebProxy' -or

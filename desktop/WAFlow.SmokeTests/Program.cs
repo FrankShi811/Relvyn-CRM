@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.IO.Compression;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -35,6 +36,69 @@ void WriteRow(IXLWorksheet sheet, int rowNumber, IReadOnlyList<string> values)
     for (var index = 0; index < values.Count; index++)
     {
         sheet.Cell(rowNumber, index + 1).Value = values[index];
+    }
+}
+
+if (args.Length >= 3 && args[0] == "--connector-upgrade-probe")
+{
+    var upgradeRoot = Path.GetFullPath(args[1]);
+    var upgradeAccount = args[2];
+    var upgradeDatabase = Path.Combine(upgradeRoot, "waflow.db");
+    var upgradeSession = Path.Combine(upgradeRoot, "whatsapp-sessions", upgradeAccount, "creds.json.enc");
+    if (!File.Exists(upgradeDatabase) || !File.Exists(upgradeSession))
+        throw new InvalidOperationException("Previous-release workspace or session fixture is missing.");
+
+    static async Task<Dictionary<string, long>> CountUpgradeRowsAsync(string path)
+    {
+        var families = new[]
+        {
+            "settings", "leads", "whatsapp_conversations", "whatsapp_messages",
+            "whatsapp_labels", "whatsapp_chat_labels", "email_accounts",
+            "knowledge_documents", "customer_brain_runs", "follow_up_tasks"
+        };
+        var counts = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false };
+        await using var connection = new SqliteConnection(builder.ToString());
+        await connection.OpenAsync();
+        foreach (var table in families)
+        {
+            await using var exists = connection.CreateCommand();
+            exists.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=$name;";
+            exists.Parameters.AddWithValue("$name", table);
+            if (Convert.ToInt32(await exists.ExecuteScalarAsync()) == 0) { counts[table] = -1; continue; }
+            await using var count = connection.CreateCommand();
+            count.CommandText = $"SELECT COUNT(*) FROM {table};";
+            counts[table] = Convert.ToInt64(await count.ExecuteScalarAsync());
+        }
+        return counts;
+    }
+
+    var sessionBefore = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(upgradeSession)));
+    var countsBefore = await CountUpgradeRowsAsync(upgradeDatabase);
+    var upgradeRepository = new LocalRepository(upgradeDatabase);
+    await upgradeRepository.InitializeAsync();
+    var countsAfter = await CountUpgradeRowsAsync(upgradeDatabase);
+    var sessionAfter = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(upgradeSession)));
+    var credential = new WindowsCredentialStore($"WAFlow/WhatsAppSessionKey/{upgradeAccount}");
+    credential.Delete();
+    try
+    {
+        credential.Save(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        await using var manager = new WhatsAppConnectionManager(upgradeRoot);
+        var sessionRecognized = manager.HasStoredSession(upgradeAccount);
+        var allTablesPreserved = countsBefore.All(pair => pair.Value >= 0 && countsAfter.GetValueOrDefault(pair.Key, -1) >= pair.Value);
+        await using var integrityConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = upgradeDatabase, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await integrityConnection.OpenAsync();
+        await using var integrity = integrityConnection.CreateCommand();
+        integrity.CommandText = "PRAGMA quick_check;";
+        var quickCheck = Convert.ToString(await integrity.ExecuteScalarAsync());
+        var passed = sessionRecognized && sessionBefore == sessionAfter && allTablesPreserved && quickCheck == "ok";
+        Console.WriteLine($"UPGRADE_PROBE sessionRecognized={sessionRecognized} sessionUnchanged={sessionBefore == sessionAfter} tablesPreserved={allTablesPreserved} quickCheck={quickCheck}");
+        return passed ? 0 : 1;
+    }
+    finally
+    {
+        credential.Delete();
     }
 }
 
@@ -2001,6 +2065,190 @@ await using (var portableWhatsAppClient = new WhatsAppBridgeClient(portableWhats
         && !File.Exists(Path.Combine(portableWhatsAppSession, "creds.json.enc"))
         && Directory.Exists(Path.Combine(portableWhatsAppRoot, "whatsapp-sessions", backupName)),
         "WhatsApp other-computer session is recoverably archived before a fresh QR session is created");
+}
+
+var legacyProtocol = WhatsAppConnectorResilienceService.ParseProtocol(
+    JsonSerializer.SerializeToElement(new { bridge = "WAFlow.WhatsApp.Bridge", version = "0.8.4" }));
+var currentProtocol = WhatsAppConnectorResilienceService.ParseProtocol(
+    JsonSerializer.SerializeToElement(new
+    {
+        bridge = "WAFlow.WhatsApp.Bridge",
+        bridgeVersion = "0.9.0",
+        protocolVersion = 1,
+        connector = "baileys",
+        connectorVersion = "7.0.0-rc13",
+        capabilities = WhatsAppConnectorCapabilities.AllEnabled
+    }));
+var futureProtocol = WhatsAppConnectorResilienceService.ParseProtocol(
+    JsonSerializer.SerializeToElement(new
+    {
+        bridge = "WAFlow.WhatsApp.Bridge",
+        bridgeVersion = "1.0.0",
+        protocolVersion = 2,
+        connector = "baileys",
+        connectorVersion = "7.0.0-rc13",
+        capabilities = WhatsAppConnectorCapabilities.AllEnabled
+    }));
+Check(
+    legacyProtocol is { IsLegacyFallback: true, IsCompatible: true, ProtocolVersion: 1 }
+    && legacyProtocol.Capabilities.Count == WhatsAppConnectorCapabilities.AllEnabled.Count
+    && legacyProtocol.Capabilities.Values.All(value => value),
+    "protocol negotiation keeps an older local bridge connected with the known stable capability set");
+Check(
+    currentProtocol is { IsLegacyFallback: false, IsCompatible: true, ProtocolVersion: 1, Connector: "baileys", ConnectorVersion: "7.0.0-rc13" }
+    && futureProtocol is { IsCompatible: false, CompatibilityCode: "protocol_version_incompatible" },
+    "protocol v1 accepts the exact stable connector and rejects an unreviewed breaking protocol");
+
+var connectorResilienceRoot = Path.Combine(root, "connector-resilience");
+Directory.CreateDirectory(connectorResilienceRoot);
+var connectorRepository = new LocalRepository(Path.Combine(connectorResilienceRoot, "waflow.db"));
+await connectorRepository.InitializeAsync();
+var secretSessionDirectory = Path.Combine(connectorResilienceRoot, "whatsapp-sessions", "account-a");
+Directory.CreateDirectory(secretSessionDirectory);
+const string diagnosticSecret = "TOP_SECRET_MESSAGE_447700900123";
+await File.WriteAllTextAsync(Path.Combine(secretSessionDirectory, "creds.json.enc"), diagnosticSecret);
+
+var connectorResilience = new WhatsAppConnectorResilienceService(connectorResilienceRoot);
+connectorResilience.ObserveHandshake("account-a", JsonSerializer.SerializeToElement(new
+{
+    bridge = "WAFlow.WhatsApp.Bridge",
+    bridgeVersion = "0.9.0",
+    protocolVersion = 1,
+    connector = "baileys",
+    connectorVersion = "7.0.0-rc13",
+    capabilities = WhatsAppConnectorCapabilities.AllEnabled
+}));
+connectorResilience.ObserveEvent(new WhatsAppBridgeEvent(
+    "connection_issue",
+    "account-a",
+    JsonSerializer.SerializeToElement(new { code = "whatsapp_label_server_not_confirmed", error = diagnosticSecret })));
+var isolatedFailureSnapshot = connectorResilience.Snapshot("account-a", "connected");
+Check(
+    isolatedFailureSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Labels).State == WhatsAppFeatureHealthState.Degraded
+    && isolatedFailureSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Transport).State != WhatsAppFeatureHealthState.Unavailable,
+    "a label failure degrades labels without turning the connected Inbox transport off");
+
+var degradationScenarios = new (string Account, string Code, WhatsAppConnectorFeature Feature)[]
+{
+    ("account-history", "whatsapp_history_unavailable", WhatsAppConnectorFeature.HistorySync),
+    ("account-group", "whatsapp_group_unavailable", WhatsAppConnectorFeature.Groups),
+    ("account-receipt", "whatsapp_delivery_receipt_unavailable", WhatsAppConnectorFeature.DeliveryReceipts),
+    ("account-pin", "whatsapp_pin_unavailable", WhatsAppConnectorFeature.PinChat),
+    ("account-lid", "whatsapp_lid_mapping_unavailable", WhatsAppConnectorFeature.LidMapping),
+    ("account-media", "whatsapp_media_receive_unavailable", WhatsAppConnectorFeature.MediaReceive),
+    ("account-qr", "whatsapp_qr_unavailable", WhatsAppConnectorFeature.QrPairing)
+};
+foreach (var scenario in degradationScenarios)
+{
+    connectorResilience.ObserveHandshake(scenario.Account, JsonSerializer.SerializeToElement(new
+    {
+        bridge = "WAFlow.WhatsApp.Bridge",
+        bridgeVersion = "0.9.0",
+        protocolVersion = 1,
+        connector = "baileys",
+        connectorVersion = "7.0.0-rc13",
+        capabilities = WhatsAppConnectorCapabilities.AllEnabled
+    }));
+    connectorResilience.ObserveEvent(new WhatsAppBridgeEvent(
+        "connection_issue",
+        scenario.Account,
+        JsonSerializer.SerializeToElement(new { code = scenario.Code })));
+    var degradedSnapshot = connectorResilience.Snapshot(scenario.Account, "connected");
+    Check(
+        degradedSnapshot.Features.Single(item => item.Feature == scenario.Feature).State == WhatsAppFeatureHealthState.Degraded
+        && degradedSnapshot.Features.Where(item => item.Feature != scenario.Feature).All(item => item.State != WhatsAppFeatureHealthState.Unavailable),
+        $"{scenario.Feature} failure is isolated without disabling another advertised capability");
+}
+
+connectorResilience.ObserveHandshake("account-proxy", JsonSerializer.SerializeToElement(new
+{
+    bridge = "WAFlow.WhatsApp.Bridge",
+    bridgeVersion = "0.9.0",
+    protocolVersion = 1,
+    connector = "baileys",
+    connectorVersion = "7.0.0-rc13",
+    capabilities = WhatsAppConnectorCapabilities.AllEnabled
+}));
+connectorResilience.ObserveEvent(new WhatsAppBridgeEvent(
+    "connection_issue",
+    "account-proxy",
+    JsonSerializer.SerializeToElement(new { code = "whatsapp_proxy_unavailable" })));
+var proxyFailureSnapshot = connectorResilience.Snapshot("account-proxy", "disconnected");
+Check(
+    proxyFailureSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Transport).State == WhatsAppFeatureHealthState.Degraded
+    && proxyFailureSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Labels).State == WhatsAppFeatureHealthState.Healthy,
+    "proxy failure degrades transport evidence without erasing unrelated capability health");
+
+connectorResilience.ObserveEvent(new WhatsAppBridgeEvent(
+    "connection",
+    "account-proxy",
+    JsonSerializer.SerializeToElement(new { state = "disconnected", reason = "bridge_restart" })));
+var restartSnapshot = connectorResilience.Snapshot("account-proxy", "disconnected");
+Check(
+    restartSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Transport).State == WhatsAppFeatureHealthState.Unavailable
+    && restartSnapshot.Features.Single(item => item.Feature == WhatsAppConnectorFeature.Labels).State == WhatsAppFeatureHealthState.Healthy,
+    "Bridge restart marks transport unavailable without falsely disabling unrelated feature contracts");
+
+connectorResilience.ObserveOperationFailure(
+    "account-a",
+    WhatsAppConnectorFeature.TextSend,
+    new WhatsAppBridgeException("whatsapp_target_not_verified", diagnosticSecret));
+var safeSnapshot = connectorResilience.Snapshot("account-a", "connected");
+var automaticBlocked = false;
+try
+{
+    connectorResilience.EnsureAutomaticSendAllowed(
+        "account-a",
+        OutboundSendOptions.ForAgent("conversation", "turn"),
+        media: false);
+}
+catch (WhatsAppBridgeException error)
+{
+    automaticBlocked = error.Code == "connector_safe_mode_automatic_send_blocked";
+}
+connectorResilience.EnsureAutomaticSendAllowed("account-a", OutboundSendOptions.Human, media: false);
+var reloadedResilience = new WhatsAppConnectorResilienceService(connectorResilienceRoot);
+Check(
+    safeSnapshot.SafeMode is { Active: true, BlocksAutomaticText: true }
+    && automaticBlocked
+    && reloadedResilience.Snapshot("account-a", "connected").SafeMode.Active,
+    "target verification failure persistently pauses automatic sends while leaving human send eligibility intact");
+reloadedResilience.ClearSafeMode("account-a");
+Check(
+    !new WhatsAppConnectorResilienceService(connectorResilienceRoot).Snapshot("account-a", "connected").SafeMode.Active,
+    "safe mode is cleared only by an explicit local acknowledgement");
+
+var diagnosticPath = Path.Combine(connectorResilienceRoot, "diagnostics.zip");
+var diagnosticResult = await connectorResilience.ExportDiagnosticsAsync(
+    diagnosticPath,
+    new Dictionary<string, string> { ["account-a"] = "connected" });
+using (var diagnosticArchive = ZipFile.OpenRead(diagnosticPath))
+{
+    var allowedEntries = new[] { "manifest.json", "connector-health.json", "database-integrity.json", "system.json", "recent-errors.json" };
+    var diagnosticText = string.Join("\n", diagnosticArchive.Entries.Select(entry =>
+    {
+        using var reader = new StreamReader(entry.Open());
+        return reader.ReadToEnd();
+    }));
+    Check(
+        diagnosticResult.Entries == allowedEntries.Length
+        && diagnosticArchive.Entries.Select(entry => entry.FullName).Order().SequenceEqual(allowedEntries.Order())
+        && diagnosticText.Contains("technical-metadata-only", StringComparison.Ordinal)
+        && diagnosticText.Contains("whatsapp_target_not_verified", StringComparison.Ordinal)
+        && !diagnosticText.Contains("account-a", StringComparison.Ordinal)
+        && !diagnosticText.Contains(diagnosticSecret, StringComparison.Ordinal)
+        && !diagnosticText.Contains("447700900123", StringComparison.Ordinal)
+        && !diagnosticArchive.Entries.Any(entry => entry.FullName.Contains("session", StringComparison.OrdinalIgnoreCase)),
+        "diagnostic ZIP contains only the five allowlisted technical reports and redacts account, session, phone and message material");
+}
+
+await using (var connectorManager = new WhatsAppConnectionManager(connectorResilienceRoot))
+{
+    IWhatsAppConnector connectorBoundary = new WhatsAppConnectorFacade(connectorManager);
+    Check(
+        connectorBoundary.ActiveAccountId == connectorManager.ActiveAccountId
+        && connectorBoundary.GetConnectorSnapshot("account-a").AccountId == "account-a",
+        "IWhatsAppConnector is an additive facade over the existing connection manager");
 }
 
 var emailAccount = new EmailAccount

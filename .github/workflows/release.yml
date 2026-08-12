@@ -107,6 +107,12 @@ jobs:
         shell: pwsh
         run: .\scripts\test-desktop.ps1
 
+      - name: Verify previous formal release upgrade compatibility
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\scripts\test-whatsapp-connector-upgrade.ps1 -PreviousTag v5.21.1 -Repository '${{ github.repository }}'
+
       - name: Smoke test Chinese Windows installer
         shell: pwsh
         run: .\scripts\test-windows-installer.ps1 -ExpectedVersion $env:RELEASE_VERSION

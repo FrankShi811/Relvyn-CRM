@@ -15,6 +15,7 @@ public sealed class WhatsAppConnectionManager :
     private readonly ConcurrentDictionary<string, WhatsAppBridgeClient> _clients = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _connectionGates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _autoReconnectSuppressed = new(StringComparer.OrdinalIgnoreCase);
+    private readonly WhatsAppConnectorResilienceService _resilience;
 
     public event EventHandler<WhatsAppBridgeEvent>? EventReceived;
     public string ActiveAccountId { get; private set; } = "primary";
@@ -25,6 +26,7 @@ public sealed class WhatsAppConnectionManager :
     {
         _dataRoot = Path.GetFullPath(dataRoot
             ?? new DataWorkspaceManager().Resolve().RootDirectory);
+        _resilience = new WhatsAppConnectorResilienceService(_dataRoot);
     }
 
     /// <summary>
@@ -93,7 +95,12 @@ public sealed class WhatsAppConnectionManager :
     }
 
     public Task<JsonElement> ConnectAsync(CancellationToken cancellationToken = default) => ConnectAsync(ActiveAccountId, cancellationToken);
-    public Task<JsonElement> PingAsync(CancellationToken cancellationToken = default) => GetClient(ActiveAccountId).PingAsync(cancellationToken);
+    public async Task<JsonElement> PingAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await GetClient(ActiveAccountId).PingAsync(cancellationToken);
+        _resilience.ObserveHandshake(ActiveAccountId, result);
+        return result;
+    }
     public async Task<JsonElement> ConnectAsync(string accountId, CancellationToken cancellationToken = default)
     {
         accountId = Normalize(accountId); ActiveAccountId = accountId;
@@ -137,7 +144,20 @@ public sealed class WhatsAppConnectionManager :
     }
     public Task<JsonElement> SendTextAsync(string phone, string text, CancellationToken cancellationToken = default) => SendTextAsync(ActiveAccountId, phone, text, cancellationToken);
     public Task<JsonElement> SendTextAsync(string accountId, string phone, string text, CancellationToken cancellationToken = default) => SendTextAsync(accountId, phone, text, OutboundSendOptions.Human, cancellationToken);
-    public Task<JsonElement> SendTextAsync(string accountId, string phone, string text, OutboundSendOptions options, CancellationToken cancellationToken = default) => GetClient(accountId).SendTextAsync(phone, text, options, cancellationToken);
+    public async Task<JsonElement> SendTextAsync(string accountId, string phone, string text, OutboundSendOptions options, CancellationToken cancellationToken = default)
+    {
+        accountId = Normalize(accountId);
+        _resilience.EnsureAutomaticSendAllowed(accountId, options, media: false);
+        try
+        {
+            return await GetClient(accountId).SendTextAsync(phone, text, options, cancellationToken);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _resilience.ObserveOperationFailure(accountId, WhatsAppConnectorFeature.TextSend, error);
+            throw;
+        }
+    }
     public Task<JsonElement> ValidateNumberAsync(string accountId, string phone, CancellationToken cancellationToken = default) => GetClient(accountId).ValidateNumberAsync(phone, cancellationToken);
     public async Task<WhatsAppNumberRegistrationLookupResult> LookupRegistrationAsync(string accountId, string phone, CancellationToken cancellationToken = default)
     {
@@ -150,7 +170,22 @@ public sealed class WhatsAppConnectionManager :
     }
     public Task<JsonElement> SendReplyTextAsync(string accountId, string phone, string text, string quotedMessageId, string quotedText, bool quotedFromMe, CancellationToken cancellationToken = default) => GetClient(accountId).SendReplyTextAsync(phone, text, quotedMessageId, quotedText, quotedFromMe, cancellationToken);
     public Task<JsonElement> SendMediaAsync(string phone, string path, string caption = "", CancellationToken cancellationToken = default) => SendMediaAsync(ActiveAccountId, phone, path, caption, cancellationToken);
-    public Task<JsonElement> SendMediaAsync(string accountId, string phone, string path, string caption, CancellationToken cancellationToken = default) => GetClient(accountId).SendMediaAsync(phone, path, caption, cancellationToken);
+    public Task<JsonElement> SendMediaAsync(string accountId, string phone, string path, string caption, CancellationToken cancellationToken = default) =>
+        SendMediaAsync(accountId, phone, path, caption, OutboundSendOptions.Human, cancellationToken);
+    public async Task<JsonElement> SendMediaAsync(string accountId, string phone, string path, string caption, OutboundSendOptions options, CancellationToken cancellationToken = default)
+    {
+        accountId = Normalize(accountId);
+        _resilience.EnsureAutomaticSendAllowed(accountId, options, media: true);
+        try
+        {
+            return await GetClient(accountId).SendMediaAsync(phone, path, caption, options, cancellationToken);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _resilience.ObserveOperationFailure(accountId, WhatsAppConnectorFeature.MediaSend, error);
+            throw;
+        }
+    }
     public Task<JsonElement> SendReplyMediaAsync(string accountId, string phone, string path, string caption, string quotedMessageId, string quotedText, bool quotedFromMe, CancellationToken cancellationToken = default) => GetClient(accountId).SendReplyMediaAsync(phone, path, caption, quotedMessageId, quotedText, quotedFromMe, cancellationToken);
     public Task<JsonElement> RevokeMessageAsync(string accountId, string phone, string messageId, CancellationToken cancellationToken = default) => GetClient(accountId).RevokeMessageAsync(phone, messageId, cancellationToken);
     public Task<JsonElement> SetChatPinnedAsync(string phone, bool pinned, CancellationToken cancellationToken = default) => SetChatPinnedAsync(ActiveAccountId, phone, pinned, cancellationToken);
@@ -178,6 +213,26 @@ public sealed class WhatsAppConnectionManager :
         CatchUpHistoryAsync(ActiveAccountId, cursors, cancellationToken);
     public Task<JsonElement> CatchUpHistoryAsync(string accountId, IReadOnlyCollection<WhatsAppHistoryCursor> cursors, CancellationToken cancellationToken = default) =>
         GetClient(accountId).CatchUpHistoryAsync(cursors, cancellationToken);
+
+    public WhatsAppConnectorSnapshot GetConnectorSnapshot(string accountId)
+    {
+        accountId = Normalize(accountId);
+        return _resilience.Snapshot(accountId, ConnectionStateFor(accountId));
+    }
+
+    public void AcknowledgeAndClearConnectorSafeMode(string accountId) => _resilience.ClearSafeMode(Normalize(accountId));
+
+    public Task<WhatsAppDiagnosticExportResult> ExportDiagnosticsAsync(string destinationPath, CancellationToken cancellationToken = default)
+    {
+        var connections = _clients.Keys
+            .Concat(Directory.Exists(Path.Combine(_dataRoot, "whatsapp-sessions"))
+                ? Directory.EnumerateDirectories(Path.Combine(_dataRoot, "whatsapp-sessions")).Select(Path.GetFileName).Where(name => !string.IsNullOrWhiteSpace(name))!
+                : [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(id => id!, id => ConnectionStateFor(id!), StringComparer.OrdinalIgnoreCase);
+        if (connections.Count == 0) connections[ActiveAccountId] = ConnectionStateFor(ActiveAccountId);
+        return _resilience.ExportDiagnosticsAsync(destinationPath, connections, cancellationToken);
+    }
 
     private async Task<JsonElement> ConnectCoreAsync(string accountId, CancellationToken cancellationToken)
     {
@@ -220,7 +275,12 @@ public sealed class WhatsAppConnectionManager :
         return _clients.GetOrAdd(accountId, id =>
         {
             var client = new WhatsAppBridgeClient(_dataRoot) { OutboundSettings = _outboundSettings };
-            client.EventReceived += (_, e) => EventReceived?.Invoke(this, string.IsNullOrWhiteSpace(e.AccountId) ? e with { AccountId = id } : e);
+            client.EventReceived += (_, e) =>
+            {
+                var forwarded = string.IsNullOrWhiteSpace(e.AccountId) ? e with { AccountId = id } : e;
+                _resilience.ObserveEvent(forwarded);
+                EventReceived?.Invoke(this, forwarded);
+            };
             return client;
         });
     }

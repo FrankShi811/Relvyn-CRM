@@ -26,6 +26,7 @@ let authRecoveryEvent = false
 let authRecoveryValidated = false
 let groupCommandValidated = false
 let numberValidationCommandValidated = false
+let protocolHandshakeValidated = false
 
 const timeout = setTimeout(() => {
   child.kill()
@@ -37,6 +38,11 @@ output.on('line', line => {
   const message = JSON.parse(line)
   if (message.type === 'event' && message.event === 'ready') {
     ready = true
+    protocolHandshakeValidated = message.data?.protocolVersion === 1
+      && message.data?.bridgeVersion === '0.9.0'
+      && message.data?.connector === 'baileys'
+      && message.data?.connectorVersion === '7.0.0-rc13'
+      && Object.values(message.data?.capabilities ?? {}).every(Boolean)
     child.stdin.write(`${JSON.stringify({ command: 'ping', requestId: 'ping-1' })}\n`)
   } else if (message.type === 'response' && message.requestId === 'ping-1' && message.ok) {
     ping = true
@@ -61,9 +67,9 @@ output.on('line', line => {
 
 child.on('exit', async () => {
   await fs.rm(smokeLocalAppData, { recursive: true, force: true })
-  if (ready && ping && initialized && authRecoveryEvent && authRecoveryValidated && numberValidationCommandValidated && groupCommandValidated) console.log(`PASS WAFlow WhatsApp bridge ready/ping/initialize/auth-recovery/number-validation/group-protocol${packagedExecutable ? ' (packaged EXE)' : ''}`)
+  if (ready && ping && initialized && protocolHandshakeValidated && authRecoveryEvent && authRecoveryValidated && numberValidationCommandValidated && groupCommandValidated) console.log(`PASS WAFlow WhatsApp bridge ready/ping/initialize/protocol-v1/auth-recovery/number-validation/group-protocol${packagedExecutable ? ' (packaged EXE)' : ''}`)
   else {
-    console.error(`FAIL bridge smoke ready=${ready} ping=${ping} initialized=${initialized} authEvent=${authRecoveryEvent} authValidated=${authRecoveryValidated} numberValidation=${numberValidationCommandValidated} group=${groupCommandValidated}`)
+    console.error(`FAIL bridge smoke ready=${ready} ping=${ping} initialized=${initialized} protocol=${protocolHandshakeValidated} authEvent=${authRecoveryEvent} authValidated=${authRecoveryValidated} numberValidation=${numberValidationCommandValidated} group=${groupCommandValidated}`)
     process.exitCode = 1
   }
 })
