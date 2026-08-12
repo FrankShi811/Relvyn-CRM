@@ -8,7 +8,7 @@
     <AssemblyName>AISalesOS</AssemblyName>
     <AssemblyTitle>AI Sales OS</AssemblyTitle>
     <RootNamespace>WAFlow.Desktop</RootNamespace>
-    <Version>5.20.1</Version>
+    <Version>5.21.0</Version>
     <Title>AI Sales OS</Title>
     <Product>AI Sales OS</Product>
     <Company>AI Sales OS</Company>

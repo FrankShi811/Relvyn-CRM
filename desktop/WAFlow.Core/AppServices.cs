@@ -35,6 +35,7 @@ public sealed class AppServices
     public CustomerSuccessAgentService CustomerSuccessAgent { get; }
     public CustomerSuccessAgentCoordinator CustomerSuccessCoordinator { get; }
     public CustomerBrainService CustomerBrain { get; }
+    public CustomerCommitmentService CustomerCommitments { get; }
     public CustomerEnrichmentService CustomerEnrichment { get; }
     public CustomerActionLifecycleService CustomerActions { get; }
     public PersonalSalesLearningService SalesLearning { get; }
@@ -69,7 +70,8 @@ public sealed class AppServices
         WhatsApp = new WhatsAppConnectionManager(DataWorkspace.RootDirectory);
         WhatsAppNumberValidation = new WhatsAppNumberValidationService(Repository, WhatsApp);
         WhatsAppSync = new WhatsAppSyncService(Repository, WhatsApp);
-        CustomerBrain = new CustomerBrainService(Repository, DeepSeek, KnowledgeRetrieval);
+        CustomerCommitments = new CustomerCommitmentService(Repository);
+        CustomerBrain = new CustomerBrainService(Repository, DeepSeek, KnowledgeRetrieval, CustomerCommitments);
         Email = new EmailService(Repository);
         EmailAssistant = new EmailAssistantService(Repository, DeepSeek, KnowledgeRetrieval, CustomerBrain);
         MessagingSync = new MessagingSyncService(Repository, WhatsApp, Email);

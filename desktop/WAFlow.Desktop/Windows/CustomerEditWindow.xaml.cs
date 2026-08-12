@@ -14,6 +14,7 @@ public partial class CustomerEditWindow : Window
 {
     private readonly AppServices _services;
     private readonly Lead _lead;
+    public bool HasDataChanges { get; private set; }
     private readonly LeadStage _originalStage;
     private readonly ObservableCollection<EditableDimension> _dimensions;
     private readonly Dictionary<string, ImportField> _canonicalDimensions;
@@ -208,6 +209,7 @@ public partial class CustomerEditWindow : Window
                     ? new[] { "暂无客户互动轨迹" }
                     : timeline.Take(6).Select(item => $"{item.OccurredAt:MM-dd HH:mm} · {item.Channel} · {item.Summary}").ToList();
             }
+            await LoadCommitmentsAsync();
         }
         catch (Exception error)
         {
@@ -216,6 +218,59 @@ public partial class CustomerEditWindow : Window
         finally
         {
             SetBrainButtonsEnabled(true);
+        }
+    }
+
+    private async Task LoadCommitmentsAsync()
+    {
+        var commitments = await _services.CustomerCommitments.GetAsync(_lead.Id);
+        var active = commitments
+            .Where(item => item.Status == CustomerCommitmentStatus.Active)
+            .OrderByDescending(item => item.IsOverdue)
+            .ThenBy(item => item.DueAt is null)
+            .ThenBy(item => item.DueAt)
+            .ThenBy(item => item.DetectedAt)
+            .ToList();
+        BrainCommitmentItems.ItemsSource = active.Count == 0
+            ? [new CommitmentOption(null, "暂无待履约承诺")]
+            : active.Select(item => new CommitmentOption(
+                    item,
+                    $"{item.DueLabel} · {item.Title}\n来源：{item.SourceChannel} · {item.SourceOccurredAt.LocalDateTime:yyyy-MM-dd HH:mm} · “{item.Evidence}”"))
+                .ToList();
+        BrainCommitmentItems.SelectedIndex = active.Count == 0 ? -1 : 0;
+        var overdue = active.Count(item => item.IsOverdue);
+        var completed = commitments.Count(item => item.Status == CustomerCommitmentStatus.Completed);
+        CommitmentStatusText.Text = active.Count == 0
+            ? $"当前没有待履约承诺 · 历史人工完成 {completed} 条"
+            : overdue > 0
+                ? $"待履约 {active.Count} 条，其中逾期 {overdue} 条 · 历史人工完成 {completed} 条"
+                : $"待履约 {active.Count} 条 · 历史人工完成 {completed} 条";
+        CompleteCommitmentButton.IsEnabled = BrainCommitmentItems.SelectedItem is CommitmentOption { Item: not null };
+    }
+
+    private void BrainCommitmentItems_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        CompleteCommitmentButton.IsEnabled = BrainCommitmentItems.SelectedItem is CommitmentOption { Item: not null };
+
+    private async void CompleteCommitment_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrainCommitmentItems.SelectedItem is not CommitmentOption { Item: { } commitment }) return;
+        if (MessageBox.Show(
+                $"确认这项承诺已经真实履约？\n\n{commitment.Title}\n来源原文：{commitment.Evidence}\n\n完成后会保留历史记录，但不再显示待履约标记。",
+                "完成待履约承诺",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+
+        CompleteCommitmentButton.IsEnabled = false;
+        try
+        {
+            await _services.CustomerCommitments.CompleteAsync(_lead.Id, commitment.Id, "用户在 Customer Brain 中确认已经履约");
+            HasDataChanges = true;
+            await LoadCommitmentsAsync();
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "无法完成承诺", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -271,6 +326,9 @@ public partial class CustomerEditWindow : Window
         RefreshBrainButton.IsEnabled = enabled;
         AnalyzeBrainButton.IsEnabled = enabled;
         BrainRecommendationItems.IsEnabled = enabled;
+        BrainCommitmentItems.IsEnabled = enabled;
+        CompleteCommitmentButton.IsEnabled = enabled
+            && BrainCommitmentItems.SelectedItem is CommitmentOption { Item: not null };
         RecommendationActionPanel.IsEnabled = enabled;
         UpdateRecommendationActions();
     }
@@ -531,6 +589,7 @@ public partial class CustomerEditWindow : Window
 
     private sealed record StageOption(string Label, LeadStage Value);
     private sealed record RecommendationOption(AiRecommendationRecord? Item, string DisplayText);
+    private sealed record CommitmentOption(CustomerCommitment? Item, string DisplayText);
 
     private sealed class EditableDimension(string header, string value)
     {

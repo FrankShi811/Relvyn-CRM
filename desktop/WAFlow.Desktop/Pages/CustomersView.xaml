@@ -123,6 +123,39 @@
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="" Width="46" CanUserSort="False"><DataGridTemplateColumn.CellTemplate><DataTemplate><CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip="选择该客户"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                         <DataGridTextColumn Header="客户" Binding="{Binding DisplayName}" SortMemberPath="DisplayName" Width="190" ElementStyle="{StaticResource CustomerCellText}"/>
+                        <DataGridTemplateColumn Header="待履约承诺" SortMemberPath="ActiveCommitmentCount" Width="155">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Border CornerRadius="6" Padding="7,3" HorizontalAlignment="Left" ToolTip="{Binding CommitmentToolTip}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding CommitmentState}" Value="active">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Setter Property="Background" Value="{DynamicResource WarningSoft}"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding CommitmentState}" Value="overdue">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Setter Property="Background" Value="{DynamicResource DangerSoft}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <TextBlock Text="{Binding CommitmentMarkerLabel}" FontSize="9.5" FontWeight="SemiBold">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Warning}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CommitmentState}" Value="overdue"><Setter Property="Foreground" Value="{DynamicResource Danger}"/></DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTextColumn Header="客户 ID" Binding="{Binding BuyerId}" SortMemberPath="BuyerId" Width="145" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="公司" Binding="{Binding Company}" SortMemberPath="Company" Width="175" ElementStyle="{StaticResource CustomerCellText}"/>
                         <DataGridTextColumn Header="邮箱" Binding="{Binding Email}" SortMemberPath="Email" Width="215" ElementStyle="{StaticResource CustomerCellText}"/>

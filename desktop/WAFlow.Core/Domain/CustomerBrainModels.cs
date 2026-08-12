@@ -94,6 +94,13 @@ public enum FollowUpPriority
     Urgent
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum CustomerCommitmentStatus
+{
+    Active,
+    Completed
+}
+
 public sealed class CustomerIntelligenceStatement
 {
     public IntelligenceStatementNature Nature { get; set; }
@@ -170,6 +177,21 @@ public sealed class CustomerConversationContextResult
     public string RelationshipState { get; set; } = "";
     public string RecommendedApproach { get; set; } = "";
     public List<CustomerIntelligenceStatement> Inferences { get; set; } = [];
+    public List<CustomerCommitmentCandidate> Commitments { get; set; } = [];
+}
+
+public sealed class CustomerCommitmentCandidate
+{
+    public string Title { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string SourceChannel { get; set; } = "";
+    public string SourceMessageId { get; set; } = "";
+    public string Evidence { get; set; } = "";
+    public DateTimeOffset? DueAt { get; set; }
+    public double Confidence { get; set; }
+
+    [JsonIgnore]
+    public DateTimeOffset SourceOccurredAt { get; set; }
 }
 
 public sealed class CustomerIntelligenceProfile
@@ -381,6 +403,59 @@ public sealed class FollowUpTask
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset? CompletedAt { get; set; }
+}
+
+public sealed class CustomerCommitment
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string CustomerId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public CustomerCommitmentStatus Status { get; set; } = CustomerCommitmentStatus.Active;
+    public DateTimeOffset? DueAt { get; set; }
+    public string SourceChannel { get; set; } = "";
+    public string SourceMessageId { get; set; } = "";
+    public string Evidence { get; set; } = "";
+    public double Confidence { get; set; }
+    public DateTimeOffset SourceOccurredAt { get; set; }
+    public DateTimeOffset DetectedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
+    public DateTimeOffset? CompletedAt { get; set; }
+    public string CompletionNote { get; set; } = "";
+
+    [JsonIgnore]
+    public bool IsOverdue => Status == CustomerCommitmentStatus.Active
+        && DueAt is { } dueAt
+        && dueAt < DateTimeOffset.Now;
+
+    [JsonIgnore]
+    public string DueLabel => DueAt is null
+        ? "未设期限"
+        : IsOverdue
+            ? $"已逾期 · {DueAt.Value.LocalDateTime:MM-dd HH:mm}"
+            : $"计划完成 · {DueAt.Value.LocalDateTime:MM-dd HH:mm}";
+}
+
+public sealed class CustomerCommitmentSummary
+{
+    public string CustomerId { get; set; } = "";
+    public int ActiveCount { get; set; }
+    public int OverdueCount { get; set; }
+    public DateTimeOffset? NextDueAt { get; set; }
+    public string FirstTitle { get; set; } = "";
+
+    [JsonIgnore]
+    public string MarkerLabel => ActiveCount == 0
+        ? ""
+        : OverdueCount > 0
+            ? $"逾期 {OverdueCount} · 共 {ActiveCount}"
+            : NextDueAt is null
+                ? $"待履约 {ActiveCount}"
+                : $"待履约 {ActiveCount} · {NextDueAt.Value.LocalDateTime:MM-dd}";
+
+    [JsonIgnore]
+    public string State => OverdueCount > 0 ? "overdue" : ActiveCount > 0 ? "active" : "none";
 }
 
 public sealed class CustomerEventLogEntry

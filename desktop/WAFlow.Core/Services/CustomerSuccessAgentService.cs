@@ -45,6 +45,7 @@ public sealed partial class CustomerSuccessAgentService
         - 只有确实使用某个知识块时，才把它的 chunkId 放入 knowledgeChunkIds；不得编造、改写或引用列表外 ID。原文模板只有 usageMode=ExactTemplate 时才可逐字使用，其余话术只能作为表达风格参考。
         - 如果 policyKnowledgeRequired=true，但 knowledgeSufficient=false、存在 conflict/outdated，或批准知识不足以支持具体政策/数字/承诺，必须 ImmediateHuman，不能用常识猜测。
         - factPriority 固定为：人工确认 > 最新客户原话 > 历史客户原话 > 经批准知识 > 当前客户需求 > 有证据的 Customer Brain > AI 推断。推断不得作为对外事实。
+        - activeCommitments 是销售人员已明确发出、尚未人工确认履约的承诺。优先履约或转人工澄清，不得声称已经完成，不得扩大或新增价格、库存、交期及政策承诺。
         - verifiedExternalFacts 是与当前客户身份版本一致且仍有效的公开商业证据，只能作背景；不能授权 CRM 更新，也不能覆盖最新客户原话或支持价格、库存、交期、政策承诺。
         - 客户原话发生冲突时必须保留冲突，不得静默覆盖。
         - safety 必须是 SafeToAnswer、DeferredHuman 或 ImmediateHuman。涉及折扣或最终报价批准、库存或资源承诺、交付/实施/物流/清关保证、退款/赔偿、投诉/法律/合同/税务/付款、政策处罚、客户要求人工、愤怒威胁、责任或无法确定的政策，必须 ImmediateHuman。
@@ -197,6 +198,7 @@ public sealed partial class CustomerSuccessAgentService
             AccountRelationship = await _repository.GetAccountRelationshipMemoryAsync(customerId, accountId, cancellationToken),
             GlobalRelationship = await _repository.GetRelationshipMemoryAsync(customerId, cancellationToken),
             Brain = brainCandidate?.HasCurrentDecision == true ? brainCandidate : null,
+            ActiveCommitments = await _repository.GetCustomerCommitmentsAsync(customerId, activeOnly: true, cancellationToken: cancellationToken),
             SourcingRequest = await _repository.GetLatestSourcingRequestAsync(customerId, cancellationToken),
             AgentState = state,
             AgentLock = await _repository.GetGlobalCustomerAgentLockAsync(customerId, cancellationToken),
@@ -626,6 +628,16 @@ public sealed partial class CustomerSuccessAgentService
                 context.Brain.Risks, context.Brain.NextBestAction, context.Brain.Confidence, context.Brain.PurchaseProbability,
                 evidence = context.Brain.Statements.Where(item => item.Nature == IntelligenceStatementNature.Fact).Take(20)
             },
+            activeCommitments = context.ActiveCommitments.Select(item => new
+            {
+                item.Id,
+                item.Title,
+                item.Detail,
+                item.DueAt,
+                item.SourceChannel,
+                item.SourceMessageId,
+                item.Evidence
+            }),
             emailHistory = context.EmailMessages.TakeLast(40).Select(item => new
             {
                 item.Id,

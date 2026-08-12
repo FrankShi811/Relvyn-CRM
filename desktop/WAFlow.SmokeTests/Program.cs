@@ -3718,7 +3718,7 @@ for (var index = 0; index < 85; index++)
         Id=$"primary:report-{index}", ProviderMessageId=$"report-{index}", AccountId="primary", ConversationId=reportConversation.Id,
         LeadId=reportLead.Id, Phone=reportConversation.Phone, Direction=index % 2 == 0 ? WhatsAppMessageDirection.Incoming : WhatsAppMessageDirection.Outgoing,
         Status=index % 2 == 0 ? WhatsAppMessageStatus.Received : WhatsAppMessageStatus.Read,
-        Body=index == 84 ? "I need 500 pcs monthly." : index % 2 == 0 ? $"Customer message {index}" : $"Sales reply {index}", Timestamp=DateTimeOffset.Now.AddMinutes(index - 85)
+        Body=index == 84 ? "I need 500 pcs monthly." : index == 83 ? "I will send the confirmed quotation by tomorrow." : index % 2 == 0 ? $"Customer message {index}" : $"Sales reply {index}", Timestamp=DateTimeOffset.Now.AddMinutes(index - 85)
     });
 var reportCampaign = new WhatsAppCampaign { Id="report-campaign", Name="月度采购跟进", Status=CampaignStatus.Completed, StartsAt=DateTimeOffset.Now.AddDays(-1) };
 await reportRepository.SaveCampaignAsync(reportCampaign);
@@ -3772,6 +3772,12 @@ Check(contextualBrain.ConversationContext is
 var contextualBrainAgain = await stagedBrainService.UpdateConversationContextAsync(reportLead.Id);
 Check(contextualBrainAgain.ConversationContext.UpdatedAt == contextualBrain.ConversationContext.UpdatedAt,
     "unchanged customer context reuses the persisted summary without another AI request");
+var detectedCommitments = await reportRepository.GetCustomerCommitmentsAsync(reportLead.Id, activeOnly: true);
+var commitmentSummaries = await new CustomerCommitmentService(reportRepository).GetActiveSummariesAsync([reportLead.Id]);
+Check(detectedCommitments.Single() is { SourceChannel: "WhatsApp", SourceMessageId: "primary:report-83", Status: CustomerCommitmentStatus.Active }
+    && detectedCommitments[0].Evidence == "I will send the confirmed quotation by tomorrow."
+    && commitmentSummaries[reportLead.Id] is { ActiveCount: 1, FirstTitle: "明天前发送确认后的报价" },
+    "Customer Brain extracts only evidence-bound salesperson promises and exposes one shared active marker");
 var decisionBrain = await stagedBrainService.AnalyzeAsync(reportLead.Id);
 var brainRuns = await reportRepository.GetCustomerBrainRunsAsync(reportLead.Id);
 var followUpTasks = await reportRepository.GetFollowUpTasksAsync(reportLead.Id);
@@ -3792,8 +3798,22 @@ var brainAwareAssistant = new ConversationAssistantService(reportRepository, bra
 await brainAwareAssistant.AnalyzeAsync(reportConversation.Id, reportLead);
 Check(brainAwareAssistantProvider.PayloadJson.Contains("\"customerBrain\"", StringComparison.Ordinal)
     && brainAwareAssistantProvider.PayloadJson.Contains(decisionBrain.NextBestAction, StringComparison.Ordinal)
+    && brainAwareAssistantProvider.PayloadJson.Contains("\"activeCommitments\"", StringComparison.Ordinal)
+    && brainAwareAssistantProvider.PayloadJson.Contains("明天前发送确认后的报价", StringComparison.Ordinal)
     && brainAwareAssistantProvider.PayloadJson.Contains("\"latestIncomingMessage\":\"I need 500 pcs monthly.\"", StringComparison.Ordinal),
-    "WhatsApp AI assistant receives the latest Customer Brain decision while retaining current incoming evidence");
+    "WhatsApp AI assistant receives the latest Customer Brain decision, open promises and current incoming evidence");
+var commitmentService = new CustomerCommitmentService(reportRepository);
+var completedCommitment = await commitmentService.CompleteAsync(
+    reportLead.Id,
+    detectedCommitments.Single().Id,
+    "测试用户确认已经发送报价");
+_ = await stagedBrainService.UpdateConversationContextAsync(reportLead.Id, force: true);
+var commitmentsAfterRescan = await reportRepository.GetCustomerCommitmentsAsync(reportLead.Id);
+Check(completedCommitment is { Status: CustomerCommitmentStatus.Completed, CompletedAt: not null }
+    && commitmentsAfterRescan.Single().Status == CustomerCommitmentStatus.Completed
+    && (await reportRepository.GetCustomerCommitmentsAsync(reportLead.Id, activeOnly: true)).Count == 0
+    && (await commitmentService.GetActiveSummariesAsync([reportLead.Id])).Count == 0,
+    "only a human completion clears the cross-module marker and later AI rescans never reopen the promise");
 var dashboardAfterBrain = await reportRepository.GetDashboardAsync();
 Check(dashboardAfterBrain.PendingFollowUps >= 1, "personal sales command center counts due Customer Brain follow-up tasks");
 try
@@ -4041,6 +4061,7 @@ Check((await reportRepository.GetCustomerIntelligenceProfileAsync(reportLead.Id)
         .SequenceEqual(feedbackIdsBeforeRestart)
     && persistedLearning.Count(item => item.FeedbackSource == "human") == 2
     && persistedLearning.Any(item => item.FeedbackSource == "system_observed")
+    && (await reportRepository.GetCustomerCommitmentsAsync(reportLead.Id)).Single().Status == CustomerCommitmentStatus.Completed
     && (await reportRepository.GetFollowUpTasksAsync(reportLead.Id)).Single(item => item.RecommendationId == brainRecommendation.Id).Priority == FollowUpPriority.High, "Customer Brain migration is additive and preserves tasks, actions and outcome learning across restarts");
 var keepArtifactIndex = Array.IndexOf(args, "--keep-report-artifacts");
 if (keepArtifactIndex >= 0 && keepArtifactIndex + 1 < args.Length)
@@ -9031,6 +9052,19 @@ sealed class FakeCustomerBrainProvider : IStructuredAiProvider
                         Evidence = "I need 500 pcs monthly.",
                         Source = "WhatsApp report-84",
                         Confidence = .84
+                    }
+                ],
+                Commitments =
+                [
+                    new CustomerCommitmentCandidate
+                    {
+                        Title = "明天前发送确认后的报价",
+                        Detail = "销售人员承诺在明天前向客户发送确认后的报价。",
+                        SourceChannel = "WhatsApp",
+                        SourceMessageId = "primary:report-83",
+                        Evidence = "I will send the confirmed quotation by tomorrow.",
+                        DueAt = DateTimeOffset.Now.AddHours(20),
+                        Confidence = .96
                     }
                 ]
             };

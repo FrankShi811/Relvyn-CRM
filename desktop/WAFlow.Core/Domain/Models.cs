@@ -128,6 +128,19 @@ public sealed class Lead
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;
 
+    [JsonIgnore] public int ActiveCommitmentCount { get; set; }
+    [JsonIgnore] public int OverdueCommitmentCount { get; set; }
+    [JsonIgnore] public DateTimeOffset? NextCommitmentDueAt { get; set; }
+    [JsonIgnore] public string CommitmentTitle { get; set; } = "";
+    [JsonIgnore] public string CommitmentMarkerLabel => ActiveCommitmentCount == 0
+        ? ""
+        : OverdueCommitmentCount > 0
+            ? $"逾期 {OverdueCommitmentCount} · 共 {ActiveCommitmentCount}"
+            : NextCommitmentDueAt is null
+                ? $"待履约 {ActiveCommitmentCount}"
+                : $"待履约 {ActiveCommitmentCount} · {NextCommitmentDueAt.Value.LocalDateTime:MM-dd}";
+    [JsonIgnore] public string CommitmentState => OverdueCommitmentCount > 0 ? "overdue" : ActiveCommitmentCount > 0 ? "active" : "none";
+
     [JsonIgnore] public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Company : Name;
     [JsonIgnore] public string StageLabel => Labels.Stage(Stage);
     [JsonIgnore] public string AmountLabel => EstimatedOrderValue <= 0 ? "—" : $"{Currency} {EstimatedOrderValue:N0}";

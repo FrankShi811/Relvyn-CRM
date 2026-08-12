@@ -72,6 +72,15 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
     {
         var selectedId = (LeadGrid.SelectedItem as Lead)?.Id;
         _leads = await _services.Repository.GetLeadsAsync(SearchBox.Text, GradeFilter.SelectedItem as string);
+        var commitmentSummaries = await _services.CustomerCommitments.GetActiveSummariesAsync(_leads.Select(lead => lead.Id));
+        foreach (var lead in _leads)
+        {
+            if (!commitmentSummaries.TryGetValue(lead.Id, out var commitment)) continue;
+            lead.ActiveCommitmentCount = commitment.ActiveCount;
+            lead.OverdueCommitmentCount = commitment.OverdueCount;
+            lead.NextCommitmentDueAt = commitment.NextDueAt;
+            lead.CommitmentTitle = commitment.FirstTitle;
+        }
         var snapshotList = await _services.Repository.GetOpportunitySnapshotsAsync();
         UpdateCategoryFilter(snapshotList);
         var snapshots = snapshotList
@@ -199,6 +208,8 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
             ConfidenceText.Text = "0%"; ConfidenceBar.Value = 0; ScoreRing.SetScore(0, "D", 0); RadarChart.SetValues([]);
             OpportunityEvidenceCard.Visibility = Visibility.Collapsed;
             OpportunityEventItems.ItemsSource = null;
+            OpportunityCommitmentCard.Visibility = Visibility.Collapsed;
+            OpportunityCommitmentItems.ItemsSource = null;
             return;
         }
         LeadNameText.Text = lead.DisplayName; CompanyText.Text = $"{lead.Company} · {lead.Country}"; GradeText.Text = $"{lead.Grade}级"; ScoreText.Text = lead.Score.ToString();
@@ -260,6 +271,17 @@ public partial class LeadIntelligenceView : UserControl, IRefreshableView
                 ? recentEvents
                 : ["尚无可核对的交易明细。"];
         }
+        var commitments = await _services.CustomerCommitments.GetActiveAsync(lead.Id);
+        OpportunityCommitmentCard.Visibility = commitments.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        OpportunityCommitmentCountText.Text = commitments.Count == 0
+            ? ""
+            : commitments.Any(item => item.IsOverdue)
+                ? $"{commitments.Count(item => item.IsOverdue)} 条逾期"
+                : $"{commitments.Count} 条待履约";
+        OpportunityCommitmentItems.ItemsSource = commitments
+            .Take(4)
+            .Select(item => $"{item.DueLabel} · {item.Title}")
+            .ToList();
     }
 
     private async Task UpdateCustomerBrainAsync(Lead? lead)
