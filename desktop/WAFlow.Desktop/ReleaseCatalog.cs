@@ -9,17 +9,25 @@ public static class ReleaseCatalog
     public static string CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version is { } version
             ? $"{version.Major}.{version.Minor}.{version.Build}"
-            : "5.21.1";
+            : "5.22.0";
 
     public static IReadOnlyList<ReleaseNote> History { get; } =
     [
+        new("5.22.0", "2026-08-12", "增强 WhatsApp Connector 韧性与可诊断性",
+        [
+            "新增稳定的 IWhatsAppConnector 边界、协议 v1 握手与能力协商。旧 Bridge 未返回新元数据时继续按兼容模式运行，现有账号、二维码、会话、收发、群组、媒体、标签、历史与自动化入口不改名、不迁移、不默认关闭。",
+            "把 WhatsApp 健康拆分到连接、加密会话、扫码、个人与群组消息、历史、媒体、引用、回执、号码验证、标签、身份映射、限额和重复发送保护等功能；单项失败只降级对应能力，不再把整个 Inbox 一起判为不可用。",
+            "新增账号级安全模式：发现重复发送风险、目标校验失败、发送方身份或设备异常、账号限制时只暂停自动发送，人工消息处理、历史、CRM、Customer Brain 和邮件继续可用；恢复自动发送必须由用户复核后确认。",
+            "设置页新增连接健康矩阵与脱敏诊断包。诊断 ZIP 固定为 5 个技术文件，账号只保留哈希，不包含 API Key、账号凭据、二维码、会话文件、客户身份、电话号码、消息正文、媒体或本机路径。",
+            "已通过旧正式版隔离升级、数据库完整性与会话哈希、Bridge EXE 协议/旧 RPC 面、完整 Windows Core 回归和设置页键盘/可访问性验证。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包与 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
+        ], true),
         new("5.21.1", "2026-08-12", "统一 AI Provider 与模型通用命名",
         [
             "全程序 AI 执行入口、异常类型、内部依赖与状态文案统一改为 Provider 中立命名，不再把通用 API 模型能力描述成单一供应商能力。",
             "新安装默认选择自定义 OpenAI 兼容接口，不预填特定供应商的 Base URL 或模型；用户仍可主动选择内置 Provider、原生 Anthropic Claude 或自定义兼容接口，并继续按板块配置不同模型与推理深度。",
             "旧版本保存的 AI Base URL、模型和历史凭据会在本机一次性迁移到通用字段与独立 Provider 凭据，不丢失现有路由；真实供应商的专属协议和推理参数适配继续按明确 Provider ID 生效。",
             "已通过 Windows Release 编译、通用默认值、旧设置迁移、多 Provider 路由和完整回归门禁。本版本只发布 Windows x64 桌面程序、独立 WhatsApp Bridge、简体中文安装包和 Velopack 自动更新资产；macOS 与 PWA 的代码、版本、缓存、构建和发布保持不变，也不会关闭、重启、安装或覆盖本机正式程序。"
-        ], true),
+        ]),
         new("5.21.0", "2026-08-12", "串联客户承诺与持续跟进提醒",
         [
             "Customer Brain 从 WhatsApp 与邮件上下文中只提取销售人员已经明确作出的未来承诺，并绑定原始消息、证据、渠道、时间与明确截止日期；客户请求、建议、问题、已完成事项和无证据推断不会被记为承诺。",

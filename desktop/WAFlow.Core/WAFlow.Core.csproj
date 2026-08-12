@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>5.21.1</Version>
+    <Version>5.22.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.104.2" />
@@ -19,5 +19,8 @@
     <EmbeddedResource Include="Assets\Fonts\NotoSansCJKsc-Regular.otf" LogicalName="WAFlow.Assets.Fonts.NotoSansCJKsc-Regular.otf" />
     <EmbeddedResource Include="Assets\Fonts\NotoSansCJKsc-Bold.otf" LogicalName="WAFlow.Assets.Fonts.NotoSansCJKsc-Bold.otf" />
     <EmbeddedResource Include="Assets\Fonts\LICENSE-NOTO.txt" LogicalName="WAFlow.Assets.Fonts.LICENSE-NOTO.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\bridge\compatibility-manifest.json" Link="whatsapp-connector-compatibility.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

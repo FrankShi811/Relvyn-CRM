@@ -132,6 +132,7 @@ public partial class SettingsWindow : Window
 
         DatabasePathText.Text = _services.DataWorkspace.RootDirectory;
         await RefreshWorkspaceSummaryAsync();
+        RefreshWhatsAppHealth();
         _onboardingState = await _services.Repository.GetOnboardingStateAsync();
         if (GuideCatalog.MigrateLegacyState(_onboardingState))
             await _services.Repository.SaveOnboardingStateAsync(_onboardingState);
@@ -158,6 +159,121 @@ public partial class SettingsWindow : Window
             },
             DispatcherPriority.ApplicationIdle);
     }
+
+    private void RefreshWhatsAppHealth()
+    {
+        var snapshot = _services.WhatsApp.GetConnectorSnapshot(_services.WhatsApp.ActiveAccountId);
+        var healthy = snapshot.Features.Count(item => item.State == WhatsAppFeatureHealthState.Healthy);
+        var degraded = snapshot.Features.Count(item => item.State == WhatsAppFeatureHealthState.Degraded);
+        var unavailable = snapshot.Features.Count(item => item.State == WhatsAppFeatureHealthState.Unavailable);
+        var suspended = snapshot.Features.Count(item => item.State == WhatsAppFeatureHealthState.Suspended);
+        var protocol = snapshot.Protocol.IsLegacyFallback
+            ? "旧版兼容握手"
+            : $"协议 v{snapshot.Protocol.ProtocolVersion}，{snapshot.Protocol.Connector} {snapshot.Protocol.ConnectorVersion}";
+        WhatsAppConnectorSummaryText.Text =
+            $"账号 {snapshot.AccountId}，{ConnectionLabel(snapshot.ConnectionState)}，{protocol}。健康 {healthy} / 降级 {degraded} / 不可用 {unavailable} / 暂停 {suspended}";
+        WhatsAppHealthItems.ItemsSource = snapshot.Features
+            .Select(item => new WhatsAppHealthDisplay(FeatureLabel(item.Feature), HealthLabel(item.State)))
+            .ToArray();
+        WhatsAppSafeModePanel.Visibility = snapshot.SafeMode.Active ? Visibility.Visible : Visibility.Collapsed;
+        WhatsAppSafeModeText.Text = snapshot.SafeMode.Active
+            ? $"安全模式已启用（{snapshot.SafeMode.ReasonCode}）。自动发送已暂停；消息读取、历史、CRM、Customer Brain、邮件和人工处理仍可继续。"
+            : "";
+    }
+
+    private void RefreshWhatsAppHealth_Click(object sender, RoutedEventArgs e) => RefreshWhatsAppHealth();
+
+    private void ClearWhatsAppSafeMode_Click(object sender, RoutedEventArgs e)
+    {
+        var confirmed = MessageBox.Show(
+            "只有在确认没有重复发送、错发、协议异常或 WhatsApp 账号限制后才恢复自动发送。消息读取和人工处理不需要执行此操作。",
+            "恢复 WhatsApp 自动发送",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmed != MessageBoxResult.Yes) return;
+        _services.WhatsApp.AcknowledgeAndClearConnectorSafeMode(_services.WhatsApp.ActiveAccountId);
+        RefreshWhatsAppHealth();
+    }
+
+    private async void ExportWhatsAppDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出脱敏 WhatsApp 诊断包",
+            Filter = "ZIP 诊断包 (*.zip)|*.zip",
+            DefaultExt = ".zip",
+            AddExtension = true,
+            FileName = $"Relvyn-WhatsApp-Diagnostics-{DateTimeOffset.Now:yyyyMMdd-HHmm}.zip"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        ExportWhatsAppDiagnosticsButton.IsEnabled = false;
+        WhatsAppConnectorSummaryText.Text = "正在生成脱敏诊断包…";
+        try
+        {
+            var result = await _services.WhatsApp.ExportDiagnosticsAsync(dialog.FileName);
+            WhatsAppConnectorSummaryText.Text = $"诊断包已导出：{result.Entries} 个技术文件，{DataWorkspaceManager.FormatBytes(result.Bytes)}。";
+            MessageBox.Show("脱敏诊断包已导出。发送前仍可打开 ZIP 核对内容。", "WhatsApp 诊断", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception error)
+        {
+            WhatsAppConnectorSummaryText.Text = "诊断包导出失败，现有 WhatsApp 功能未受影响。请检查保存位置和文件占用后重试。";
+            MessageBox.Show(
+                $"请确认保存位置可写、同名 ZIP 未被其他程序占用，然后重试。\n\n技术信息：{error.Message}",
+                "诊断包导出失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            ExportWhatsAppDiagnosticsButton.IsEnabled = true;
+        }
+    }
+
+    private static string FeatureLabel(WhatsAppConnectorFeature feature) => feature switch
+    {
+        WhatsAppConnectorFeature.Transport => "连接传输",
+        WhatsAppConnectorFeature.Session => "加密会话",
+        WhatsAppConnectorFeature.QrPairing => "扫码登录",
+        WhatsAppConnectorFeature.DirectMessages => "个人消息",
+        WhatsAppConnectorFeature.GroupMessages => "群组消息",
+        WhatsAppConnectorFeature.HistorySync => "历史同步",
+        WhatsAppConnectorFeature.OfflineCatchup => "离线补齐",
+        WhatsAppConnectorFeature.MediaReceive => "媒体接收",
+        WhatsAppConnectorFeature.TextSend => "文字发送",
+        WhatsAppConnectorFeature.MediaSend => "媒体发送",
+        WhatsAppConnectorFeature.Reply => "引用回复",
+        WhatsAppConnectorFeature.Revoke => "撤回消息",
+        WhatsAppConnectorFeature.DeliveryReceipts => "送达状态",
+        WhatsAppConnectorFeature.ReadReceipts => "已读状态",
+        WhatsAppConnectorFeature.NumberValidation => "号码验证",
+        WhatsAppConnectorFeature.PinChat => "置顶会话",
+        WhatsAppConnectorFeature.Groups => "群组管理",
+        WhatsAppConnectorFeature.Labels => "标签与列表",
+        WhatsAppConnectorFeature.LidMapping => "客户身份映射",
+        WhatsAppConnectorFeature.OutboundGovernor => "发送限额",
+        WhatsAppConnectorFeature.Idempotency => "重复发送保护",
+        _ => feature.ToString()
+    };
+
+    private static string HealthLabel(WhatsAppFeatureHealthState state) => state switch
+    {
+        WhatsAppFeatureHealthState.Healthy => "健康",
+        WhatsAppFeatureHealthState.Degraded => "降级",
+        WhatsAppFeatureHealthState.Unavailable => "不可用",
+        WhatsAppFeatureHealthState.Suspended => "已暂停",
+        _ => "待确认"
+    };
+
+    private static string ConnectionLabel(string state) => state switch
+    {
+        "connected" => "已连接",
+        "connecting" => "连接中",
+        "retrying" => "正在重试",
+        "logged_out" => "需要扫码",
+        _ => "未连接"
+    };
 
     private void SettingsInput_Changed(object sender, RoutedEventArgs e)
     {
@@ -1177,6 +1293,7 @@ public partial class SettingsWindow : Window
     private sealed record ConfiguredProviderOption(string Id, string DisplayName);
     private sealed record ReasoningOption(string Label, string Value);
     private sealed record ModuleDefinition(string Key, string Name, string Description);
+    private sealed record WhatsAppHealthDisplay(string Feature, string State);
 
     private sealed class AiModuleRoutingRow : INotifyPropertyChanged
     {

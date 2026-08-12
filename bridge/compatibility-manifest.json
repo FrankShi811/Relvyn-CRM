@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "bridge": "WAFlow.WhatsApp.Bridge",
+  "bridgeVersion": "0.9.0",
+  "protocolVersion": 1,
+  "connector": "baileys",
+  "connectorVersion": "7.0.0-rc13",
+  "minRelvynVersion": "5.21.1",
+  "maxRelvynVersion": "5.22.x",
+  "channel": "stable",
+  "defaultCapabilitiesEnabled": true
+}
